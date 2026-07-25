@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crystal Embroidery - Back Office Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
+  
+  <!-- Navigation Header -->
+  <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+      <div class="flex items-center space-x-3">
+        <div class="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-lg">C</div>
+        <h1 class="text-xl font-bold tracking-wide">Crystal Embroidery <span class="text-indigo-400 font-normal">Back Office</span></h1>
+      </div>
+      <div class="flex space-x-2 bg-slate-800 p-1 rounded-lg">
+        <button id="tab-quotes" onclick="switchTab('quotes')" class="px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition">
+          Quotes & Orders
+        </button>
+        <button id="tab-customers" onclick="switchTab('customers')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+          Customers
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="max-w-7xl mx-auto px-6 py-8">
+    
+    <!-- QUOTES TAB -->
+    <section id="section-quotes">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Quotes & Order Pipeline</h2>
+          <p class="text-slate-500 text-sm">Review incoming portal submissions and update order statuses.</p>
+        </div>
+        <button onclick="loadQuotes()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+          🔄 Refresh Quotes
+        </button>
+      </div>
+
+      <!-- Quotes Table -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+              <th class="p-4">Quote #</th>
+              <th class="p-4">Customer</th>
+              <th class="p-4">Details</th>
+              <th class="p-4">Total (inc. VAT)</th>
+              <th class="p-4">Source</th>
+              <th class="p-4">Status</th>
+              <th class="p-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="quotes-table-body" class="divide-y divide-slate-100 text-sm">
+            <tr>
+              <td colspan="7" class="p-8 text-center text-slate-400">Loading quotes from database...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CUSTOMERS TAB -->
+    <section id="section-customers" class="hidden">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Customer Directory</h2>
+          <p class="text-slate-500 text-sm">Manage accounts, discounts, and contact details.</p>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <p class="text-slate-500 text-sm">Customer management features will load here automatically as portal requests are approved.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const API_URL = '/api/quotes';
+
+    // Switch between Admin Tabs
+    function switchTab(tab) {
+      document.getElementById('section-quotes').classList.toggle('hidden', tab !== 'quotes');
+      document.getElementById('section-customers').classList.toggle('hidden', tab !== 'customers');
+      
+      document.getElementById('tab-quotes').className = tab === 'quotes' 
+        ? 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition'
+        : 'px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
+        
+      document.getElementById('tab-customers').className = tab === 'customers' 
+        ? 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition'
+        : 'px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
+    }
+
+    // Fetch All Quotes from Cloudflare D1
+    async function loadQuotes() {
+      const tbody = document.getElementById('quotes-table-body');
+      tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Fetching latest quotes...</td></tr>';
+
+      try {
+        const res = await fetch(API_URL);
+        const quotes = await res.json();
+
+        if (!quotes || quotes.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No quotes submitted yet.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = quotes.map(q => `
+          <tr class="hover:bg-slate-50 transition">
+            <td class="p-4 font-semibold text-slate-900">${q.quote_number || q.id}</td>
+            <td class="p-4">${q.customer_name}</td>
+            <td class="p-4 text-xs text-slate-500">
+              ${q.length_mm}mm | ${q.quantity} pcs
+            </td>
+            <td class="p-4 font-semibold text-slate-900">£${Number(q.total).toFixed(2)}</td>
+            <td class="p-4">
+              <span class="px-2 py-1 text-xs font-semibold rounded-full ${q.source === 'Customer Portal' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}">
+                ${q.source || 'Portal'}
+              </span>
+            </td>
+            <td class="p-4">
+              <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${getStatusBadgeClass(q.status)}">
+                ${q.status}
+              </span>
+            </td>
+            <td class="p-4 text-right space-x-2">
+              ${q.status === 'Pending Approval' ? `
+                <button onclick="updateStatus('${q.id}', 'Approved')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                  Approve
+                </button>
+              ` : ''}
+              ${q.status === 'Approved' ? `
+                <button onclick="updateStatus('${q.id}', 'Completed')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                  Mark Complete
+                </button>
+              ` : ''}
+            </td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Error loading quotes: ${err.message}</td></tr>`;
+      }
+    }
+
+    // Helper for Status Badge Colors
+    function getStatusBadgeClass(status) {
+      switch (status) {
+        case 'Pending Approval': return 'bg-amber-100 text-amber-800';
+        case 'Approved': return 'bg-emerald-100 text-emerald-800';
+        case 'Completed': return 'bg-indigo-100 text-indigo-800';
+        default: return 'bg-slate-100 text-slate-800';
+      }
+    }
+
+    // Update Quote Status in D1 Database
+    async function updateStatus(id, newStatus) {
+      try {
+        await fetch(API_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, status: newStatus })
+        });
+        loadQuotes(); // Refresh view
+      } catch (err) {
+        alert('Failed to update status: ' + err.message);
+      }
+    }
+
+    // Initial Load
+    loadQuotes();
+  </script>
+</body>
+</html>
