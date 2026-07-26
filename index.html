@@ -43,6 +43,7 @@
     const { useState, useEffect, useMemo } = React;
 
     const API_URL = '/api/quotes';
+    const API_CUSTOMERS_URL = '/api/customers';
 
     // Safe UUID Generator Fallback for local files
     function generateUUID() {
@@ -149,6 +150,7 @@
       const [settings, setSettings] = useState(defaultSettings);
       const [search, setSearch] = useState('');
       const [syncing, setSyncing] = useState(false);
+      const [customerSyncing, setCustomerSyncing] = useState(false);
 
       const [customerForm, setCustomerForm] = useState({
         name: '',
@@ -206,13 +208,43 @@
         } catch (e) {}
       }
 
-      useEffect(() => {
-        fetchCloudQuotes();
+      // Load Customers directly from Cloudflare D1 API on startup
+      async function fetchCloudCustomers() {
+        try {
+          const res = await fetch(API_CUSTOMERS_URL);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              const formatted = data.map(c => ({
+                id: c.id,
+                name: c.name,
+                company: c.company || '',
+                email: c.email || '',
+                phone: c.phone || '',
+                type: c.type || 'Retail',
+                discountPct: Number(c.discount_pct) || 0,
+                notes: c.notes || '',
+              }));
+              setCustomers(formatted);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn('Customer database unreachable, falling back to LocalStorage', e);
+        }
+
+        // Fallback to local storage if API is not set up
         try {
           const rawCustomers = localStorage.getItem(LS_KEYS.customers);
-          const rawSettings = localStorage.getItem(LS_KEYS.settings);
-
           if (rawCustomers) setCustomers(JSON.parse(rawCustomers));
+        } catch (e) {}
+      }
+
+      useEffect(() => {
+        fetchCloudQuotes();
+        fetchCloudCustomers();
+        try {
+          const rawSettings = localStorage.getItem(LS_KEYS.settings);
           if (rawSettings) setSettings(JSON.parse(rawSettings));
         } catch (e) {}
       }, []);
@@ -243,18 +275,33 @@
       const vatAmount = quoteForm.vat ? subtotal * settings.vatRate : 0;
       const total = subtotal + vatAmount;
 
-      function handleAddCustomer() {
+      // SAVE CUSTOMER DIRECTLY TO CLOUDFLARE DATABASE
+      async function handleAddCustomer() {
         if (!customerForm.name.trim()) return;
 
-        if (editingCustomerId) {
-          setCustomers((prev) =>
-            prev.map((c) => (c.id === editingCustomerId ? { ...c, ...customerForm } : c))
-          );
-          setEditingCustomerId(null);
-        } else {
-          setCustomers((prev) => [{ ...customerForm, id: generateUUID() }, ...prev]);
+        const payload = {
+          id: editingCustomerId || generateUUID(),
+          name: customerForm.name,
+          company: customerForm.company,
+          email: customerForm.email,
+          phone: customerForm.phone,
+          type: customerForm.type,
+          discount_pct: customerForm.discountPct,
+          notes: customerForm.notes,
+        };
+
+        try {
+          await fetch(API_CUSTOMERS_URL, {
+            method: editingCustomerId ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+        } catch (e) {
+          console.error('Failed cloud save, relying on UI update', e);
         }
 
+        await fetchCloudCustomers();
+        setEditingCustomerId(null);
         setCustomerForm({
           name: '',
           company: '',
@@ -281,8 +328,17 @@
         setTab('customers');
       }
 
-      function deleteCustomer(id) {
-        setCustomers((prev) => prev.filter((c) => c.id !== id));
+      async function deleteCustomer(id) {
+        try {
+          await fetch(API_CUSTOMERS_URL, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+          });
+        } catch (e) {
+          console.error('Failed cloud delete', e);
+        }
+        await fetchCloudCustomers();
       }
 
       function updateQuoteStatus(quoteId, newStatus) {
@@ -355,6 +411,34 @@
         await fetchCloudQuotes();
         setSyncing(false);
         alert('All local quotes successfully uploaded to Cloudflare Database!');
+      }
+
+      // ONE-CLICK PORTING OF ALL LOCAL CUSTOMERS TO CLOUDFLARE D1
+      async function portLocalCustomersToCloud() {
+        setCustomerSyncing(true);
+        const rawLocal = localStorage.getItem(LS_KEYS.customers);
+        const localCustomers = rawLocal ? JSON.parse(rawLocal) : customers;
+        for (const c of localCustomers) {
+          try {
+            await fetch(API_CUSTOMERS_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: c.id || generateUUID(),
+                name: c.name,
+                company: c.company,
+                email: c.email,
+                phone: c.phone,
+                type: c.type,
+                discount_pct: c.discountPct,
+                notes: c.notes,
+              })
+            });
+          } catch (e) {}
+        }
+        await fetchCloudCustomers();
+        setCustomerSyncing(false);
+        alert('All local customers successfully uploaded to Cloudflare Database!');
       }
 
       function printQuote(quote) {
@@ -470,13 +554,21 @@
                 <div className="flex items-center gap-2 font-semibold text-white">
                   <Icon name="cloud" size={16} /> Cloud Database Ready
                 </div>
-                <button 
+                <button
                   onClick={portLocalQuotesToCloud}
                   disabled={syncing}
                   className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition"
                 >
                   <Icon name="upload-cloud" size={14} />
                   {syncing ? 'Uploading...' : 'Port Local Quotes to Cloud'}
+                </button>
+                <button
+                  onClick={portLocalCustomersToCloud}
+                  disabled={customerSyncing}
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition"
+                >
+                  <Icon name="upload-cloud" size={14} />
+                  {customerSyncing ? 'Uploading...' : 'Port Local Customers to Cloud'}
                 </button>
               </div>
             </aside>
