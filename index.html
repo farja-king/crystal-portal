@@ -44,6 +44,7 @@
 
     const API_URL = '/api/quotes';
     const API_CUSTOMERS_URL = '/api/customers';
+    const API_SETTINGS_URL = '/api/settings';
 
     // Safe UUID Generator Fallback for local files
     function generateUUID() {
@@ -151,6 +152,7 @@
       const [search, setSearch] = useState('');
       const [syncing, setSyncing] = useState(false);
       const [customerSyncing, setCustomerSyncing] = useState(false);
+      const [settingsSyncing, setSettingsSyncing] = useState(false);
 
       const [customerForm, setCustomerForm] = useState({
         name: '',
@@ -240,13 +242,61 @@
         } catch (e) {}
       }
 
-      useEffect(() => {
-        fetchCloudQuotes();
-        fetchCloudCustomers();
+      // Load Settings directly from Cloudflare D1 API on startup
+      async function fetchCloudSettings() {
+        try {
+          const res = await fetch(API_SETTINGS_URL);
+          if (res.ok) {
+            const row = await res.json();
+            if (row) {
+              setSettings({
+                printableWidthMm: Number(row.printable_width_mm),
+                filmWidthMm: Number(row.film_width_mm),
+                minimumBillableLengthMm: Number(row.minimum_billable_length_mm),
+                minimumCharge: Number(row.minimum_charge),
+                pricePerAdditional100Mm: Number(row.price_per_additional_100mm),
+                vatRate: Number(row.vat_rate),
+              });
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn('Settings database unreachable, falling back to LocalStorage', e);
+        }
+
+        // Fallback to local storage if API is not set up
         try {
           const rawSettings = localStorage.getItem(LS_KEYS.settings);
           if (rawSettings) setSettings(JSON.parse(rawSettings));
         } catch (e) {}
+      }
+
+      // SAVE SETTINGS DIRECTLY TO CLOUDFLARE DATABASE
+      async function saveSettingsToCloud() {
+        setSettingsSyncing(true);
+        try {
+          await fetch(API_SETTINGS_URL, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              printable_width_mm: settings.printableWidthMm,
+              film_width_mm: settings.filmWidthMm,
+              minimum_billable_length_mm: settings.minimumBillableLengthMm,
+              minimum_charge: settings.minimumCharge,
+              price_per_additional_100mm: settings.pricePerAdditional100Mm,
+              vat_rate: settings.vatRate,
+            }),
+          });
+        } catch (e) {
+          console.error('Failed cloud save', e);
+        }
+        setSettingsSyncing(false);
+      }
+
+      useEffect(() => {
+        fetchCloudQuotes();
+        fetchCloudCustomers();
+        fetchCloudSettings();
       }, []);
 
       useEffect(() => {
@@ -879,7 +929,7 @@
                     <h2 className="text-2xl font-semibold text-white">Settings</h2>
                     <p className="text-slate-400">Adjust pricing and machine values without changing code.</p>
                   </div>
-                  <Card title="Pricing & Machine Settings">
+                  <Card title="Pricing & Machine Settings" actions={<Badge>Cloud Database</Badge>}>
                     <div className="grid gap-4 md:grid-cols-2">
                       {[
                         ['Printable width (mm)', 'printableWidthMm'],
@@ -905,6 +955,15 @@
                           />
                         </label>
                       ))}
+                    </div>
+                    <div className="mt-4">
+                      <button
+                        onClick={saveSettingsToCloud}
+                        disabled={settingsSyncing}
+                        className="inline-flex items-center gap-2 rounded-2xl bg-sky-500 px-4 py-3 font-semibold text-slate-950 transition hover:bg-sky-400"
+                      >
+                        <Icon name="save" size={16} /> {settingsSyncing ? 'Saving...' : 'Save Settings to Cloud'}
+                      </button>
                     </div>
                   </Card>
                   <Card title="Current Quote Preview">
