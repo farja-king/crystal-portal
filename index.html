@@ -313,7 +313,6 @@
           source: 'Portal'
         };
 
-        // Post to Cloudflare API
         try {
           await fetch(API_URL, {
             method: 'POST',
@@ -441,7 +440,7 @@
       return (
         <div className="min-h-screen bg-slate-950 text-slate-100">
           <div className="mx-auto flex min-h-screen max-w-7xl">
-            <!-- Sidebar -->
+            {/* Sidebar */}
             <aside className="hidden w-72 shrink-0 border-r border-white/10 bg-slate-950/80 p-6 lg:block">
               <div className="mb-8">
                 <div className="text-xs uppercase tracking-[0.25em] text-sky-300">Crystal Custom Embroidery</div>
@@ -482,9 +481,9 @@
               </div>
             </aside>
 
-            <!-- Main Area -->
+            {/* Main Area */}
             <main className="flex-1 p-4 lg:p-8">
-              <!-- Mobile Header -->
+              {/* Mobile Header */}
               <div className="mb-6 flex items-center justify-between gap-3 rounded-3xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur lg:hidden">
                 <button onClick={() => setMobileMenuOpen((v) => !v)} className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-sm font-medium">
                   <Icon name="menu" size={16} /> Menu
@@ -504,7 +503,7 @@
                 </div>
               )}
 
-              <!-- Dashboard Tab -->
+              {/* Dashboard Tab */}
               {tab === 'dashboard' && (
                 <div className="space-y-6">
                   <section className="grid gap-4 md:grid-cols-3">
@@ -632,7 +631,7 @@
                 </div>
               )}
 
-              <!-- Quotes Tab -->
+              {/* Quotes Tab */}
               {tab === 'quotes' && (
                 <div className="space-y-6">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -697,7 +696,7 @@
                 </div>
               )}
 
-              <!-- Customers Tab -->
+              {/* Customers Tab */}
               {tab === 'customers' && (
                 <div className="space-y-6">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -781,7 +780,7 @@
                 </div>
               )}
 
-              <!-- Settings Tab -->
+              {/* Settings Tab */}
               {tab === 'settings' && (
                 <div className="space-y-6">
                   <div>
