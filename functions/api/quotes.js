@@ -4,7 +4,7 @@ export async function onRequest(context) {
 
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",
   };
@@ -56,6 +56,13 @@ export async function onRequest(context) {
     if (request.method === "PUT") {
       const { id, status } = await request.json();
       await db.prepare("UPDATE quotes SET status = ? WHERE id = ?").bind(status, id).run();
+      return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+    }
+
+    // DELETE: Remove a quote (e.g. mis-entered or test data)
+    if (request.method === "DELETE") {
+      const { id } = await request.json();
+      await db.prepare("DELETE FROM quotes WHERE id = ?").bind(id).run();
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
   } catch (err) {
