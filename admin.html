@@ -41,6 +41,64 @@
         </button>
       </div>
 
+      <!-- Edit Quote Form (hidden until Edit is clicked) -->
+      <div id="quote-edit-form" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <h3 class="text-lg font-bold text-slate-900 mb-4">Edit Quote</h3>
+        <div class="grid gap-4 md:grid-cols-2">
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Customer Name</span>
+            <input id="qedit-customer-name" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Status</span>
+            <select id="qedit-status" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+              <option>Draft</option>
+              <option>Sent</option>
+              <option>Approved</option>
+              <option>Printing</option>
+              <option>Completed</option>
+            </select>
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Length (mm)</span>
+            <input id="qedit-length" type="number" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Quantity</span>
+            <input id="qedit-quantity" type="number" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Unit Price (£)</span>
+            <input id="qedit-unit-price" type="number" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Subtotal (£)</span>
+            <input id="qedit-subtotal" type="number" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">VAT Amount (£)</span>
+            <input id="qedit-vat-amount" type="number" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Total (£)</span>
+            <input id="qedit-total" type="number" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+        </div>
+        <label class="block text-sm mt-4">
+          <span class="block font-medium text-slate-700 mb-1">Notes</span>
+          <textarea id="qedit-notes" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 min-h-20"></textarea>
+        </label>
+        <p class="mt-2 text-xs text-slate-400">Unit price, subtotal, VAT, and total are stored values — editing length/quantity here does not recalculate them automatically.</p>
+        <div class="mt-4 flex gap-3">
+          <button onclick="saveQuoteEdit()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Save Changes
+          </button>
+          <button onclick="closeQuoteEditForm()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Cancel
+          </button>
+        </div>
+      </div>
+
       <!-- Quotes Table -->
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table class="w-full text-left border-collapse">
@@ -172,6 +230,10 @@
         : 'px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
     }
 
+    // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
+    let quotesById = {};
+    let editingQuoteId = null;
+
     // Fetch All Quotes from Cloudflare D1
     async function loadQuotes() {
       const tbody = document.getElementById('quotes-table-body');
@@ -180,6 +242,9 @@
       try {
         const res = await fetch(API_URL);
         const quotes = await res.json();
+
+        quotesById = {};
+        (quotes || []).forEach(q => { quotesById[q.id] = q; });
 
         if (!quotes || quotes.length === 0) {
           tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No quotes submitted yet.</td></tr>';
@@ -200,21 +265,22 @@
               </span>
             </td>
             <td class="p-4">
-              <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${getStatusBadgeClass(q.status)}">
-                ${escapeHtml(q.status)}
-              </span>
+              <select data-action="quote-status" data-id="${escapeHtml(q.id)}" class="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-800">
+                <option ${q.status === 'Draft' ? 'selected' : ''}>Draft</option>
+                <option ${q.status === 'Sent' ? 'selected' : ''}>Sent</option>
+                <option ${q.status === 'Approved' ? 'selected' : ''}>Approved</option>
+                <option ${q.status === 'Printing' ? 'selected' : ''}>Printing</option>
+                <option ${q.status === 'Completed' ? 'selected' : ''}>Completed</option>
+                <option ${q.status === 'Pending Approval' ? 'selected' : ''} value="Pending Approval">Pending Approval</option>
+              </select>
             </td>
-            <td class="p-4 text-right space-x-2">
-              ${q.status === 'Pending Approval' ? `
-                <button data-action="approve-quote" data-id="${escapeHtml(q.id)}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
-                  Approve
-                </button>
-              ` : ''}
-              ${q.status === 'Approved' ? `
-                <button data-action="complete-quote" data-id="${escapeHtml(q.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
-                  Mark Complete
-                </button>
-              ` : ''}
+            <td class="p-4 text-right space-x-2 whitespace-nowrap">
+              <button data-action="edit-quote" data-id="${escapeHtml(q.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                Edit
+              </button>
+              <button data-action="delete-quote" data-id="${escapeHtml(q.id)}" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                Delete
+              </button>
             </td>
           </tr>
         `).join('');
@@ -339,16 +405,6 @@
       }
     }
 
-    // Helper for Status Badge Colors
-    function getStatusBadgeClass(status) {
-      switch (status) {
-        case 'Pending Approval': return 'bg-amber-100 text-amber-800';
-        case 'Approved': return 'bg-emerald-100 text-emerald-800';
-        case 'Completed': return 'bg-indigo-100 text-indigo-800';
-        default: return 'bg-slate-100 text-slate-800';
-      }
-    }
-
     // Update Quote Status in D1 Database
     async function updateStatus(id, newStatus) {
       try {
@@ -363,6 +419,74 @@
       }
     }
 
+    // Open the edit form prefilled with the selected quote's data
+    function openQuoteEditForm(id) {
+      const q = quotesById[id];
+      if (!q) return;
+      editingQuoteId = id;
+      document.getElementById('qedit-customer-name').value = q.customer_name || '';
+      document.getElementById('qedit-status').value = q.status || 'Draft';
+      document.getElementById('qedit-length').value = q.length_mm ?? 0;
+      document.getElementById('qedit-quantity').value = q.quantity ?? 1;
+      document.getElementById('qedit-unit-price').value = q.unit_price ?? 0;
+      document.getElementById('qedit-subtotal').value = q.subtotal ?? 0;
+      document.getElementById('qedit-vat-amount').value = q.vat_amount ?? 0;
+      document.getElementById('qedit-total').value = q.total ?? 0;
+      document.getElementById('qedit-notes').value = q.notes || '';
+      document.getElementById('quote-edit-form').classList.remove('hidden');
+      document.getElementById('quote-edit-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function closeQuoteEditForm() {
+      editingQuoteId = null;
+      document.getElementById('quote-edit-form').classList.add('hidden');
+    }
+
+    // Save edited quote fields back to Cloudflare D1
+    async function saveQuoteEdit() {
+      if (!editingQuoteId) return;
+
+      try {
+        await fetch(API_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: editingQuoteId,
+            customer_name: document.getElementById('qedit-customer-name').value,
+            status: document.getElementById('qedit-status').value,
+            length_mm: Number(document.getElementById('qedit-length').value) || 0,
+            quantity: Number(document.getElementById('qedit-quantity').value) || 0,
+            unit_price: Number(document.getElementById('qedit-unit-price').value) || 0,
+            subtotal: Number(document.getElementById('qedit-subtotal').value) || 0,
+            vat_amount: Number(document.getElementById('qedit-vat-amount').value) || 0,
+            total: Number(document.getElementById('qedit-total').value) || 0,
+            notes: document.getElementById('qedit-notes').value,
+          })
+        });
+        closeQuoteEditForm();
+        loadQuotes();
+      } catch (err) {
+        alert('Failed to save quote: ' + err.message);
+      }
+    }
+
+    // Delete a quote from Cloudflare D1
+    async function deleteQuoteRow(id) {
+      const q = quotesById[id];
+      if (!confirm(`Delete quote "${q ? (q.quote_number || q.id) : id}"? This cannot be undone.`)) return;
+
+      try {
+        await fetch(API_URL, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        loadQuotes();
+      } catch (err) {
+        alert('Failed to delete quote: ' + err.message);
+      }
+    }
+
     // Single delegated handler for all data-action buttons rendered from server data.
     // Using data-id + delegation (instead of embedding ids straight into onclick="...")
     // means an id value can never be parsed as JS, even if it contains quotes.
@@ -371,11 +495,18 @@
       if (!btn) return;
       const id = btn.dataset.id;
       switch (btn.dataset.action) {
-        case 'approve-quote': updateStatus(id, 'Approved'); break;
-        case 'complete-quote': updateStatus(id, 'Completed'); break;
+        case 'edit-quote': openQuoteEditForm(id); break;
+        case 'delete-quote': deleteQuoteRow(id); break;
         case 'edit-customer': openCustomerEditForm(id); break;
         case 'delete-customer': deleteCustomerRow(id); break;
       }
+    });
+
+    // Separate delegated handler for the quote status <select> (a 'change' event, not 'click')
+    document.addEventListener('change', (e) => {
+      const select = e.target.closest('[data-action="quote-status"]');
+      if (!select) return;
+      updateStatus(select.dataset.id, select.value);
     });
 
     // Initial Load

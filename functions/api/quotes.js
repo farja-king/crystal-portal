@@ -52,10 +52,33 @@ export async function onRequest(context) {
       return new Response(JSON.stringify({ success: true, id }), { headers: corsHeaders });
     }
 
-    // PUT: Update quote status (e.g. Approve)
+    // PUT: Update a quote. Accepts either a status-only change (e.g. Approve)
+    // or a full field edit; any field left out keeps its current value.
     if (request.method === "PUT") {
-      const { id, status } = await request.json();
-      await db.prepare("UPDATE quotes SET status = ? WHERE id = ?").bind(status, id).run();
+      const data = await request.json();
+      const existing = await db.prepare("SELECT * FROM quotes WHERE id = ?").bind(data.id).first();
+      if (!existing) {
+        return new Response(JSON.stringify({ error: "Quote not found" }), { status: 404, headers: corsHeaders });
+      }
+
+      await db.prepare(`
+        UPDATE quotes SET
+          customer_name = ?, length_mm = ?, quantity = ?, unit_price = ?,
+          subtotal = ?, vat_amount = ?, total = ?, status = ?, notes = ?
+        WHERE id = ?
+      `).bind(
+        data.customer_name ?? existing.customer_name,
+        data.length_mm ?? existing.length_mm,
+        data.quantity ?? existing.quantity,
+        data.unit_price ?? existing.unit_price,
+        data.subtotal ?? existing.subtotal,
+        data.vat_amount ?? existing.vat_amount,
+        data.total ?? existing.total,
+        data.status ?? existing.status,
+        data.notes ?? existing.notes,
+        data.id
+      ).run();
+
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
