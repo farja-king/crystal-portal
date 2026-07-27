@@ -71,9 +71,30 @@
           <h2 class="text-2xl font-bold text-slate-900">Customer Directory</h2>
           <p class="text-slate-500 text-sm">Manage accounts, discounts, and contact details.</p>
         </div>
+        <button onclick="loadCustomers()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+          🔄 Refresh Customers
+        </button>
       </div>
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <p class="text-slate-500 text-sm">Customer management features will load here automatically as portal requests are approved.</p>
+
+      <!-- Customers Table -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+              <th class="p-4">Name</th>
+              <th class="p-4">Company</th>
+              <th class="p-4">Type</th>
+              <th class="p-4">Discount</th>
+              <th class="p-4">Contact</th>
+              <th class="p-4">Notes</th>
+            </tr>
+          </thead>
+          <tbody id="customers-table-body" class="divide-y divide-slate-100 text-sm">
+            <tr>
+              <td colspan="6" class="p-8 text-center text-slate-400">Loading customers from database...</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -81,6 +102,14 @@
 
   <script>
     const API_URL = '/api/quotes';
+    const API_CUSTOMERS_URL = '/api/customers';
+
+    // Escape untrusted text before dropping it into innerHTML
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str ?? '';
+      return div.innerHTML;
+    }
 
     // Switch between Admin Tabs
     function switchTab(tab) {
@@ -112,20 +141,20 @@
 
         tbody.innerHTML = quotes.map(q => `
           <tr class="hover:bg-slate-50 transition">
-            <td class="p-4 font-semibold text-slate-900">${q.quote_number || q.id}</td>
-            <td class="p-4">${q.customer_name}</td>
+            <td class="p-4 font-semibold text-slate-900">${escapeHtml(q.quote_number || q.id)}</td>
+            <td class="p-4">${escapeHtml(q.customer_name)}</td>
             <td class="p-4 text-xs text-slate-500">
-              ${q.length_mm}mm | ${q.quantity} pcs
+              ${escapeHtml(q.length_mm)}mm | ${escapeHtml(q.quantity)} pcs
             </td>
             <td class="p-4 font-semibold text-slate-900">£${Number(q.total).toFixed(2)}</td>
             <td class="p-4">
               <span class="px-2 py-1 text-xs font-semibold rounded-full ${q.source === 'Customer Portal' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}">
-                ${q.source || 'Portal'}
+                ${escapeHtml(q.source || 'Portal')}
               </span>
             </td>
             <td class="p-4">
               <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${getStatusBadgeClass(q.status)}">
-                ${q.status}
+                ${escapeHtml(q.status)}
               </span>
             </td>
             <td class="p-4 text-right space-x-2">
@@ -144,6 +173,42 @@
         `).join('');
       } catch (err) {
         tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Error loading quotes: ${err.message}</td></tr>`;
+      }
+    }
+
+    // Fetch All Customers from Cloudflare D1
+    async function loadCustomers() {
+      const tbody = document.getElementById('customers-table-body');
+      tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">Fetching latest customers...</td></tr>';
+
+      try {
+        const res = await fetch(API_CUSTOMERS_URL);
+        const customers = await res.json();
+
+        if (!customers || customers.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">No customers saved yet.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = customers.map(c => `
+          <tr class="hover:bg-slate-50 transition">
+            <td class="p-4 font-semibold text-slate-900">${escapeHtml(c.name)}</td>
+            <td class="p-4 text-slate-600">${escapeHtml(c.company) || '—'}</td>
+            <td class="p-4">
+              <span class="px-2 py-1 text-xs font-semibold rounded-full ${c.type === 'Trade' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}">
+                ${escapeHtml(c.type)}
+              </span>
+            </td>
+            <td class="p-4 text-slate-600">${c.discount_pct ? escapeHtml(String(c.discount_pct)) + '%' : '—'}</td>
+            <td class="p-4 text-xs text-slate-500">
+              ${escapeHtml(c.email) || 'No email'}<br>
+              ${escapeHtml(c.phone) || 'No phone'}
+            </td>
+            <td class="p-4 text-xs text-slate-500">${escapeHtml(c.notes) || ''}</td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
       }
     }
 
@@ -173,6 +238,7 @@
 
     // Initial Load
     loadQuotes();
+    loadCustomers();
   </script>
 </body>
 </html>
