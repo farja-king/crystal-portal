@@ -174,6 +174,7 @@
       });
 
       const [editingCustomerId, setEditingCustomerId] = useState(null);
+      const [editingQuoteId, setEditingQuoteId] = useState(null);
 
       // Load Quotes directly from Cloudflare D1 API on startup
       async function fetchCloudQuotes() {
@@ -193,6 +194,7 @@
                 vatAmount: Number(q.vat_amount),
                 total: Number(q.total),
                 status: q.status,
+                notes: q.notes || '',
                 createdAt: q.created_at || new Date().toISOString()
               }));
               setQuotes(formatted);
@@ -407,40 +409,109 @@
         }
       }
 
-      // SAVE QUOTE DIRECTLY TO CLOUDFLARE DATABASE
+      // SAVE OR UPDATE A QUOTE DIRECTLY IN CLOUDFLARE DATABASE
       async function saveQuote() {
         const customer = customers.find((c) => c.id === quoteForm.customerId) || customers[0];
         if (!customer) return;
 
         const finalLength = Math.max(parsedLength, settings.minimumBillableLengthMm);
-        const qNum = makeQuoteNumber(quotes.length);
 
-        const newQuotePayload = {
-          id: generateUUID(),
-          quote_number: qNum,
-          customer_name: customer.name,
-          length_mm: finalLength,
-          quantity: parsedQty,
-          unit_price: unitPrice,
-          subtotal: subtotal,
-          vat_amount: vatAmount,
-          total: total,
-          status: quoteForm.status,
-          source: 'Portal'
-        };
+        if (editingQuoteId) {
+          const payload = {
+            id: editingQuoteId,
+            customer_name: customer.name,
+            length_mm: finalLength,
+            quantity: parsedQty,
+            unit_price: unitPrice,
+            subtotal: subtotal,
+            vat_amount: vatAmount,
+            total: total,
+            status: quoteForm.status,
+            notes: quoteForm.notes,
+          };
 
-        try {
-          await fetch(API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newQuotePayload)
-          });
-        } catch (e) {
-          console.error("Failed cloud save, relying on UI update", e);
+          try {
+            await fetch(API_URL, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+          } catch (e) {
+            console.error("Failed cloud save, relying on UI update", e);
+          }
+
+          setEditingQuoteId(null);
+        } else {
+          const qNum = makeQuoteNumber(quotes.length);
+          const newQuotePayload = {
+            id: generateUUID(),
+            quote_number: qNum,
+            customer_name: customer.name,
+            length_mm: finalLength,
+            quantity: parsedQty,
+            unit_price: unitPrice,
+            subtotal: subtotal,
+            vat_amount: vatAmount,
+            total: total,
+            status: quoteForm.status,
+            source: 'Portal'
+          };
+
+          try {
+            await fetch(API_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(newQuotePayload)
+            });
+          } catch (e) {
+            console.error("Failed cloud save, relying on UI update", e);
+          }
         }
 
         await fetchCloudQuotes();
         setTab('quotes');
+      }
+
+      // Prefill the Quick Quote form with an existing quote's data for editing
+      function startEditQuote(quote) {
+        const matchedCustomer = customers.find((c) => c.name === quote.customerName);
+        setEditingQuoteId(quote.id);
+        setQuoteForm({
+          customerId: matchedCustomer ? matchedCustomer.id : (customers[0]?.id || ''),
+          lengthMm: String(quote.lengthMm),
+          quantity: String(quote.quantity),
+          vat: quote.vatAmount > 0,
+          notes: quote.notes || '',
+          status: quote.status,
+        });
+        setTab('dashboard');
+      }
+
+      function cancelEditQuote() {
+        setEditingQuoteId(null);
+        setQuoteForm({
+          customerId: customers[0]?.id || '',
+          lengthMm: String(settings.minimumBillableLengthMm),
+          quantity: '1',
+          vat: true,
+          notes: '',
+          status: 'Draft',
+        });
+      }
+
+      // Delete a quote from Cloudflare D1
+      async function deleteQuote(id) {
+        if (!confirm('Delete this quote? This cannot be undone.')) return;
+        try {
+          await fetch(API_URL, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+          });
+        } catch (e) {
+          console.error('Failed to delete quote', e);
+        }
+        await fetchCloudQuotes();
       }
 
       // ONE-CLICK PORTING OF ALL LOCAL QUOTES TO CLOUDFLARE D1
@@ -674,7 +745,7 @@
                   </section>
 
                   <section className="grid gap-6 lg:grid-cols-2">
-                    <Card title="Quick Quote" actions={<Badge tone="blue">Live pricing</Badge>}>
+                    <Card title={editingQuoteId ? 'Edit Quote' : 'Quick Quote'} actions={<Badge tone="blue">Live pricing</Badge>}>
                       <div className="grid gap-4 md:grid-cols-2">
                         <label className="space-y-2 text-sm">
                           <span className="text-slate-700 font-medium">Customer</span>
@@ -751,11 +822,17 @@
 
                       <div className="mt-4 flex flex-wrap gap-3">
                         <button onClick={saveQuote} className="inline-flex items-center gap-2 rounded-2xl bg-sky-500 px-4 py-3 font-semibold text-slate-950 transition hover:bg-sky-400">
-                          <Icon name="save" size={16} /> Save Quote
+                          <Icon name="save" size={16} /> {editingQuoteId ? 'Update Quote' : 'Save Quote'}
                         </button>
-                        <button onClick={() => setTab('quotes')} className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-slate-100 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-200">
-                          <Icon name="clipboard-list" size={16} /> View Quotes
-                        </button>
+                        {editingQuoteId ? (
+                          <button onClick={cancelEditQuote} className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-slate-100 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-200">
+                            <Icon name="x" size={16} /> Cancel Edit
+                          </button>
+                        ) : (
+                          <button onClick={() => setTab('quotes')} className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-slate-100 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-200">
+                            <Icon name="clipboard-list" size={16} /> View Quotes
+                          </button>
+                        )}
                       </div>
                     </Card>
 
@@ -835,9 +912,17 @@
                                 </select>
                               </td>
                               <td className="px-4 py-3">
-                                <button onClick={() => printQuote(quote)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 font-medium hover:bg-slate-50">
-                                  <Icon name="printer" size={16} /> Print
-                                </button>
+                                <div className="flex flex-wrap gap-2">
+                                  <button onClick={() => printQuote(quote)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 font-medium hover:bg-slate-50">
+                                    <Icon name="printer" size={16} /> Print
+                                  </button>
+                                  <button onClick={() => startEditQuote(quote)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 font-medium hover:bg-slate-50">
+                                    <Icon name="pencil" size={16} /> Edit
+                                  </button>
+                                  <button onClick={() => deleteQuote(quote.id)} className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-3 py-2 font-medium text-rose-600 hover:bg-rose-50">
+                                    <Icon name="trash-2" size={16} /> Delete
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}

@@ -61,23 +61,23 @@
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Length (mm)</span>
-            <input id="qedit-length" type="number" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+            <input id="qedit-length" type="number" oninput="onQuoteLengthInput()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Quantity</span>
-            <input id="qedit-quantity" type="number" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+            <input id="qedit-quantity" type="number" oninput="recalcQuoteSubtotal()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Unit Price (£)</span>
-            <input id="qedit-unit-price" type="number" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+            <input id="qedit-unit-price" type="number" step="0.01" oninput="recalcQuoteSubtotal()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Subtotal (£)</span>
-            <input id="qedit-subtotal" type="number" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+            <input id="qedit-subtotal" type="number" step="0.01" oninput="recalcQuoteVat()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">VAT Amount (£)</span>
-            <input id="qedit-vat-amount" type="number" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+            <input id="qedit-vat-amount" type="number" step="0.01" oninput="recalcQuoteTotal()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Total (£)</span>
@@ -88,7 +88,7 @@
           <span class="block font-medium text-slate-700 mb-1">Notes</span>
           <textarea id="qedit-notes" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 min-h-20"></textarea>
         </label>
-        <p class="mt-2 text-xs text-slate-400">Unit price, subtotal, VAT, and total are stored values — editing length/quantity here does not recalculate them automatically.</p>
+        <p class="mt-2 text-xs text-slate-400">Changing Length recalculates Unit Price from your pricing settings; Quantity/Unit Price/Subtotal/VAT each recalculate everything below them. Every field stays manually editable if you need to override.</p>
         <div class="mt-4 flex gap-3">
           <button onclick="saveQuoteEdit()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             Save Changes
@@ -208,6 +208,39 @@
   <script>
     const API_URL = '/api/quotes';
     const API_CUSTOMERS_URL = '/api/customers';
+    const API_SETTINGS_URL = '/api/settings';
+
+    // Pricing settings, fetched once from D1 and cached for the life of the page
+    let cachedSettings = null;
+    async function ensureSettings() {
+      if (cachedSettings) return cachedSettings;
+      try {
+        const res = await fetch(API_SETTINGS_URL);
+        if (res.ok) {
+          const row = await res.json();
+          if (row) {
+            cachedSettings = {
+              minimumBillableLengthMm: Number(row.minimum_billable_length_mm) || 200,
+              minimumCharge: Number(row.minimum_charge) || 0,
+              pricePerAdditional100Mm: Number(row.price_per_additional_100mm) || 0,
+              vatRate: Number(row.vat_rate) || 0.2,
+            };
+            return cachedSettings;
+          }
+        }
+      } catch (e) {}
+      // Fallback if settings haven't been saved to the cloud yet, matching the portal's own defaults
+      cachedSettings = { minimumBillableLengthMm: 200, minimumCharge: 5, pricePerAdditional100Mm: 1, vatRate: 0.2 };
+      return cachedSettings;
+    }
+
+    // Same pricing formula the portal uses (see calculateUnitPrice in index.html)
+    function calculateUnitPrice(lengthMm, settings) {
+      const parsedLength = Number(lengthMm) || 0;
+      const effectiveLength = Math.max(parsedLength, settings.minimumBillableLengthMm);
+      const extraBands = Math.max(0, (effectiveLength - settings.minimumBillableLengthMm) / 100);
+      return settings.minimumCharge + extraBands * settings.pricePerAdditional100Mm;
+    }
 
     // Escape untrusted text before dropping it into innerHTML
     function escapeHtml(str) {
@@ -435,11 +468,43 @@
       document.getElementById('qedit-notes').value = q.notes || '';
       document.getElementById('quote-edit-form').classList.remove('hidden');
       document.getElementById('quote-edit-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      ensureSettings(); // warm the cache so the first Length edit doesn't wait on a fetch
     }
 
     function closeQuoteEditForm() {
       editingQuoteId = null;
       document.getElementById('quote-edit-form').classList.add('hidden');
+    }
+
+    // Length changed: recompute Unit Price from pricing settings, then cascade down
+    async function onQuoteLengthInput() {
+      const settings = await ensureSettings();
+      const length = Number(document.getElementById('qedit-length').value) || 0;
+      document.getElementById('qedit-unit-price').value = calculateUnitPrice(length, settings).toFixed(2);
+      recalcQuoteSubtotal();
+    }
+
+    // Quantity or Unit Price changed: recompute Subtotal, then cascade down
+    function recalcQuoteSubtotal() {
+      const unitPrice = Number(document.getElementById('qedit-unit-price').value) || 0;
+      const qty = Number(document.getElementById('qedit-quantity').value) || 0;
+      document.getElementById('qedit-subtotal').value = (unitPrice * qty).toFixed(2);
+      recalcQuoteVat();
+    }
+
+    // Subtotal changed: recompute VAT from the pricing settings' VAT rate, then cascade down
+    async function recalcQuoteVat() {
+      const settings = await ensureSettings();
+      const subtotal = Number(document.getElementById('qedit-subtotal').value) || 0;
+      document.getElementById('qedit-vat-amount').value = (subtotal * settings.vatRate).toFixed(2);
+      recalcQuoteTotal();
+    }
+
+    // VAT changed: recompute Total. Total itself stays freely editable with no further cascade.
+    function recalcQuoteTotal() {
+      const subtotal = Number(document.getElementById('qedit-subtotal').value) || 0;
+      const vatAmount = Number(document.getElementById('qedit-vat-amount').value) || 0;
+      document.getElementById('qedit-total').value = (subtotal + vatAmount).toFixed(2);
     }
 
     // Save edited quote fields back to Cloudflare D1
