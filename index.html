@@ -629,7 +629,7 @@
       });
 
       const stats = useMemo(() => {
-        const revenue = quotes.reduce((sum, q) => sum + q.total, 0);
+        const revenue = quotes.filter((q) => q.status === 'Completed').reduce((sum, q) => sum + q.total, 0);
         const totalLength = quotes.reduce((sum, q) => sum + q.lengthMm * q.quantity, 0);
         const openQuotes = quotes.filter((q) => q.status === 'Draft' || q.status === 'Sent').length;
         return { revenue, totalLength, openQuotes };
@@ -732,7 +732,7 @@
                   <section className="grid gap-4 md:grid-cols-3">
                     <Card title="Revenue">
                       <div className="text-3xl font-semibold text-white">{money(stats.revenue)}</div>
-                      <p className="mt-2 text-sm text-slate-400">Total from saved quotes</p>
+                      <p className="mt-2 text-sm text-slate-400">Total from completed quotes</p>
                     </Card>
                     <Card title="Open Quotes">
                       <div className="text-3xl font-semibold text-white">{stats.openQuotes}</div>
