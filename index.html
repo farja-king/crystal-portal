@@ -391,10 +391,20 @@
         await fetchCloudCustomers();
       }
 
-      function updateQuoteStatus(quoteId, newStatus) {
+      // UPDATE QUOTE STATUS DIRECTLY IN CLOUDFLARE DATABASE
+      async function updateQuoteStatus(quoteId, newStatus) {
         setQuotes((prev) =>
           prev.map((q) => (q.id === quoteId ? { ...q, status: newStatus } : q))
         );
+        try {
+          await fetch(API_URL, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: quoteId, status: newStatus }),
+          });
+        } catch (e) {
+          console.error('Failed to sync status change to cloud', e);
+        }
       }
 
       // SAVE QUOTE DIRECTLY TO CLOUDFLARE DATABASE
@@ -781,9 +791,14 @@
                       <h2 className="text-2xl font-semibold text-white">Quotes</h2>
                       <p className="text-slate-400">Create, review, and print customer quotes.</p>
                     </div>
-                    <button onClick={() => setTab('dashboard')} className="inline-flex items-center gap-2 rounded-2xl bg-sky-500 px-4 py-3 font-semibold text-slate-950 transition hover:bg-sky-400">
-                      <Icon name="calculator" size={16} /> Quick Quote
-                    </button>
+                    <div className="flex flex-wrap gap-3">
+                      <button onClick={() => fetchCloudQuotes()} className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-slate-100 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-200">
+                        <Icon name="refresh-cw" size={16} /> Refresh Quotes
+                      </button>
+                      <button onClick={() => setTab('dashboard')} className="inline-flex items-center gap-2 rounded-2xl bg-sky-500 px-4 py-3 font-semibold text-slate-950 transition hover:bg-sky-400">
+                        <Icon name="calculator" size={16} /> Quick Quote
+                      </button>
+                    </div>
                   </div>
 
                   <Card>
