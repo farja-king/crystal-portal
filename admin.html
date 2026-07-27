@@ -76,6 +76,52 @@
         </button>
       </div>
 
+      <!-- Edit Customer Form (hidden until Edit is clicked) -->
+      <div id="customer-edit-form" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <h3 class="text-lg font-bold text-slate-900 mb-4">Edit Customer</h3>
+        <div class="grid gap-4 md:grid-cols-2">
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Name</span>
+            <input id="edit-name" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Company</span>
+            <input id="edit-company" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Email</span>
+            <input id="edit-email" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Phone</span>
+            <input id="edit-phone" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Type</span>
+            <select id="edit-type" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+              <option>Retail</option>
+              <option>Trade</option>
+            </select>
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Discount %</span>
+            <input id="edit-discount" type="number" min="0" max="100" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+        </div>
+        <label class="block text-sm mt-4">
+          <span class="block font-medium text-slate-700 mb-1">Notes</span>
+          <textarea id="edit-notes" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 min-h-20"></textarea>
+        </label>
+        <div class="mt-4 flex gap-3">
+          <button onclick="saveCustomerEdit()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Save Changes
+          </button>
+          <button onclick="closeCustomerEditForm()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Cancel
+          </button>
+        </div>
+      </div>
+
       <!-- Customers Table -->
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table class="w-full text-left border-collapse">
@@ -87,11 +133,12 @@
               <th class="p-4">Discount</th>
               <th class="p-4">Contact</th>
               <th class="p-4">Notes</th>
+              <th class="p-4 text-right">Actions</th>
             </tr>
           </thead>
           <tbody id="customers-table-body" class="divide-y divide-slate-100 text-sm">
             <tr>
-              <td colspan="6" class="p-8 text-center text-slate-400">Loading customers from database...</td>
+              <td colspan="7" class="p-8 text-center text-slate-400">Loading customers from database...</td>
             </tr>
           </tbody>
         </table>
@@ -159,12 +206,12 @@
             </td>
             <td class="p-4 text-right space-x-2">
               ${q.status === 'Pending Approval' ? `
-                <button onclick="updateStatus('${q.id}', 'Approved')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                <button data-action="approve-quote" data-id="${escapeHtml(q.id)}" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
                   Approve
                 </button>
               ` : ''}
               ${q.status === 'Approved' ? `
-                <button onclick="updateStatus('${q.id}', 'Completed')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                <button data-action="complete-quote" data-id="${escapeHtml(q.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
                   Mark Complete
                 </button>
               ` : ''}
@@ -176,17 +223,25 @@
       }
     }
 
+    // Cache of the last-loaded customers, keyed by id, so Edit can prefill the form
+    // without re-embedding untrusted values into onclick attributes
+    let customersById = {};
+    let editingCustomerId = null;
+
     // Fetch All Customers from Cloudflare D1
     async function loadCustomers() {
       const tbody = document.getElementById('customers-table-body');
-      tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">Fetching latest customers...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Fetching latest customers...</td></tr>';
 
       try {
         const res = await fetch(API_CUSTOMERS_URL);
         const customers = await res.json();
 
+        customersById = {};
+        (customers || []).forEach(c => { customersById[c.id] = c; });
+
         if (!customers || customers.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">No customers saved yet.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No customers saved yet.</td></tr>';
           return;
         }
 
@@ -205,10 +260,82 @@
               ${escapeHtml(c.phone) || 'No phone'}
             </td>
             <td class="p-4 text-xs text-slate-500">${escapeHtml(c.notes) || ''}</td>
+            <td class="p-4 text-right space-x-2 whitespace-nowrap">
+              <button data-action="edit-customer" data-id="${escapeHtml(c.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                Edit
+              </button>
+              <button data-action="delete-customer" data-id="${escapeHtml(c.id)}" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                Delete
+              </button>
+            </td>
           </tr>
         `).join('');
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
+      }
+    }
+
+    // Open the edit form prefilled with the selected customer's data
+    function openCustomerEditForm(id) {
+      const c = customersById[id];
+      if (!c) return;
+      editingCustomerId = id;
+      document.getElementById('edit-name').value = c.name || '';
+      document.getElementById('edit-company').value = c.company || '';
+      document.getElementById('edit-email').value = c.email || '';
+      document.getElementById('edit-phone').value = c.phone || '';
+      document.getElementById('edit-type').value = c.type || 'Retail';
+      document.getElementById('edit-discount').value = c.discount_pct || 0;
+      document.getElementById('edit-notes').value = c.notes || '';
+      document.getElementById('customer-edit-form').classList.remove('hidden');
+      document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function closeCustomerEditForm() {
+      editingCustomerId = null;
+      document.getElementById('customer-edit-form').classList.add('hidden');
+    }
+
+    // Save edited customer fields back to Cloudflare D1
+    async function saveCustomerEdit() {
+      if (!editingCustomerId) return;
+
+      try {
+        await fetch(API_CUSTOMERS_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: editingCustomerId,
+            name: document.getElementById('edit-name').value,
+            company: document.getElementById('edit-company').value,
+            email: document.getElementById('edit-email').value,
+            phone: document.getElementById('edit-phone').value,
+            type: document.getElementById('edit-type').value,
+            discount_pct: Number(document.getElementById('edit-discount').value) || 0,
+            notes: document.getElementById('edit-notes').value,
+          })
+        });
+        closeCustomerEditForm();
+        loadCustomers();
+      } catch (err) {
+        alert('Failed to save customer: ' + err.message);
+      }
+    }
+
+    // Delete a customer from Cloudflare D1
+    async function deleteCustomerRow(id) {
+      const c = customersById[id];
+      if (!confirm(`Delete customer "${c ? c.name : id}"? This cannot be undone.`)) return;
+
+      try {
+        await fetch(API_CUSTOMERS_URL, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        loadCustomers();
+      } catch (err) {
+        alert('Failed to delete customer: ' + err.message);
       }
     }
 
@@ -235,6 +362,21 @@
         alert('Failed to update status: ' + err.message);
       }
     }
+
+    // Single delegated handler for all data-action buttons rendered from server data.
+    // Using data-id + delegation (instead of embedding ids straight into onclick="...")
+    // means an id value can never be parsed as JS, even if it contains quotes.
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      switch (btn.dataset.action) {
+        case 'approve-quote': updateStatus(id, 'Approved'); break;
+        case 'complete-quote': updateStatus(id, 'Completed'); break;
+        case 'edit-customer': openCustomerEditForm(id); break;
+        case 'delete-customer': deleteCustomerRow(id); break;
+      }
+    });
 
     // Initial Load
     loadQuotes();
