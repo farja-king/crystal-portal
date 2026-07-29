@@ -90,6 +90,20 @@ export async function onRequest(context) {
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_brand ON products (brand)"),
     ]);
 
+    // The products table already existed on live D1 before available_colours/
+    // available_sizes were added to the CREATE TABLE above - "IF NOT EXISTS"
+    // is a no-op against an existing table, so those columns need adding here
+    // instead. ALTER TABLE ADD COLUMN throws if the column's already there,
+    // so each attempt is swallowed individually rather than run once - once
+    // both exist this block is a harmless no-op every request.
+    for (const col of ["available_colours", "available_sizes"]) {
+      try {
+        await db.prepare(`ALTER TABLE products ADD COLUMN ${col} TEXT DEFAULT '[]'`).run();
+      } catch {
+        // already exists
+      }
+    }
+
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
       const url = new URL(request.url);
