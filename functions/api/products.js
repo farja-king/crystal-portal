@@ -120,6 +120,11 @@ export async function onRequest(context) {
         where.push("(supplier_code LIKE ?1 OR title LIKE ?1 OR colour LIKE ?1 OR brand LIKE ?1 OR supplier_ref LIKE ?1)");
         binds.push(`%${q}%`);
       }
+      // Exact code match - used by the quote builder once a product's been
+      // picked, to pull every colour/size variant that code actually has
+      // (for the breakdown dropdowns), rather than a fuzzy LIKE search.
+      const code = (p.get("code") || "").trim();
+      if (code) { where.push(`supplier_code = ?${binds.length + 1}`); binds.push(code); }
       for (const [param, col] of [["supplier", "supplier"], ["brand", "brand"], ["category", "category"]]) {
         const v = p.get(param);
         if (v) { where.push(`${col} = ?${binds.length + 1}`); binds.push(v); }

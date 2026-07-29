@@ -1311,6 +1311,7 @@
         // "All Colours" / "XS - XXL" covers a whole size run at one price.
         // breakdown is where the actual colour+size+qty per unit gets itemized.
         breakdown: source === 'catalog' ? [{ colour: '', size: '', qty: 1 }] : [],
+        colourOptions: [], sizeOptions: [],
         decorations: [],
       });
       renderOrderLines();
@@ -1407,7 +1408,7 @@
       }, 300);
     }
 
-    function selectOrderLineProduct(idx, resultIdx) {
+    async function selectOrderLineProduct(idx, resultIdx) {
       const p = orderLines[idx]._searchResults[resultIdx];
       if (!p) return;
       // The catalog row is often a pricing tier ("All Colours" / "XS - XXL"
@@ -1420,12 +1421,29 @@
         product_id: p.id, supplier_code: p.supplier_code, title: p.title,
         colour: p.colour, size: p.size, unit_price: Number(p.sell_price) || 0,
         breakdown: [{ colour: specificColour, size: specificSize, qty: 1 }],
+        colourOptions: [], sizeOptions: [],
       });
       renderOrderLines();
+      await loadOrderLineVariantOptions(idx, p.supplier_code);
+    }
+
+    // Pulls every colour/size variant this exact code actually has in the
+    // catalog, for the breakdown row dropdowns - see the comment on the
+    // /api/products "code" filter for why this is an exact match, not q=.
+    async function loadOrderLineVariantOptions(idx, code) {
+      try {
+        const res = await fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(code) + '&limit=200');
+        const data = await res.json();
+        // Bail if the line moved on (removed, or a different product picked) while this was in flight.
+        if (!orderLines[idx] || orderLines[idx].supplier_code !== code) return;
+        orderLines[idx].colourOptions = [...new Set((data.results || []).map((r) => r.colour).filter(Boolean))];
+        orderLines[idx].sizeOptions = [...new Set((data.results || []).map((r) => r.size).filter(Boolean))];
+        renderOrderLines();
+      } catch (e) {}
     }
 
     function clearOrderLineProduct(idx) {
-      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1 }] });
+      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1 }], colourOptions: [], sizeOptions: [] });
       renderOrderLines();
     }
 
@@ -1487,14 +1505,16 @@
         // Colours" / "XS - XXL"), not one physical garment, so once it's
         // selected the actual colour/size/qty per unit gets itemized here.
         const breakdownBlock = (!isCustomerSupplied && line.product_id) ? `
+          <datalist id="ord-colours-${idx}">${(line.colourOptions || []).map((c) => `<option value="${escapeAttr(c)}">`).join('')}</datalist>
+          <datalist id="ord-sizes-${idx}">${(line.sizeOptions || []).map((s) => `<option value="${escapeAttr(s)}">`).join('')}</datalist>
           <div class="mt-2 space-y-1.5">
             <div class="flex items-center gap-2 text-xs text-slate-500 font-medium px-1">
               <span class="flex-1">Colour</span><span class="w-24">Size</span><span class="w-16">Qty</span><span class="w-5"></span>
             </div>
             ${line.breakdown.map((b, rowIdx) => `
               <div class="flex items-center gap-2">
-                <input value="${escapeAttr(b.colour)}" oninput="updateBreakdownField(${idx}, ${rowIdx}, 'colour', this.value)" placeholder="e.g. Red" class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm" />
-                <input value="${escapeAttr(b.size)}" oninput="updateBreakdownField(${idx}, ${rowIdx}, 'size', this.value)" placeholder="e.g. M" class="w-24 rounded border border-slate-300 px-2 py-1 text-sm" />
+                <input list="ord-colours-${idx}" value="${escapeAttr(b.colour)}" oninput="updateBreakdownField(${idx}, ${rowIdx}, 'colour', this.value)" placeholder="e.g. Red" class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm" />
+                <input list="ord-sizes-${idx}" value="${escapeAttr(b.size)}" oninput="updateBreakdownField(${idx}, ${rowIdx}, 'size', this.value)" placeholder="e.g. M" class="w-24 rounded border border-slate-300 px-2 py-1 text-sm" />
                 <input type="number" min="1" value="${b.qty}" oninput="updateBreakdownQtyLive(${idx}, ${rowIdx}, this.value)" class="w-16 rounded border border-slate-300 px-2 py-1 text-sm" />
                 <button type="button" onclick="removeBreakdownRow(${idx}, ${rowIdx})" class="w-5 text-rose-500 hover:text-rose-700 text-sm ${line.breakdown.length <= 1 ? 'invisible' : ''}">✕</button>
               </div>`).join('')}
