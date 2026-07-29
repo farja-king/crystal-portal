@@ -188,14 +188,10 @@ export async function onRequest(context) {
       const data = await request.json();
 
       // Bulk pricing: setting ~6.3k sell prices by hand is not realistic, so a
-      // markup/margin can be applied across a filtered slice of the catalog.
+      // markup/margin can be applied across a filtered slice, or a fixed price
+      // can be set on all filtered items (useful for "copy this price to all").
       if (data.apply_pricing) {
         const a = data.apply_pricing;
-        const pct = Number(a.percent);
-        if (!isFinite(pct)) return json({ error: "percent must be a number" }, 400);
-        if (a.mode === "margin" && pct >= 100) {
-          return json({ error: "A margin of 100% or more is not achievable" }, 400);
-        }
 
         const where = [];
         const binds = [];
@@ -212,10 +208,23 @@ export async function onRequest(context) {
         }
         const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-        // markup is on cost (cost x 1.5), margin is on the sell price (cost / 0.5)
-        const expr = a.mode === "margin"
-          ? `ROUND(cost_price / ${(1 - pct / 100).toFixed(6)}, 2)`
-          : `ROUND(cost_price * ${(1 + pct / 100).toFixed(6)}, 2)`;
+        let expr;
+        if (a.mode === "fixed") {
+          const price = Number(a.price);
+          if (!isFinite(price) || price < 0) return json({ error: "price must be a non-negative number" }, 400);
+          expr = `ROUND(?, 2)`;
+          binds.push(price);
+        } else {
+          const pct = Number(a.percent);
+          if (!isFinite(pct)) return json({ error: "percent must be a number" }, 400);
+          if (a.mode === "margin" && pct >= 100) {
+            return json({ error: "A margin of 100% or more is not achievable" }, 400);
+          }
+          // markup is on cost (cost x 1.5), margin is on the sell price (cost / 0.5)
+          expr = a.mode === "margin"
+            ? `ROUND(cost_price / ${(1 - pct / 100).toFixed(6)}, 2)`
+            : `ROUND(cost_price * ${(1 + pct / 100).toFixed(6)}, 2)`;
+        }
 
         const res = await db.prepare(`
           UPDATE products

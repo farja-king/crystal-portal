@@ -281,9 +281,25 @@
         </label>
       </div>
 
+      <!-- VAT note -->
+      <div class="bg-emerald-50 rounded-xl border border-emerald-200 p-4 mb-6">
+        <p class="text-sm text-emerald-900">
+          <strong>VAT note:</strong> The VAT shown per product is calculated on the supplier's <strong>cost price</strong>, not your sell price. Since you're not VAT registered yet, this is informational only and doesn't affect your checkout.
+        </p>
+      </div>
+
       <!-- Bulk pricing -->
       <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4 mb-6">
         <h3 class="font-bold text-slate-900 mb-1">Bulk pricing</h3>
+
+        <!-- Quick apply: copy a price to all filtered -->
+        <div id="cat-quick-apply" class="mb-4 p-3 bg-white rounded-lg border border-indigo-300 hidden">
+          <p class="text-sm text-slate-700 mb-2">Just entered a price? Apply it to all filtered products:</p>
+          <button id="cat-quick-apply-btn" onclick="applyPriceToAllFiltered(document.querySelector('[data-sell-id]')?.value || '')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
+            Apply to all filtered
+          </button>
+        </div>
+
         <p class="text-sm text-slate-600 mb-3">
           Applies to <span id="cat-bulk-scope" class="font-semibold">the current filter</span>. Markup is added to cost; margin is taken off your sell price.
         </p>
@@ -865,6 +881,17 @@
         if (!res.ok) throw new Error('HTTP ' + res.status);
         input.classList.remove('border-slate-300', 'border-red-400');
         input.classList.add('border-emerald-400');
+
+        // Show the quick-apply button if a price was entered
+        if (raw && Number(raw) > 0) {
+          const quickApply = document.getElementById('cat-quick-apply');
+          const btn = document.getElementById('cat-quick-apply-btn');
+          quickApply.classList.remove('hidden');
+          const priceDisplay = '£' + Number(raw).toFixed(2);
+          btn.textContent = 'Apply ' + priceDisplay + ' to all filtered';
+          btn.onclick = () => applyPriceToAllFiltered(Number(raw));
+        }
+
         // refresh the row so profit/margin reflect what was actually stored
         await loadCatalog(catalogOffset);
         loadFacets();
@@ -917,6 +944,50 @@
       } catch (e) {
         msg.className = 'text-sm mt-3 text-red-600';
         msg.textContent = 'Could not apply pricing: ' + e.message;
+      }
+    }
+
+    async function applyPriceToAllFiltered(price) {
+      const f = catalogFilters();
+      const onlyUnpriced = document.getElementById('cat-bulk-only-unpriced').checked;
+      const msg = document.getElementById('cat-bulk-msg');
+
+      const priceNum = Number(price);
+      if (!isFinite(priceNum) || priceNum < 0) { alert('Enter a valid price'); return; }
+
+      const hasFilter = !!(f.q || f.supplier || f.brand || f.category) || onlyUnpriced;
+      const scope = hasFilter ? 'the ' + catalogTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
+      if (!confirm('Set the sell price of ' + scope + ' to £' + priceNum.toFixed(2) + '?\n\nThis will overwrite prices already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'))) return;
+
+      msg.className = 'text-sm mt-3 text-slate-600';
+      msg.textContent = 'Applying…';
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apply_pricing: {
+              mode: 'fixed',
+              price: priceNum,
+              q: f.q || undefined,
+              supplier: f.supplier || undefined,
+              brand: f.brand || undefined,
+              category: f.category || undefined,
+              only_unpriced: onlyUnpriced || undefined,
+              confirm_all: hasFilter ? undefined : true,
+            },
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        msg.className = 'text-sm mt-3 text-emerald-700 font-medium';
+        msg.textContent = 'Set £' + priceNum.toFixed(2) + ' on ' + (data.updated ?? 0).toLocaleString() + ' products.';
+        await loadCatalog(catalogOffset);
+        loadFacets();
+      } catch (e) {
+        msg.className = 'text-sm mt-3 text-red-600';
+        msg.textContent = 'Could not apply price: ' + e.message;
       }
     }
 
