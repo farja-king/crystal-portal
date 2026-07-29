@@ -81,14 +81,30 @@ export async function onRequest(context) {
         const colours = new Set();
         const sizes = new Set();
 
-        // Look for option elements or data attributes with colour/color and size
+        // Look for option elements with colour/color and size
         for (const m of html.matchAll(/<option[^>]*>([^<]+)<\/option>/gi)) {
           const text = m[1].trim();
-          // Common patterns: "Red", "Size: M", "Color - Blue"
-          if (text && text.length < 50) {
-            if (text.match(/^(xs|s|m|l|xl|xxl|3xl|4xl|5xl|6xl|7xl|8xl|\d+)\s*(?:-|to)?\s*(?:xs|s|m|l|xl|xxl|3xl|4xl|5xl|6xl|7xl|8xl|\d+)?$/i)) {
+          if (!text || text.length < 1 || text.length > 50) continue;
+
+          // Check if it's a size (single letter sizes or ranges like "XS - XXL")
+          const sizeMatch = text.match(/^(xs|s|m|l|xl|xxl|3xl|4xl|5xl|6xl|7xl|8xl)(?:\s*-\s*(xs|s|m|l|xl|xxl|3xl|4xl|5xl|6xl|7xl|8xl))?$/i);
+          if (sizeMatch) {
+            sizes.add(text);
+          } else if (!text.match(/^[\d\-\s]+$/) && !text.match(/^all/i)) {
+            // It's a colour if it's not all numbers/dashes and not "All..."
+            colours.add(text);
+          }
+        }
+
+        // Also look for JSON-encoded options in script tags (common in modern e-commerce)
+        const scriptMatches = html.matchAll(/"(?:option|variant|color|colour|size)"\s*:\s*\{[^}]*"label"\s*:\s*"([^"]+)"/gi);
+        for (const m of scriptMatches) {
+          const text = m[1].trim();
+          if (text && text.length > 0 && text.length < 50) {
+            const sizeMatch = text.match(/^(xs|s|m|l|xl|xxl|3xl|4xl|5xl|6xl|7xl|8xl)(?:\s*-\s*(xs|s|m|l|xl|xxl|3xl|4xl|5xl|6xl|7xl|8xl))?$/i);
+            if (sizeMatch) {
               sizes.add(text);
-            } else if (!text.match(/^\d{1,2}$/)) {
+            } else if (!text.match(/^[\d\-\s]+$/) && !text.match(/^all/i)) {
               colours.add(text);
             }
           }
