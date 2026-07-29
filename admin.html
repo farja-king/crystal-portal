@@ -376,10 +376,16 @@
           <h2 class="text-2xl font-bold text-slate-900">Quotes & Invoices</h2>
           <p class="text-slate-500 text-sm">Build a garment quote, then convert it to an invoice when it's confirmed. No VAT is shown anywhere - you're not VAT registered.</p>
         </div>
-        <button onclick="loadOrders()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-          🔄 Refresh
-        </button>
+        <div class="flex items-center gap-2">
+          <button id="ord-sync-btn" onclick="syncDataFromWebsite()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            🌐 Sync Data
+          </button>
+          <button onclick="loadOrders()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🔄 Refresh
+          </button>
+        </div>
       </div>
+      <p id="ord-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
 
       <!-- Builder -->
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
@@ -1731,6 +1737,33 @@
 
     let viewingOrderId = null;
     let editingOrderId = null;
+
+    async function syncDataFromWebsite() {
+      const btn = document.getElementById('ord-sync-btn');
+      const status = document.getElementById('ord-sync-status');
+      btn.disabled = true;
+      btn.textContent = '🌐 Syncing…';
+      status.classList.remove('hidden');
+      status.textContent = 'Reading embroidery.click sitemap and fetching current prices and product data — this can take a minute…';
+
+      try {
+        const res = await fetch('/api/sync-prices', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        let msg = 'Done: found ' + data.products_found_on_site + ' product pages on the site, updated ' + data.variants_updated + ' catalog variant(s) with prices and product data.';
+        if (data.codes_not_in_catalog && data.codes_not_in_catalog.length) {
+          msg += ' Codes on the site but not in the catalog: ' + data.codes_not_in_catalog.join(', ') + '.';
+        }
+        if (data.failed) msg += ' (' + data.failed + ' page(s) failed to parse.)';
+        status.textContent = msg;
+      } catch (e) {
+        status.textContent = 'Sync failed: ' + e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🌐 Sync Data';
+      }
+    }
 
     function closeOrderPanel() {
       viewingOrderId = null;
