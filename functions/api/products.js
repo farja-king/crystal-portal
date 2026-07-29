@@ -78,6 +78,7 @@ export async function onRequest(context) {
         active INTEGER DEFAULT 1,
         available_colours TEXT DEFAULT '[]',
         available_sizes TEXT DEFAULT '[]',
+        on_website INTEGER DEFAULT 0,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
@@ -90,15 +91,14 @@ export async function onRequest(context) {
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_brand ON products (brand)"),
     ]);
 
-    // The products table already existed on live D1 before available_colours/
-    // available_sizes were added to the CREATE TABLE above - "IF NOT EXISTS"
-    // is a no-op against an existing table, so those columns need adding here
-    // instead. ALTER TABLE ADD COLUMN throws if the column's already there,
-    // so each attempt is swallowed individually rather than run once - once
-    // both exist this block is a harmless no-op every request.
-    for (const col of ["available_colours", "available_sizes"]) {
+    // The products table already existed on live D1 before these columns were
+    // added to the CREATE TABLE above - "IF NOT EXISTS" is a no-op against an
+    // existing table, so they need adding here instead. ALTER TABLE ADD COLUMN
+    // throws if the column's already there, so each attempt is swallowed
+    // individually - once they all exist this block is a harmless no-op.
+    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0"]) {
       try {
-        await db.prepare(`ALTER TABLE products ADD COLUMN ${col} TEXT DEFAULT '[]'`).run();
+        await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run();
       } catch {
         // already exists
       }
@@ -146,10 +146,12 @@ export async function onRequest(context) {
         if (v) { where.push(`${col} = ?${binds.length + 1}`); binds.push(v); }
       }
       if (p.get("unpriced")) where.push("sell_price IS NULL");
-      // "priced" = items with a sell price set, i.e. what's actually live on
-      // the web store today (the sync job only ever sets sell_price for
-      // products it finds on the site).
-      if (p.get("priced")) where.push("sell_price IS NOT NULL");
+      // "priced" = "On my website" in the UI - this is on_website, not just
+      // "has a sell_price", because a product can now be priced for quoting
+      // (manually, or from the quote builder) without actually being live on
+      // embroidery.click. on_website is only ever set by the sync job, which
+      // is the one thing that actually confirms a product is live on site.
+      if (p.get("priced")) where.push("on_website = 1");
       if (p.get("active")) where.push("active = 1");
 
       const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";

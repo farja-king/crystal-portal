@@ -27,13 +27,13 @@ export async function onRequest(context) {
   const STORE_BASE = "https://embroidery.click";
 
   try {
-    // available_colours/available_sizes may not exist yet on a products table
-    // created before this sync started writing them - see the matching
-    // comment in products.js. ALTER TABLE throws if the column's already
-    // there, so each attempt is swallowed individually.
-    for (const col of ["available_colours", "available_sizes"]) {
+    // These columns may not exist yet on a products table created before this
+    // sync started writing them - see the matching comment in products.js.
+    // ALTER TABLE throws if the column's already there, so each attempt is
+    // swallowed individually.
+    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0"]) {
       try {
-        await db.prepare(`ALTER TABLE products ADD COLUMN ${col} TEXT DEFAULT '[]'`).run();
+        await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run();
       } catch {
         // already exists
       }
@@ -122,10 +122,15 @@ export async function onRequest(context) {
         const coloursList = Array.from(colours).filter(c => c && c.length > 0);
         const sizesList = Array.from(sizes).filter(s => s && s.length > 0);
 
+        // on_website = 1 unconditionally here: reaching this point means the
+        // code was just found live on the site during this sync pass, which
+        // is the one thing that actually confirms it belongs under "On my
+        // website" - unlike sell_price, which can also be set by hand for
+        // something Martin is only quoting, not selling online.
         const stmt = db.prepare(`
           UPDATE products
           SET sell_price = ?, profit = ROUND(? - cost_price * (1 + vat_rate), 2),
-              available_colours = ?, available_sizes = ?, updated_at = CURRENT_TIMESTAMP
+              available_colours = ?, available_sizes = ?, on_website = 1, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `);
         await db.batch(results.map((r) => stmt.bind(
