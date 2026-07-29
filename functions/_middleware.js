@@ -8,9 +8,19 @@ export async function onRequest(context) {
   const { request, env, next } = context;
   const url = new URL(request.url);
 
-  if (request.method === "OPTIONS") return next();
-  if (url.pathname === "/api/auth") return next();
-  if (!env.DB) return next();
+  // Marks every response this middleware passes through, so it can be confirmed
+  // from outside that the gate really is in front of static pages and not just
+  // the API routes.
+  async function pass(state) {
+    const res = await next();
+    const out = new Response(res.body, res);
+    out.headers.set("X-Portal-Auth", state);
+    return out;
+  }
+
+  if (request.method === "OPTIONS") return pass("preflight");
+  if (url.pathname === "/api/auth") return pass("auth-endpoint");
+  if (!env.DB) return pass("no-db");
 
   let cfg = null;
   try {
@@ -18,13 +28,13 @@ export async function onRequest(context) {
       "SELECT password_hash, secret FROM auth_config WHERE id = 'default'"
     ).first();
   } catch {
-    return next(); // auth_config not created yet - nothing to enforce
+    return pass("unconfigured"); // auth_config not created yet - nothing to enforce
   }
 
-  if (!cfg || !cfg.password_hash) return next();
+  if (!cfg || !cfg.password_hash) return pass("unconfigured");
 
   const token = tokenFrom(request);
-  if (token && (await isValid(token, cfg.secret))) return next();
+  if (token && (await isValid(token, cfg.secret))) return pass("authenticated");
 
   if (url.pathname.startsWith("/api/")) {
     return new Response(JSON.stringify({ error: "Not authenticated" }), {
