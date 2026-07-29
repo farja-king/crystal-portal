@@ -25,6 +25,7 @@ export async function onRequest(context) {
         password_hash TEXT,
         salt TEXT,
         secret TEXT,
+        api_key TEXT,
         failed_attempts INTEGER DEFAULT 0,
         locked_until INTEGER DEFAULT 0,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -46,6 +47,22 @@ export async function onRequest(context) {
       return json({ success: true }, 200, {
         "Set-Cookie": "portal_token=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
       });
+    }
+
+    if (action === "api_key") {
+      if (!cfg || !cfg.password_hash) {
+        return json({ error: "No password has been set yet. Use setup first." }, 409);
+      }
+      const ok = await verify(String(data.password || ""), cfg);
+      if (!ok) {
+        await recordFailure(db, cfg, now);
+        return json({ error: "Incorrect password" }, 401);
+      }
+      const key = randomHex(32);
+      await db.prepare(
+        "UPDATE auth_config SET api_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 'default'"
+      ).bind(key).run();
+      return json({ success: true, api_key: key });
     }
 
     if (action === "setup") {

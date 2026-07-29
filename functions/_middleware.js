@@ -33,6 +33,9 @@ export async function onRequest(context) {
 
   if (!cfg || !cfg.password_hash) return pass("unconfigured");
 
+  const apiKey = request.headers.get("X-API-Key") || new URL(request.url).searchParams.get("api_key");
+  if (apiKey && cfg.api_key && apiKey === cfg.api_key) return pass("authenticated-api-key");
+
   const token = tokenFrom(request);
   if (token && (await isValid(token, cfg.secret))) return pass("authenticated");
 

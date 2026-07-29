@@ -234,7 +234,7 @@ export async function onRequest(context) {
         const res = await db.prepare(`
           UPDATE products
           SET sell_price = ${expr},
-              profit = ROUND(${expr} - cost_price, 2),
+              profit = ROUND(${expr} - cost_price * (1 + vat_rate), 2),
               updated_at = CURRENT_TIMESTAMP
           ${clause}
         `).bind(...binds).run();
