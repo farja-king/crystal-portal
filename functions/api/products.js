@@ -32,6 +32,32 @@ export async function onRequest(context) {
     return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
   }
 
+  // Sizes in the supplier data are a mix of letter sizes (XS..8XL, sometimes
+  // as ranges like "S - XXL" or combos like "XXL/3XL"), numeric measurements
+  // (waist/chest inches, ml, age-in-months ranges), and a handful of
+  // non-garment tokens (CONE, COP, A4, One size). Plain alphabetical sort
+  // puts "3XL" before "4XL" before "S - XXL", which is why the table looked
+  // scrambled - this ranks the *smallest* size in the token first.
+  const LETTER_SIZE_ORDER = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL", "6XL", "7XL", "8XL"];
+  function sizeRank(raw) {
+    const s = String(raw || "").trim().toUpperCase();
+    if (!s) return 9999;
+    const base = s.split(" - ")[0].split("/")[0].trim();
+    const idx = LETTER_SIZE_ORDER.indexOf(base);
+    if (idx >= 0) return idx;
+    const numMatch = base.match(/^(\d+(?:\.\d+)?)/);
+    if (numMatch) return 1000 + parseFloat(numMatch[1]);
+    return 9999;
+  }
+  function compareProducts(a, b) {
+    if (a.supplier !== b.supplier) return a.supplier < b.supplier ? -1 : 1;
+    if (a.supplier_code !== b.supplier_code) return a.supplier_code < b.supplier_code ? -1 : 1;
+    if (a.colour !== b.colour) return a.colour < b.colour ? -1 : 1;
+    const rankDiff = sizeRank(a.size) - sizeRank(b.size);
+    if (rankDiff !== 0) return rankDiff;
+    return a.size < b.size ? -1 : a.size > b.size ? 1 : 0;
+  }
+
   try {
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS products (
@@ -109,12 +135,17 @@ export async function onRequest(context) {
       const limit = Math.min(Math.max(parseInt(p.get("limit") || "50", 10) || 50, 1), 500);
       const offset = Math.max(parseInt(p.get("offset") || "0", 10) || 0, 0);
 
-      const countRow = await db.prepare(`SELECT COUNT(*) AS n FROM products ${clause}`).bind(...binds).first();
-      const { results } = await db.prepare(
-        `SELECT * FROM products ${clause} ORDER BY supplier, supplier_code, colour, size LIMIT ? OFFSET ?`
-      ).bind(...binds, limit, offset).all();
+      // Size needs a garment-aware sort (XS..8XL, not alphabetical - see
+      // sizeRank), which SQL can't express, so the matching rows are pulled
+      // in full, sorted in JS, then paginated by slicing.
+      const { results: allMatches } = await db.prepare(
+        `SELECT * FROM products ${clause} ORDER BY supplier, supplier_code, colour`
+      ).bind(...binds).all();
 
-      return json({ total: countRow ? countRow.n : 0, limit, offset, results });
+      allMatches.sort(compareProducts);
+      const results = allMatches.slice(offset, offset + limit);
+
+      return json({ total: allMatches.length, limit, offset, results });
     }
 
     // ----------------------------------------------------------------- POST --
