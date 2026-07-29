@@ -76,6 +76,8 @@ export async function onRequest(context) {
         sell_price REAL,
         profit REAL,
         active INTEGER DEFAULT 1,
+        available_colours TEXT DEFAULT '[]',
+        available_sizes TEXT DEFAULT '[]',
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();

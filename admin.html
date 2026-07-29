@@ -1445,15 +1445,30 @@
       await loadOrderLineVariantOptions(idx, p.supplier_code);
     }
 
-    // Pulls every colour/size variant this exact code actually has in the
-    // catalog, for the breakdown row dropdowns - see the comment on the
-    // /api/products "code" filter for why this is an exact match, not q=.
+    // Pulls available colours and sizes for this product code from the
+    // available_colours and available_sizes fields (scraped from the website).
+    // Falls back to catalog variants if those aren't populated yet.
     async function loadOrderLineVariantOptions(idx, code) {
       try {
         const res = await fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(code) + '&limit=200');
         const data = await res.json();
         // Bail if the line moved on (removed, or a different product picked) while this was in flight.
         if (!orderLines[idx] || orderLines[idx].supplier_code !== code) return;
+
+        // First, try to use the scraped available_colours and available_sizes
+        const firstResult = data.results?.[0];
+        if (firstResult?.available_colours && firstResult?.available_sizes) {
+          const scrapedColours = JSON.parse(firstResult.available_colours || '[]');
+          const scrapedSizes = JSON.parse(firstResult.available_sizes || '[]');
+          if (scrapedColours.length > 0 || scrapedSizes.length > 0) {
+            orderLines[idx].colourOptions = scrapedColours.length > 0 ? scrapedColours : [...new Set((data.results || []).map((r) => r.colour).filter(Boolean))];
+            orderLines[idx].sizeOptions = scrapedSizes.length > 0 ? scrapedSizes : [...new Set((data.results || []).map((r) => r.size).filter(Boolean))];
+            renderOrderLines();
+            return;
+          }
+        }
+
+        // Fallback: extract from all catalog variants for this code
         orderLines[idx].colourOptions = [...new Set((data.results || []).map((r) => r.colour).filter(Boolean))];
         orderLines[idx].sizeOptions = [...new Set((data.results || []).map((r) => r.size).filter(Boolean))];
         renderOrderLines();

@@ -77,18 +77,43 @@ export async function onRequest(context) {
         const price = Number(priceMatch[1]);
         if (!isFinite(price) || price < 0) { failed++; continue; }
 
+        // Scrape available colors and sizes from product page
+        const colours = new Set();
+        const sizes = new Set();
+
+        // Look for option elements or data attributes with colour/color and size
+        for (const m of html.matchAll(/<option[^>]*>([^<]+)<\/option>/gi)) {
+          const text = m[1].trim();
+          // Common patterns: "Red", "Size: M", "Color - Blue"
+          if (text && text.length < 50) {
+            if (text.match(/^(xs|s|m|l|xl|xxl|3xl|4xl|5xl|6xl|7xl|8xl|\d+)\s*(?:-|to)?\s*(?:xs|s|m|l|xl|xxl|3xl|4xl|5xl|6xl|7xl|8xl|\d+)?$/i)) {
+              sizes.add(text);
+            } else if (!text.match(/^\d{1,2}$/)) {
+              colours.add(text);
+            }
+          }
+        }
+
         const { results } = await db.prepare(
           "SELECT id, cost_price, vat_rate FROM products WHERE supplier_code = ?"
         ).bind(code).all();
 
         if (!results.length) { notFound++; notFoundCodes.push(code); continue; }
 
+        const coloursList = Array.from(colours).filter(c => c && c.length > 0);
+        const sizesList = Array.from(sizes).filter(s => s && s.length > 0);
+
         const stmt = db.prepare(`
           UPDATE products
-          SET sell_price = ?, profit = ROUND(? - cost_price * (1 + vat_rate), 2), updated_at = CURRENT_TIMESTAMP
+          SET sell_price = ?, profit = ROUND(? - cost_price * (1 + vat_rate), 2),
+              available_colours = ?, available_sizes = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `);
-        await db.batch(results.map((r) => stmt.bind(price, price, r.id)));
+        await db.batch(results.map((r) => stmt.bind(
+          price, price,
+          JSON.stringify(coloursList), JSON.stringify(sizesList),
+          r.id
+        )));
         imported += results.length;
       } catch {
         failed++;
