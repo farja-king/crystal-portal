@@ -166,6 +166,37 @@ export async function onRequest(context) {
       ).bind(...binds).all();
 
       allMatches.sort(compareProducts);
+
+      // ?group_by_code=1 -> collapse variant rows into one entry per product
+      // code, so 6k+ rows can browse as a few hundred collapsible groups in
+      // the Garment Catalog UI instead of one long flat list. Pagination
+      // then counts codes, not variant rows - total_variants carries the row
+      // count separately, since bulk-pricing scope messages still need it.
+      if (p.get("group_by_code")) {
+        const groups = [];
+        const indexByCode = new Map();
+        for (const row of allMatches) {
+          const key = row.supplier_code;
+          let idx = indexByCode.get(key);
+          if (idx === undefined) {
+            idx = groups.length;
+            indexByCode.set(key, idx);
+            groups.push({
+              supplier_code: row.supplier_code,
+              supplier: row.supplier,
+              brand: row.brand,
+              title: row.title,
+              category: row.category,
+              variants: [],
+            });
+          }
+          groups[idx].variants.push(row);
+        }
+
+        const pagedGroups = groups.slice(offset, offset + limit);
+        return json({ total: groups.length, total_variants: allMatches.length, limit, offset, results: pagedGroups });
+      }
+
       const results = allMatches.slice(offset, offset + limit);
 
       return json({ total: allMatches.length, limit, offset, results });

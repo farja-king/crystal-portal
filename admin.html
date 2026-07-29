@@ -875,8 +875,12 @@
 
     let catalogLoaded = false;
     let catalogOffset = 0;
-    let catalogTotal = 0;
+    let catalogTotal = 0; // number of product codes (groups) matching the current filter
+    let catalogVariantTotal = 0; // number of individual variant rows matching the current filter
     let catalogView = 'priced'; // 'priced' (on my website) | 'unpriced' (awaiting price) | 'all'
+    // Codes the user has expanded, so re-renders (e.g. after saving a price)
+    // don't snap a group shut while they're still working in it.
+    let expandedCatalogGroups = new Set();
 
     function styleCatalogViewButtons() {
       document.querySelectorAll('.cat-view-btn').forEach((btn) => {
@@ -967,6 +971,7 @@
       if (f.category) params.set('category', f.category);
       if (f.unpriced) params.set('unpriced', '1');
       if (f.priced) params.set('priced', '1');
+      params.set('group_by_code', '1');
       params.set('limit', CATALOG_PAGE_SIZE);
       params.set('offset', catalogOffset);
 
@@ -975,7 +980,8 @@
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         catalogTotal = data.total || 0;
-        renderCatalog(data.results || []);
+        catalogVariantTotal = data.total_variants || 0;
+        renderCatalogGroups(data.results || []);
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load catalog: ' + escapeHtml(e.message) + '</td></tr>';
       }
@@ -1038,51 +1044,92 @@
       loadCatalog(catalogOffset);
     }
 
-    function renderCatalog(rows) {
+    // One collapsible header row per product code, with its colour/size
+    // variant rows nested underneath (hidden unless that code is in
+    // expandedCatalogGroups) - keeps 6k+ rows from turning into a giant
+    // scroll of near-duplicate colour/size lines for the same garment.
+    function renderCatalogGroups(groups) {
       const tbody = document.getElementById('catalog-table-body');
-      document.getElementById('cat-stat-matching').textContent = catalogTotal.toLocaleString();
+      document.getElementById('cat-stat-matching').textContent = catalogVariantTotal.toLocaleString();
 
-      if (!rows.length) {
+      if (!groups.length) {
         tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">No products match these filters.</td></tr>';
       } else {
-        tbody.innerHTML = rows.map((p) => {
-          const cost = Number(p.cost_price) || 0;
-          const vatRate = Number(p.vat_rate) || 0;
-          const vatAmount = cost * vatRate;
-          const totalCost = cost + vatAmount;
-          const sell = p.sell_price === null || p.sell_price === undefined ? null : Number(p.sell_price);
-          const profit = sell === null ? null : sell - totalCost;
-          const margin = sell && sell > 0 ? ((profit / sell) * 100).toFixed(1) + '%' : '-';
-          const profitClass = profit === null ? 'text-slate-400' : (profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold');
-          const sur = p.surcharge_category
-            ? ' <span class="text-xs text-slate-400">(' + escapeHtml(p.surcharge_category) + ')</span>' : '';
+        tbody.innerHTML = groups.map((g) => {
+          const variants = g.variants || [];
+          const pricedCount = variants.filter((v) => v.sell_price !== null && v.sell_price !== undefined).length;
+          const isOpen = expandedCatalogGroups.has(g.supplier_code);
 
-          return '<tr class="hover:bg-slate-50">' +
-            '<td class="p-3 font-mono text-xs text-slate-700">' + escapeHtml(p.supplier_code) +
-              '<div class="text-slate-400">' + escapeHtml(p.supplier) + '</div></td>' +
-            '<td class="p-3 text-slate-800">' + escapeHtml(p.title) + sur +
-              (p.brand ? '<div class="text-xs text-slate-400">' + escapeHtml(p.brand) + '</div>' : '') + '</td>' +
-            '<td class="p-3 text-slate-600 text-xs">' + escapeHtml(p.colour) + '</td>' +
-            '<td class="p-3 text-slate-600 text-xs">' + escapeHtml(p.size) + '</td>' +
-            '<td class="p-3 text-right text-slate-700">' + money(cost) + '</td>' +
-            '<td class="p-3 text-right text-slate-600">' + (vatRate === 0 ? '—' : money(vatAmount)) + '</td>' +
-            '<td class="p-3 text-right">' +
-              '<input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" ' +
-              'data-sell-id="' + escapeAttr(p.id) + '" placeholder="-" ' +
-              'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
-            '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '-' : money(profit)) + '</td>' +
-            '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
-          '</tr>';
+          const headerRow = `
+            <tr class="bg-slate-50 hover:bg-slate-100 cursor-pointer transition" data-group-toggle="${escapeAttr(g.supplier_code)}">
+              <td class="p-3" colspan="4">
+                <span class="inline-block w-3 text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}" data-group-chevron="${escapeAttr(g.supplier_code)}">▶</span>
+                <span class="font-mono text-xs font-semibold text-slate-800 ml-1">${escapeHtml(g.supplier_code)}</span>
+                <span class="text-slate-700 ml-2">${escapeHtml(g.title)}</span>
+                ${g.brand ? '<span class="text-xs text-slate-400 ml-2">' + escapeHtml(g.brand) + '</span>' : ''}
+              </td>
+              <td class="p-3 text-right text-xs text-slate-500" colspan="2">${variants.length} variant${variants.length === 1 ? '' : 's'}</td>
+              <td class="p-3 text-right text-xs text-slate-500" colspan="3">${pricedCount} priced</td>
+            </tr>`;
+
+          const detailRows = variants.map((p) => {
+            const cost = Number(p.cost_price) || 0;
+            const vatRate = Number(p.vat_rate) || 0;
+            const vatAmount = cost * vatRate;
+            const totalCost = cost + vatAmount;
+            const sell = p.sell_price === null || p.sell_price === undefined ? null : Number(p.sell_price);
+            const profit = sell === null ? null : sell - totalCost;
+            const margin = sell && sell > 0 ? ((profit / sell) * 100).toFixed(1) + '%' : '-';
+            const profitClass = profit === null ? 'text-slate-400' : (profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold');
+            const sur = p.surcharge_category
+              ? ' <span class="text-xs text-slate-400">(' + escapeHtml(p.surcharge_category) + ')</span>' : '';
+
+            return '<tr class="hover:bg-slate-50 ' + (isOpen ? '' : 'hidden') + '" data-group-row="' + escapeAttr(g.supplier_code) + '">' +
+              '<td class="p-3 font-mono text-xs text-slate-700">' + escapeHtml(p.supplier_code) +
+                '<div class="text-slate-400">' + escapeHtml(p.supplier) + '</div></td>' +
+              '<td class="p-3 text-slate-800">' + escapeHtml(p.title) + sur +
+                (p.brand ? '<div class="text-xs text-slate-400">' + escapeHtml(p.brand) + '</div>' : '') + '</td>' +
+              '<td class="p-3 text-slate-600 text-xs">' + escapeHtml(p.colour) + '</td>' +
+              '<td class="p-3 text-slate-600 text-xs">' + escapeHtml(p.size) + '</td>' +
+              '<td class="p-3 text-right text-slate-700">' + money(cost) + '</td>' +
+              '<td class="p-3 text-right text-slate-600">' + (vatRate === 0 ? '—' : money(vatAmount)) + '</td>' +
+              '<td class="p-3 text-right">' +
+                '<input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" ' +
+                'data-sell-id="' + escapeAttr(p.id) + '" placeholder="-" ' +
+                'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
+              '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '-' : money(profit)) + '</td>' +
+              '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
+            '</tr>';
+          }).join('');
+
+          return headerRow + detailRows;
         }).join('');
       }
 
       const from = catalogTotal === 0 ? 0 : catalogOffset + 1;
       const to = Math.min(catalogOffset + CATALOG_PAGE_SIZE, catalogTotal);
       document.getElementById('cat-range').textContent =
-        catalogTotal === 0 ? 'No results' : 'Showing ' + from + '–' + to + ' of ' + catalogTotal.toLocaleString();
+        catalogTotal === 0 ? 'No results' : 'Showing ' + from + '–' + to + ' of ' + catalogTotal.toLocaleString() + ' product codes';
       document.getElementById('cat-prev').disabled = catalogOffset === 0;
       document.getElementById('cat-next').disabled = catalogOffset + CATALOG_PAGE_SIZE >= catalogTotal;
     }
+
+    // Toggle a group open/closed by flipping the hidden class on its detail
+    // rows directly, rather than a full re-render - keeps expand/collapse
+    // snappy and doesn't disturb any in-progress edits in other groups.
+    document.getElementById('catalog-table-body').addEventListener('click', (e) => {
+      const header = e.target.closest('[data-group-toggle]');
+      if (!header) return;
+      const code = header.dataset.groupToggle;
+      const wasOpen = expandedCatalogGroups.has(code);
+      if (wasOpen) expandedCatalogGroups.delete(code); else expandedCatalogGroups.add(code);
+
+      document.querySelectorAll('[data-group-row="' + CSS.escape(code) + '"]').forEach((row) => {
+        row.classList.toggle('hidden', wasOpen);
+      });
+      const chevron = document.querySelector('[data-group-chevron="' + CSS.escape(code) + '"]');
+      if (chevron) chevron.classList.toggle('rotate-90', !wasOpen);
+    });
 
     function catalogPage(direction) {
       loadCatalog(catalogOffset + direction * CATALOG_PAGE_SIZE);
@@ -1134,7 +1181,7 @@
       if (!isFinite(percent)) { msg.className = 'text-sm mt-3 text-red-600'; msg.textContent = 'Enter a percentage first.'; return; }
 
       const hasFilter = !!(f.q || f.supplier || f.brand || f.category) || onlyUnpriced;
-      const scope = hasFilter ? 'the ' + catalogTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
+      const scope = hasFilter ? 'the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
       if (!confirm('Set the sell price of ' + scope + ' using a ' + percent + '% ' + mode + '?\n\nThis overwrites any sell price already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'))) return;
 
       msg.className = 'text-sm mt-3 text-slate-600';
@@ -1177,7 +1224,7 @@
       if (!isFinite(priceNum) || priceNum < 0) { alert('Enter a valid price'); return; }
 
       const hasFilter = !!(f.q || f.supplier || f.brand || f.category) || onlyUnpriced;
-      const scope = hasFilter ? 'the ' + catalogTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
+      const scope = hasFilter ? 'the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
       if (!confirm('Set the sell price of ' + scope + ' to £' + priceNum.toFixed(2) + '?\n\nThis will overwrite prices already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'))) return;
 
       msg.className = 'text-sm mt-3 text-slate-600';
