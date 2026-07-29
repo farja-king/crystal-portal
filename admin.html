@@ -15,16 +15,36 @@
         <div class="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-lg">C</div>
         <h1 class="text-xl font-bold tracking-wide">Crystal Embroidery <span class="text-indigo-400 font-normal">Back Office</span></h1>
       </div>
-      <div class="flex space-x-2 bg-slate-800 p-1 rounded-lg">
-        <button id="tab-quotes" onclick="switchTab('quotes')" class="px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition">
-          Quotes & Orders
-        </button>
-        <button id="tab-customers" onclick="switchTab('customers')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
-          Customers
+      <div class="flex items-center gap-3">
+        <div class="flex space-x-2 bg-slate-800 p-1 rounded-lg">
+          <button id="tab-quotes" onclick="switchTab('quotes')" class="px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition">
+            Quotes & Orders
+          </button>
+          <button id="tab-customers" onclick="switchTab('customers')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            Customers
+          </button>
+          <button id="tab-catalog" onclick="switchTab('catalog')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            Garment Catalog
+          </button>
+        </div>
+        <button id="logout-btn" onclick="logout()" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
+          Sign out
         </button>
       </div>
     </div>
   </header>
+
+  <!-- Shown only while the site is still unprotected -->
+  <div id="auth-banner" class="hidden bg-amber-500 text-amber-950">
+    <div class="max-w-7xl mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+      <p class="text-sm font-medium">
+        ⚠️ This portal has no password yet — anyone with the link can see your cost prices and margins.
+      </p>
+      <button onclick="openPasswordSetup()" class="bg-amber-950 text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-amber-900 transition">
+        Set a password
+      </button>
+    </div>
+  </div>
 
   <!-- Main Content Area -->
   <main class="max-w-7xl mx-auto px-6 py-8">
@@ -203,6 +223,126 @@
       </div>
     </section>
 
+    <!-- GARMENT CATALOG TAB -->
+    <section id="section-catalog" class="hidden">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Garment Catalog</h2>
+          <p class="text-slate-500 text-sm">Supplier cost prices, your sell price, and the profit between them.</p>
+        </div>
+        <button onclick="loadCatalog(0)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+          🔄 Refresh Catalog
+        </button>
+      </div>
+
+      <!-- Headline numbers -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+          <p class="text-xs uppercase tracking-wider text-slate-500">Products</p>
+          <p id="cat-stat-total" class="text-2xl font-bold text-slate-900">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+          <p class="text-xs uppercase tracking-wider text-slate-500">Awaiting sell price</p>
+          <p id="cat-stat-unpriced" class="text-2xl font-bold text-amber-600">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+          <p class="text-xs uppercase tracking-wider text-slate-500">Zero-rated (children's)</p>
+          <p id="cat-stat-zero" class="text-2xl font-bold text-slate-900">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+          <p class="text-xs uppercase tracking-wider text-slate-500">Matching filter</p>
+          <p id="cat-stat-matching" class="text-2xl font-bold text-indigo-600">—</p>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-4">
+        <div class="grid gap-3 md:grid-cols-5">
+          <label class="text-sm md:col-span-2">
+            <span class="block font-medium text-slate-700 mb-1">Search</span>
+            <input id="cat-q" placeholder="Code, title, colour or brand…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Supplier</span>
+            <select id="cat-supplier" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"><option value="">All</option></select>
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Brand</span>
+            <select id="cat-brand" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"><option value="">All</option></select>
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Category</span>
+            <select id="cat-category" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"><option value="">All</option></select>
+          </label>
+        </div>
+        <label class="flex items-center gap-2 mt-3 text-sm text-slate-700">
+          <input id="cat-unpriced" type="checkbox" class="rounded border-slate-300" />
+          Only show products with no sell price yet
+        </label>
+      </div>
+
+      <!-- Bulk pricing -->
+      <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4 mb-6">
+        <h3 class="font-bold text-slate-900 mb-1">Bulk pricing</h3>
+        <p class="text-sm text-slate-600 mb-3">
+          Applies to <span id="cat-bulk-scope" class="font-semibold">the current filter</span>. Markup is added to cost; margin is taken off your sell price.
+        </p>
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Mode</span>
+            <select id="cat-bulk-mode" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+              <option value="markup">Markup on cost</option>
+              <option value="margin">Margin on sell price</option>
+            </select>
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Percent</span>
+            <input id="cat-bulk-percent" type="number" step="0.1" value="100" class="w-28 rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="flex items-center gap-2 text-sm text-slate-700 pb-2">
+            <input id="cat-bulk-only-unpriced" type="checkbox" checked class="rounded border-slate-300" />
+            Skip products I've already priced
+          </label>
+          <button onclick="applyBulkPricing()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Apply pricing
+          </button>
+        </div>
+        <p id="cat-bulk-msg" class="text-sm mt-3"></p>
+      </div>
+
+      <!-- Catalog table -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+              <th class="p-3">Code</th>
+              <th class="p-3">Title</th>
+              <th class="p-3">Colour</th>
+              <th class="p-3">Size</th>
+              <th class="p-3 text-right">Cost</th>
+              <th class="p-3 text-right">Sell</th>
+              <th class="p-3 text-right">Profit</th>
+              <th class="p-3 text-right">Margin</th>
+              <th class="p-3 text-center">VAT</th>
+            </tr>
+          </thead>
+          <tbody id="catalog-table-body" class="divide-y divide-slate-100 text-sm">
+            <tr><td colspan="9" class="p-8 text-center text-slate-400">Loading catalog…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex items-center justify-between mt-4">
+        <button id="cat-prev" onclick="catalogPage(-1)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm disabled:opacity-40">
+          ← Previous
+        </button>
+        <p id="cat-range" class="text-sm text-slate-500"></p>
+        <button id="cat-next" onclick="catalogPage(1)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm disabled:opacity-40">
+          Next →
+        </button>
+      </div>
+    </section>
+
   </main>
 
   <script>
@@ -249,18 +389,24 @@
       return div.innerHTML;
     }
 
+    // escapeHtml leaves quotes alone, which is fine for text but not for an
+    // attribute value. Catalog ids are built from supplier text (colour, size),
+    // so a future price list could introduce a quote and break out of one.
+    function escapeAttr(str) {
+      return escapeHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
     // Switch between Admin Tabs
+    const ADMIN_TABS = ['quotes', 'customers', 'catalog'];
     function switchTab(tab) {
-      document.getElementById('section-quotes').classList.toggle('hidden', tab !== 'quotes');
-      document.getElementById('section-customers').classList.toggle('hidden', tab !== 'customers');
-      
-      document.getElementById('tab-quotes').className = tab === 'quotes' 
-        ? 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition'
-        : 'px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
-        
-      document.getElementById('tab-customers').className = tab === 'customers' 
-        ? 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition'
-        : 'px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
+      const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
+      const idle = 'px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
+      ADMIN_TABS.forEach((name) => {
+        document.getElementById('section-' + name).classList.toggle('hidden', tab !== name);
+        document.getElementById('tab-' + name).className = tab === name ? active : idle;
+      });
+      // The catalog is big, so it's only fetched once the tab is actually opened
+      if (tab === 'catalog' && !catalogLoaded) loadCatalog(0);
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
@@ -574,9 +720,274 @@
       updateStatus(select.dataset.id, select.value);
     });
 
+    // ---------------------------------------------------------------------
+    // Garment Catalog
+    // ---------------------------------------------------------------------
+    const API_PRODUCTS_URL = '/api/products';
+    const CATALOG_PAGE_SIZE = 50;
+
+    let catalogLoaded = false;
+    let catalogOffset = 0;
+    let catalogTotal = 0;
+
+    function catalogFilters() {
+      return {
+        q: document.getElementById('cat-q').value.trim(),
+        supplier: document.getElementById('cat-supplier').value,
+        brand: document.getElementById('cat-brand').value,
+        category: document.getElementById('cat-category').value,
+        unpriced: document.getElementById('cat-unpriced').checked,
+      };
+    }
+
+    function money(n) {
+      return n === null || n === undefined || n === '' ? '—' : '£' + Number(n).toFixed(2);
+    }
+
+    async function loadFacets() {
+      try {
+        const res = await fetch(API_PRODUCTS_URL + '?facets=1');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const fill = (id, rows) => {
+          const sel = document.getElementById(id);
+          const current = sel.value;
+          sel.innerHTML = '<option value="">All</option>';
+          rows.forEach((r) => {
+            if (!r.value) return;
+            const opt = document.createElement('option');
+            opt.value = r.value;
+            opt.textContent = r.value + ' (' + r.n + ')';
+            sel.appendChild(opt);
+          });
+          sel.value = current;
+        };
+        fill('cat-supplier', data.suppliers || []);
+        fill('cat-brand', data.brands || []);
+        fill('cat-category', data.categories || []);
+
+        const t = data.totals || {};
+        document.getElementById('cat-stat-total').textContent = (t.total || 0).toLocaleString();
+        document.getElementById('cat-stat-unpriced').textContent = (t.unpriced || 0).toLocaleString();
+        document.getElementById('cat-stat-zero').textContent = (t.zero_rated || 0).toLocaleString();
+      } catch (e) {}
+    }
+
+    async function loadCatalog(offset) {
+      catalogLoaded = true;
+      catalogOffset = Math.max(0, offset || 0);
+      const tbody = document.getElementById('catalog-table-body');
+      tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">Loading catalog…</td></tr>';
+
+      const f = catalogFilters();
+      const params = new URLSearchParams();
+      if (f.q) params.set('q', f.q);
+      if (f.supplier) params.set('supplier', f.supplier);
+      if (f.brand) params.set('brand', f.brand);
+      if (f.category) params.set('category', f.category);
+      if (f.unpriced) params.set('unpriced', '1');
+      params.set('limit', CATALOG_PAGE_SIZE);
+      params.set('offset', catalogOffset);
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL + '?' + params.toString());
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        catalogTotal = data.total || 0;
+        renderCatalog(data.results || []);
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load catalog: ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    function renderCatalog(rows) {
+      const tbody = document.getElementById('catalog-table-body');
+      document.getElementById('cat-stat-matching').textContent = catalogTotal.toLocaleString();
+
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">No products match these filters.</td></tr>';
+      } else {
+        tbody.innerHTML = rows.map((p) => {
+          const cost = Number(p.cost_price) || 0;
+          const sell = p.sell_price === null || p.sell_price === undefined ? null : Number(p.sell_price);
+          const profit = sell === null ? null : sell - cost;
+          const margin = sell && sell > 0 ? ((profit / sell) * 100).toFixed(1) + '%' : '—';
+          const profitClass = profit === null ? 'text-slate-400' : (profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold');
+          const vatLabel = Number(p.vat_rate) === 0
+            ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">0%</span>'
+            : '<span class="text-slate-500 text-xs">' + (Number(p.vat_rate) * 100).toFixed(0) + '%</span>';
+          const sur = p.surcharge_category
+            ? ' <span class="text-xs text-slate-400">(' + escapeHtml(p.surcharge_category) + ')</span>' : '';
+
+          return '<tr class="hover:bg-slate-50">' +
+            '<td class="p-3 font-mono text-xs text-slate-700">' + escapeHtml(p.supplier_code) +
+              '<div class="text-slate-400">' + escapeHtml(p.supplier) + '</div></td>' +
+            '<td class="p-3 text-slate-800">' + escapeHtml(p.title) + sur +
+              (p.brand ? '<div class="text-xs text-slate-400">' + escapeHtml(p.brand) + '</div>' : '') + '</td>' +
+            '<td class="p-3 text-slate-600 text-xs">' + escapeHtml(p.colour) + '</td>' +
+            '<td class="p-3 text-slate-600 text-xs">' + escapeHtml(p.size) + '</td>' +
+            '<td class="p-3 text-right text-slate-700">' + money(cost) + '</td>' +
+            '<td class="p-3 text-right">' +
+              '<input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" ' +
+              'data-sell-id="' + escapeAttr(p.id) + '" placeholder="—" ' +
+              'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
+            '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '—' : money(profit)) + '</td>' +
+            '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
+            '<td class="p-3 text-center">' + vatLabel + '</td>' +
+          '</tr>';
+        }).join('');
+      }
+
+      const from = catalogTotal === 0 ? 0 : catalogOffset + 1;
+      const to = Math.min(catalogOffset + CATALOG_PAGE_SIZE, catalogTotal);
+      document.getElementById('cat-range').textContent =
+        catalogTotal === 0 ? 'No results' : 'Showing ' + from + '–' + to + ' of ' + catalogTotal.toLocaleString();
+      document.getElementById('cat-prev').disabled = catalogOffset === 0;
+      document.getElementById('cat-next').disabled = catalogOffset + CATALOG_PAGE_SIZE >= catalogTotal;
+    }
+
+    function catalogPage(direction) {
+      loadCatalog(catalogOffset + direction * CATALOG_PAGE_SIZE);
+    }
+
+    // Save a sell price as soon as the field loses focus
+    async function saveSellPrice(input) {
+      const id = input.dataset.sellId;
+      const raw = input.value.trim();
+      input.disabled = true;
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, sell_price: raw === '' ? '' : Number(raw) }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        input.classList.remove('border-slate-300', 'border-red-400');
+        input.classList.add('border-emerald-400');
+        // refresh the row so profit/margin reflect what was actually stored
+        await loadCatalog(catalogOffset);
+        loadFacets();
+      } catch (e) {
+        input.classList.add('border-red-400');
+        alert('Could not save that sell price: ' + e.message);
+      } finally {
+        input.disabled = false;
+      }
+    }
+
+    async function applyBulkPricing() {
+      const f = catalogFilters();
+      const mode = document.getElementById('cat-bulk-mode').value;
+      const percent = Number(document.getElementById('cat-bulk-percent').value);
+      const onlyUnpriced = document.getElementById('cat-bulk-only-unpriced').checked;
+      const msg = document.getElementById('cat-bulk-msg');
+
+      if (!isFinite(percent)) { msg.className = 'text-sm mt-3 text-red-600'; msg.textContent = 'Enter a percentage first.'; return; }
+
+      const hasFilter = !!(f.q || f.supplier || f.brand || f.category) || onlyUnpriced;
+      const scope = hasFilter ? 'the ' + catalogTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
+      if (!confirm('Set the sell price of ' + scope + ' using a ' + percent + '% ' + mode + '?\n\nThis overwrites any sell price already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'))) return;
+
+      msg.className = 'text-sm mt-3 text-slate-600';
+      msg.textContent = 'Applying…';
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apply_pricing: {
+              mode, percent,
+              q: f.q || undefined,
+              supplier: f.supplier || undefined,
+              brand: f.brand || undefined,
+              category: f.category || undefined,
+              only_unpriced: onlyUnpriced || undefined,
+              confirm_all: hasFilter ? undefined : true,
+            },
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        msg.className = 'text-sm mt-3 text-emerald-700 font-medium';
+        msg.textContent = 'Priced ' + (data.updated ?? 0).toLocaleString() + ' products.';
+        await loadCatalog(catalogOffset);
+        loadFacets();
+      } catch (e) {
+        msg.className = 'text-sm mt-3 text-red-600';
+        msg.textContent = 'Could not apply pricing: ' + e.message;
+      }
+    }
+
+    // Debounced re-query as the filters are changed
+    let catalogFilterTimer = null;
+    ['cat-q', 'cat-supplier', 'cat-brand', 'cat-category', 'cat-unpriced'].forEach((id) => {
+      const el = document.getElementById(id);
+      const evt = el.tagName === 'INPUT' && el.type !== 'checkbox' ? 'input' : 'change';
+      el.addEventListener(evt, () => {
+        clearTimeout(catalogFilterTimer);
+        catalogFilterTimer = setTimeout(() => loadCatalog(0), evt === 'input' ? 350 : 0);
+      });
+    });
+
+    document.addEventListener('change', (e) => {
+      const input = e.target.closest('[data-sell-id]');
+      if (input) saveSellPrice(input);
+    });
+
+    // ---------------------------------------------------------------------
+    // Password status
+    // ---------------------------------------------------------------------
+    async function refreshAuthState() {
+      try {
+        const res = await fetch('/api/auth');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('auth-banner').classList.toggle('hidden', !!data.configured);
+        document.getElementById('logout-btn').classList.toggle('hidden', !data.configured);
+      } catch (e) {}
+    }
+
+    async function openPasswordSetup() {
+      const pw = prompt('Choose a password for the portal (at least 8 characters).\n\nYou will need it on every device that opens this site.');
+      if (pw === null) return;
+      if (pw.length < 8) { alert('That password is too short — it needs at least 8 characters.'); return; }
+      const again = prompt('Type the same password once more to confirm.');
+      if (again === null) return;
+      if (again !== pw) { alert('Those two passwords did not match. Nothing has been changed.'); return; }
+
+      try {
+        const res = await fetch('/api/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'setup', password: pw }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        alert('Password set. The portal is now protected — keep this password safe, there is no reset link.');
+        refreshAuthState();
+      } catch (e) {
+        alert('Could not set the password: ' + e.message);
+      }
+    }
+
+    async function logout() {
+      try {
+        await fetch('/api/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'logout' }),
+        });
+      } catch (e) {}
+      location.reload();
+    }
+
     // Initial Load
     loadQuotes();
     loadCustomers();
+    loadFacets();
+    refreshAuthState();
   </script>
 </body>
 </html>
