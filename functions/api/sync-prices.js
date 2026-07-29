@@ -89,55 +89,27 @@ export async function onRequest(context) {
         const price = Number(priceMatch[1]);
         if (!isFinite(price) || price < 0) { failed++; continue; }
 
-        // Scrape available colours and sizes from the product page.
-        // The site renders sizes as plain <option> tags inside
-        // <select id="size-select">, and colours as a "const colours = [...]"
-        // JS array (each entry has a "name" field, e.g. { name: "Black", img: "..." }) -
-        // there is no <select> for colour, it's swatch buttons built from that array.
-        const colours = new Set();
-        const sizes = new Set();
-
-        const sizeBlockMatch = html.match(/<select[^>]*id=["']size-select["'][^>]*>([\s\S]*?)<\/select>/i);
-        if (sizeBlockMatch) {
-          for (const m of sizeBlockMatch[1].matchAll(/<option[^>]*>([^<]+)<\/option>/gi)) {
-            const text = m[1].trim();
-            if (text) sizes.add(text);
-          }
-        }
-
-        const coloursBlockMatch = html.match(/const\s+colours\s*=\s*\[([\s\S]*?)\];/i);
-        if (coloursBlockMatch) {
-          for (const m of coloursBlockMatch[1].matchAll(/name:\s*"([^"]+)"/gi)) {
-            const text = m[1].trim();
-            if (text) colours.add(text);
-          }
-        }
-
         const { results } = await db.prepare(
           "SELECT id, cost_price, vat_rate FROM products WHERE supplier_code = ?"
         ).bind(code).all();
 
         if (!results.length) { notFound++; notFoundCodes.push(code); continue; }
 
-        const coloursList = Array.from(colours).filter(c => c && c.length > 0);
-        const sizesList = Array.from(sizes).filter(s => s && s.length > 0);
-
         // on_website = 1 unconditionally here: reaching this point means the
         // code was just found live on the site during this sync pass, which
         // is the one thing that actually confirms it belongs under "On my
         // website" - unlike sell_price, which can also be set by hand for
-        // something Martin is only quoting, not selling online.
+        // something Martin is only quoting, not selling online. Colour/size
+        // data comes from a separate sync against PenCarrie (the actual
+        // wholesaler) instead of this site, since not every product page here
+        // exposes a size selector for this scraper to read - see sync-colours.js.
         const stmt = db.prepare(`
           UPDATE products
           SET sell_price = ?, profit = ROUND(? - cost_price * (1 + vat_rate), 2),
-              available_colours = ?, available_sizes = ?, on_website = 1, updated_at = CURRENT_TIMESTAMP
+              on_website = 1, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `);
-        await db.batch(results.map((r) => stmt.bind(
-          price, price,
-          JSON.stringify(coloursList), JSON.stringify(sizesList),
-          r.id
-        )));
+        await db.batch(results.map((r) => stmt.bind(price, price, r.id)));
         imported += results.length;
       } catch {
         failed++;

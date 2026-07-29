@@ -981,32 +981,61 @@
       }
     }
 
-    async function syncPricesFromWebsite() {
-      const btn = document.getElementById('cat-sync-btn');
-      const status = document.getElementById('cat-sync-status');
+    // Shared by both sync buttons (Garment Catalog + Quotes & Invoices tabs):
+    // prices/on_website come from embroidery.click, colours/sizes come from
+    // PenCarrie (see sync-colours.js for why they're split). Runs price sync
+    // first since it's the quicker of the two, then colours, and reports both.
+    async function runFullSync(btn, status, idleLabel) {
       btn.disabled = true;
       btn.textContent = '🌐 Syncing…';
       status.classList.remove('hidden');
-      status.textContent = 'Reading embroidery.click sitemap and fetching current prices — this can take a minute…';
+      status.textContent = 'Fetching current prices from embroidery.click…';
+
+      const parts = [];
+      try {
+        const priceRes = await fetch('/api/sync-prices', { method: 'POST' });
+        const priceData = await priceRes.json();
+        if (!priceRes.ok || !priceData.success) throw new Error(priceData.error || 'HTTP ' + priceRes.status);
+
+        let priceMsg = 'Prices: found ' + priceData.products_found_on_site + ' page(s), updated ' + priceData.variants_updated + ' variant(s).';
+        if (priceData.codes_not_in_catalog && priceData.codes_not_in_catalog.length) {
+          priceMsg += ' Not in catalog: ' + priceData.codes_not_in_catalog.join(', ') + '.';
+        }
+        if (priceData.failed) priceMsg += ' (' + priceData.failed + ' page(s) failed.)';
+        parts.push(priceMsg);
+      } catch (e) {
+        parts.push('Prices: sync failed - ' + e.message);
+      }
+
+      status.textContent = parts.join(' ') + ' Fetching colours/sizes from PenCarrie…';
 
       try {
-        const res = await fetch('/api/sync-prices', { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        const colourRes = await fetch('/api/sync-colours', { method: 'POST' });
+        const colourData = await colourRes.json();
+        if (!colourRes.ok || !colourData.success) throw new Error(colourData.error || 'HTTP ' + colourRes.status);
 
-        let msg = 'Done: found ' + data.products_found_on_site + ' product pages on the site, updated ' + data.variants_updated + ' catalog variant(s).';
-        if (data.codes_not_in_catalog && data.codes_not_in_catalog.length) {
-          msg += ' Codes on the site but not in the catalog: ' + data.codes_not_in_catalog.join(', ') + '.';
+        let colourMsg = 'Colours/sizes: checked ' + colourData.codes_checked + ' code(s), updated ' + colourData.variants_updated + ' variant(s).';
+        if (colourData.codes_not_on_pencarrie && colourData.codes_not_on_pencarrie.length) {
+          colourMsg += ' Not found on PenCarrie: ' + colourData.codes_not_on_pencarrie.join(', ') + '.';
         }
-        if (data.failed) msg += ' (' + data.failed + ' page(s) failed to parse.)';
-        status.textContent = msg;
-        loadCatalog(catalogOffset);
+        if (colourData.failed) colourMsg += ' (' + colourData.failed + ' request(s) failed.)';
+        parts.push(colourMsg);
       } catch (e) {
-        status.textContent = 'Sync failed: ' + e.message;
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '🌐 Sync Prices from Website';
+        parts.push('Colours/sizes: sync failed - ' + e.message);
       }
+
+      status.textContent = parts.join(' ');
+      btn.disabled = false;
+      btn.textContent = idleLabel;
+    }
+
+    async function syncPricesFromWebsite() {
+      await runFullSync(
+        document.getElementById('cat-sync-btn'),
+        document.getElementById('cat-sync-status'),
+        '🌐 Sync Prices from Website'
+      );
+      loadCatalog(catalogOffset);
     }
 
     function renderCatalog(rows) {
@@ -1790,30 +1819,11 @@
     let editingOrderId = null;
 
     async function syncDataFromWebsite() {
-      const btn = document.getElementById('ord-sync-btn');
-      const status = document.getElementById('ord-sync-status');
-      btn.disabled = true;
-      btn.textContent = '🌐 Syncing…';
-      status.classList.remove('hidden');
-      status.textContent = 'Reading embroidery.click sitemap and fetching current prices and product data — this can take a minute…';
-
-      try {
-        const res = await fetch('/api/sync-prices', { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-
-        let msg = 'Done: found ' + data.products_found_on_site + ' product pages on the site, updated ' + data.variants_updated + ' catalog variant(s) with prices and product data.';
-        if (data.codes_not_in_catalog && data.codes_not_in_catalog.length) {
-          msg += ' Codes on the site but not in the catalog: ' + data.codes_not_in_catalog.join(', ') + '.';
-        }
-        if (data.failed) msg += ' (' + data.failed + ' page(s) failed to parse.)';
-        status.textContent = msg;
-      } catch (e) {
-        status.textContent = 'Sync failed: ' + e.message;
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '🌐 Sync Data';
-      }
+      await runFullSync(
+        document.getElementById('ord-sync-btn'),
+        document.getElementById('ord-sync-status'),
+        '🌐 Sync Data'
+      );
     }
 
     function closeOrderPanel() {
