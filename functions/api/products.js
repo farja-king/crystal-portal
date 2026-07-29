@@ -305,9 +305,16 @@ export async function onRequest(context) {
         if (a.mode === "fixed") {
           const price = Number(a.price);
           if (!isFinite(price) || price < 0) return json({ error: "price must be a non-negative number" }, 400);
-          expr = `ROUND(?, 2)`;
+          // Bare "?" auto-numbers independently of the where clause's explicit
+          // ?1/?2/etc, so mixing the two styles left D1 expecting a different
+          // number of bindings than were passed - use the same explicit
+          // numbering here, continuing on from wherever the filters left off.
+          // expr appears twice in the SQL below (sell_price and profit), but
+          // it's the same numbered placeholder both times, so it only needs
+          // binding once, not twice.
+          const priceParam = binds.length + 1;
           binds.push(price);
-          binds.push(price); // expr is used twice in the SQL (sell_price and profit)
+          expr = `ROUND(?${priceParam}, 2)`;
         } else {
           const pct = Number(a.percent);
           if (!isFinite(pct)) return json({ error: "percent must be a number" }, 400);

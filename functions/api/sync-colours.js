@@ -40,14 +40,19 @@ export async function onRequest(context) {
     }
 
     // One request per unique style code, not per catalog row - a code can
-    // have dozens of colour/size variant rows sharing the same code.
+    // have dozens of colour/size variant rows sharing the same code. Only
+    // codes not yet successfully synced are candidates, so a run that gets
+    // cut short by the rate limit below still makes forward progress next
+    // time instead of re-spending its budget on the same leading codes.
     const { results: codeRows } = await db.prepare(
-      "SELECT DISTINCT supplier_code FROM products WHERE supplier_code <> ''"
+      "SELECT DISTINCT supplier_code FROM products WHERE supplier_code <> '' AND available_colours = '[]' AND available_sizes = '[]'"
     ).all();
 
     let updated = 0;
     let notFound = 0;
     let failed = 0;
+    let attempted = 0;
+    let rateLimited = false;
     const notFoundCodes = [];
 
     for (const { supplier_code: code } of codeRows) {
@@ -56,6 +61,19 @@ export async function onRequest(context) {
           `${PENCARRIE_BASE}/api/internal/products/${encodeURIComponent(code)}?detail=1`,
           { headers: { Accept: "application/json" } }
         );
+        attempted++;
+
+        // PenCarrie's API is rate-limited (seen: 120 requests per window,
+        // via x-ratelimit-* response headers). Stop cleanly with headroom
+        // rather than hammering into 429s - whatever's left just gets
+        // picked up by running the sync again, since codes already synced
+        // are excluded from the candidate list above.
+        const remaining = Number(res.headers.get("x-ratelimit-remaining"));
+        if (res.status === 429 || (isFinite(remaining) && remaining <= 5)) {
+          rateLimited = true;
+          break;
+        }
+
         if (res.status === 404) { notFound++; notFoundCodes.push(code); continue; }
         if (!res.ok) { failed++; continue; }
 
@@ -82,10 +100,12 @@ export async function onRequest(context) {
 
     return json({
       success: true,
-      codes_checked: codeRows.length,
+      codes_checked: attempted,
+      codes_remaining: codeRows.length - attempted,
       variants_updated: updated,
       codes_not_on_pencarrie: notFoundCodes,
       failed,
+      rate_limited: rateLimited,
     });
   } catch (err) {
     return json({ error: err.message }, 500);
