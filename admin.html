@@ -244,6 +244,21 @@
       </div>
       <p id="cat-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
 
+      <!-- Colour/size import from PenCarrie's own CSV price-list export - see
+           importColoursSizesFromCsv(). Not rate-limited like the live
+           PenCarrie sync, since it's a pure DB write once parsed. -->
+      <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4 mb-6">
+        <h3 class="font-bold text-slate-900 mb-1">Import colours/sizes from PenCarrie CSV</h3>
+        <p class="text-sm text-slate-600 mb-3">Select all the <code>products-NN.csv</code> files from PenCarrie's product data zip. Fills in colour/size dropdowns for every matching code in one go - no rate limit, unlike the live site sync above.</p>
+        <div class="flex flex-wrap items-center gap-3">
+          <input id="cat-csv-input" type="file" accept=".csv" multiple class="text-sm" />
+          <button id="cat-csv-btn" onclick="importColoursSizesFromCsv()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Import
+          </button>
+        </div>
+        <p id="cat-csv-status" class="text-sm mt-3 hidden"></p>
+      </div>
+
       <!-- Headline numbers -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
@@ -1042,6 +1057,108 @@
         '🌐 Sync Prices from Website'
       );
       loadCatalog(catalogOffset);
+    }
+
+    // Minimal RFC4180 CSV parser - handles quoted fields, "" as an escaped
+    // quote, and commas/newlines embedded inside quoted fields (PenCarrie's
+    // export has HTML body content with all of these). Returns an array of
+    // rows, each an array of raw field strings.
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = '';
+      let inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+          } else {
+            field += ch;
+          }
+          continue;
+        }
+        if (ch === '"') { inQuotes = true; continue; }
+        if (ch === ',') { row.push(field); field = ''; continue; }
+        if (ch === '\r') continue;
+        if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; continue; }
+        field += ch;
+      }
+      if (field.length || row.length) { row.push(field); rows.push(row); }
+      return rows;
+    }
+
+    // PenCarrie's Shopify-format product export has one row per colour+size
+    // variant - Option1 is always "Size" (individual values, not ranges),
+    // and colour lives in the Title as "<Product name> | <Colour>" since
+    // each colour is its own product "Handle" rather than a second Option.
+    // The product code is the first "-"-delimited segment of the Variant SKU
+    // (e.g. "AT002-DBK-S" -> "AT002"), matching supplier_code in the catalog.
+    // This only ever reads colours/sizes/SKU - cost and sell price are left
+    // alone, since they're already populated from an earlier import of this
+    // same price list.
+    async function importColoursSizesFromCsv() {
+      const input = document.getElementById('cat-csv-input');
+      const status = document.getElementById('cat-csv-status');
+      const btn = document.getElementById('cat-csv-btn');
+      const files = input.files;
+      if (!files || !files.length) { status.classList.remove('hidden'); status.textContent = 'Choose the PenCarrie CSV file(s) first.'; return; }
+
+      btn.disabled = true;
+      status.classList.remove('hidden');
+      const codeData = {};
+
+      try {
+        for (let f = 0; f < files.length; f++) {
+          status.textContent = 'Reading ' + files[f].name + ' (' + (f + 1) + '/' + files.length + ')…';
+          const text = await files[f].text();
+          const rows = parseCsv(text);
+          if (!rows.length) continue;
+          const header = rows[0];
+          const skuIdx = header.indexOf('Variant SKU');
+          const titleIdx = header.indexOf('Title');
+          const sizeIdx = header.indexOf('Option1 Value');
+          if (skuIdx === -1) continue;
+
+          for (let r = 1; r < rows.length; r++) {
+            const cols = rows[r];
+            const sku = (cols[skuIdx] || '').trim();
+            if (!sku || sku.indexOf('-') === -1) continue;
+            const code = sku.split('-')[0].toUpperCase();
+            const title = (cols[titleIdx] || '').trim();
+            const colour = title.indexOf('|') !== -1 ? title.split('|').pop().trim() : '';
+            const size = (cols[sizeIdx] || '').trim();
+
+            const d = codeData[code] || (codeData[code] = { colours: new Set(), sizes: new Set() });
+            if (colour) d.colours.add(colour);
+            if (size) d.sizes.add(size);
+          }
+        }
+
+        const codeCount = Object.keys(codeData).length;
+        if (!codeCount) throw new Error('No usable rows found - check these are the PenCarrie product CSV files.');
+        status.textContent = 'Parsed ' + codeCount + ' product code(s) from ' + files.length + ' file(s). Uploading…';
+
+        const payload = {};
+        for (const code in codeData) {
+          payload[code] = { colours: [...codeData[code].colours], sizes: [...codeData[code].sizes] };
+        }
+
+        const res = await fetch('/api/import-colours-sizes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ codes: payload }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        status.textContent = 'Done: ' + codeCount + ' code(s) in the file(s), ' + data.codes_matched + ' matched and updated in your catalog, ' + data.codes_not_in_catalog + ' not found in your catalog.';
+        loadCatalog(catalogOffset);
+      } catch (e) {
+        status.textContent = 'Import failed: ' + e.message;
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     // One collapsible header row per product code, with its colour/size
