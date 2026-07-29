@@ -20,9 +20,13 @@ export async function onRequest(context) {
     new Response(JSON.stringify(body), { status, headers: corsHeaders });
 
   // sell_price is what Martin charges; profit is stored, not derived in the UI,
-  // so reports can aggregate on it directly.
-  const profitOf = (sell, cost) =>
-    sell === null || sell === undefined || sell === "" ? null : round2(Number(sell) - Number(cost || 0));
+  // so reports can aggregate on it directly. Profit = sell price minus (cost + VAT he pays).
+  // Since he's not VAT registered, he pays VAT to suppliers but can't claim it back.
+  const profitOf = (sell, cost, vatRate = 0.2) => {
+    if (sell === null || sell === undefined || sell === "") return null;
+    const totalCost = Number(cost || 0) * (1 + (Number(vatRate) || 0));
+    return round2(Number(sell) - totalCost);
+  };
 
   function round2(n) {
     return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -176,7 +180,7 @@ export async function onRequest(context) {
         data.surcharge_category || "",
         data.vat_rate ?? 0.2,
         data.sell_price ?? null,
-        profitOf(data.sell_price, cost),
+        profitOf(data.sell_price, cost, data.vat_rate ?? 0.2),
         data.active === 0 ? 0 : 1
       ).run();
 
@@ -262,7 +266,7 @@ export async function onRequest(context) {
         data.surcharge_category ?? existing.surcharge_category,
         data.vat_rate ?? existing.vat_rate,
         sell === "" ? null : sell,
-        sell === "" ? null : profitOf(sell, cost),
+        sell === "" ? null : profitOf(sell, cost, data.vat_rate ?? existing.vat_rate),
         data.active ?? existing.active,
         data.id
       ).run();

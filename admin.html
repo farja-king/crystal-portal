@@ -284,7 +284,7 @@
       <!-- VAT note -->
       <div class="bg-emerald-50 rounded-xl border border-emerald-200 p-4 mb-6">
         <p class="text-sm text-emerald-900">
-          <strong>VAT note:</strong> The VAT shown per product is calculated on the supplier's <strong>cost price</strong>, not your sell price. Since you're not VAT registered yet, this is informational only and doesn't affect your checkout.
+          <strong>VAT note:</strong> Since you're not VAT registered, you pay VAT to suppliers but can't claim it back. <strong>Profit is calculated as: Sell Price − (Cost + VAT you pay).</strong> For example: £3.55 cost + £0.71 VAT (20%) = £4.26 total cost. If you sell for £18, your real profit is £13.74.
         </p>
       </div>
 
@@ -336,10 +336,10 @@
               <th class="p-3">Colour</th>
               <th class="p-3">Size</th>
               <th class="p-3 text-right">Cost</th>
-              <th class="p-3 text-right">Sell</th>
+              <th class="p-3 text-right">VAT</th>
+              <th class="p-3 text-right">Sale Price</th>
               <th class="p-3 text-right">Profit</th>
               <th class="p-3 text-right">Margin</th>
-              <th class="p-3 text-center">VAT</th>
             </tr>
           </thead>
           <tbody id="catalog-table-body" class="divide-y divide-slate-100 text-sm">
@@ -826,13 +826,13 @@
       } else {
         tbody.innerHTML = rows.map((p) => {
           const cost = Number(p.cost_price) || 0;
+          const vatRate = Number(p.vat_rate) || 0;
+          const vatAmount = cost * vatRate;
+          const totalCost = cost + vatAmount;
           const sell = p.sell_price === null || p.sell_price === undefined ? null : Number(p.sell_price);
-          const profit = sell === null ? null : sell - cost;
+          const profit = sell === null ? null : sell - totalCost;
           const margin = sell && sell > 0 ? ((profit / sell) * 100).toFixed(1) + '%' : '-';
           const profitClass = profit === null ? 'text-slate-400' : (profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold');
-          const vatLabel = Number(p.vat_rate) === 0
-            ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">0%</span>'
-            : '<span class="text-slate-500 text-xs">' + (Number(p.vat_rate) * 100).toFixed(0) + '%</span>';
           const sur = p.surcharge_category
             ? ' <span class="text-xs text-slate-400">(' + escapeHtml(p.surcharge_category) + ')</span>' : '';
 
@@ -844,13 +844,13 @@
             '<td class="p-3 text-slate-600 text-xs">' + escapeHtml(p.colour) + '</td>' +
             '<td class="p-3 text-slate-600 text-xs">' + escapeHtml(p.size) + '</td>' +
             '<td class="p-3 text-right text-slate-700">' + money(cost) + '</td>' +
+            '<td class="p-3 text-right text-slate-600">' + (vatRate === 0 ? '—' : money(vatAmount)) + '</td>' +
             '<td class="p-3 text-right">' +
               '<input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" ' +
               'data-sell-id="' + escapeAttr(p.id) + '" placeholder="-" ' +
               'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
             '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '-' : money(profit)) + '</td>' +
             '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
-            '<td class="p-3 text-center">' + vatLabel + '</td>' +
           '</tr>';
         }).join('');
       }
