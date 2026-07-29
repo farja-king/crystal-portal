@@ -1593,15 +1593,15 @@
         const breakdownBlock = (!isCustomerSupplied && line.product_id) ? `
           <div class="mt-2 space-y-1.5">
             <div class="flex items-center gap-2 text-xs text-slate-500 font-medium px-1">
-              <span class="flex-1">Colour</span><span class="w-24">Size</span><span class="w-16">Qty</span><span class="w-5"></span>
+              <span class="w-32">Colour</span><span class="w-[120px]">Size</span><span class="w-16">Qty</span><span class="w-5"></span>
             </div>
             ${line.breakdown.map((b, rowIdx) => `
               <div class="flex items-center gap-2">
-                <select value="${escapeAttr(b.colour)}" onchange="updateBreakdownField(${idx}, ${rowIdx}, 'colour', this.value)" class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm">
+                <select value="${escapeAttr(b.colour)}" onchange="updateBreakdownField(${idx}, ${rowIdx}, 'colour', this.value)" class="w-32 rounded border border-slate-300 px-2 py-1 text-sm">
                   <option value="">Choose colour…</option>
                   ${(line.colourOptions || []).map((c) => `<option value="${escapeAttr(c)}" ${b.colour === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
                 </select>
-                <select value="${escapeAttr(b.size)}" onchange="updateBreakdownField(${idx}, ${rowIdx}, 'size', this.value)" class="w-24 rounded border border-slate-300 px-2 py-1 text-sm">
+                <select value="${escapeAttr(b.size)}" onchange="updateBreakdownField(${idx}, ${rowIdx}, 'size', this.value)" class="w-[120px] rounded border border-slate-300 px-2 py-1 text-sm">
                   <option value="">Choose size…</option>
                   ${(line.sizeOptions || []).map((s) => `<option value="${escapeAttr(s)}" ${b.size === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
                 </select>
