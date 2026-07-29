@@ -230,10 +230,16 @@
           <h2 class="text-2xl font-bold text-slate-900">Garment Catalog</h2>
           <p class="text-slate-500 text-sm">Supplier cost prices, your sell price, and the profit between them.</p>
         </div>
-        <button onclick="loadCatalog(0)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
-          🔄 Refresh Catalog
-        </button>
+        <div class="flex items-center gap-2">
+          <button id="cat-sync-btn" onclick="syncPricesFromWebsite()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            🌐 Sync Prices from Website
+          </button>
+          <button onclick="loadCatalog(0)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            🔄 Refresh Catalog
+          </button>
+        </div>
       </div>
+      <p id="cat-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
 
       <!-- Headline numbers -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -814,6 +820,34 @@
         renderCatalog(data.results || []);
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load catalog: ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    async function syncPricesFromWebsite() {
+      const btn = document.getElementById('cat-sync-btn');
+      const status = document.getElementById('cat-sync-status');
+      btn.disabled = true;
+      btn.textContent = '🌐 Syncing…';
+      status.classList.remove('hidden');
+      status.textContent = 'Reading embroidery.click sitemap and fetching current prices — this can take a minute…';
+
+      try {
+        const res = await fetch('/api/sync-prices', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        let msg = 'Done: found ' + data.products_found_on_site + ' product pages on the site, updated ' + data.variants_updated + ' catalog variant(s).';
+        if (data.codes_not_in_catalog && data.codes_not_in_catalog.length) {
+          msg += ' Codes on the site but not in the catalog: ' + data.codes_not_in_catalog.join(', ') + '.';
+        }
+        if (data.failed) msg += ' (' + data.failed + ' page(s) failed to parse.)';
+        status.textContent = msg;
+        loadCatalog(catalogOffset);
+      } catch (e) {
+        status.textContent = 'Sync failed: ' + e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🌐 Sync Prices from Website';
       }
     }
 
