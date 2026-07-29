@@ -218,6 +218,7 @@ export async function onRequest(context) {
           if (!isFinite(price) || price < 0) return json({ error: "price must be a non-negative number" }, 400);
           expr = `ROUND(?, 2)`;
           binds.push(price);
+          binds.push(price); // expr is used twice in the SQL (sell_price and profit)
         } else {
           const pct = Number(a.percent);
           if (!isFinite(pct)) return json({ error: "percent must be a number" }, 400);
