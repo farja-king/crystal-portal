@@ -27,16 +27,36 @@ export async function onRequest(context) {
   const STORE_BASE = "https://embroidery.click";
 
   try {
-    // 1. Pull every product page URL straight from the sitemap - no need to
-    // know collection names or crawl category pages.
+    // 1. Pull every product page URL straight from the sitemap - this is how
+    // brand-new collections get picked up with zero code changes here.
     const sitemapRes = await fetch(`${STORE_BASE}/sitemap.xml`);
     if (!sitemapRes.ok) return json({ error: `Could not fetch sitemap: ${sitemapRes.status}` }, 502);
     const sitemapXml = await sitemapRes.text();
 
-    const productUrls = [...sitemapXml.matchAll(/<loc>(https:\/\/embroidery\.click\/products\/[a-z0-9-]+\.html)<\/loc>/gi)]
+    const productUrls = new Set(
+      [...sitemapXml.matchAll(/<loc>(https:\/\/embroidery\.click\/products\/[a-z0-9-]+\.html)<\/loc>/gi)]
+        .map((m) => m[1])
+    );
+
+    // 2. The sitemap can lag behind newly-added products, so also crawl every
+    // collection page it lists and pick up any product link not yet indexed.
+    const collectionUrls = [...sitemapXml.matchAll(/<loc>(https:\/\/embroidery\.click\/collections\/[a-z0-9-]+\.html)<\/loc>/gi)]
       .map((m) => m[1]);
 
-    if (!productUrls.length) return json({ error: "No product URLs found in sitemap" }, 502);
+    for (const collectionUrl of collectionUrls) {
+      try {
+        const collectionRes = await fetch(collectionUrl);
+        if (!collectionRes.ok) continue;
+        const collectionHtml = await collectionRes.text();
+        for (const m of collectionHtml.matchAll(/href="\.\.\/products\/([a-z0-9-]+)\.html"/gi)) {
+          productUrls.add(`${STORE_BASE}/products/${m[1]}.html`);
+        }
+      } catch {
+        // one bad collection page shouldn't abort the whole sync
+      }
+    }
+
+    if (!productUrls.size) return json({ error: "No product URLs found in sitemap or collections" }, 502);
 
     let imported = 0;
     let notFound = 0;
@@ -77,7 +97,7 @@ export async function onRequest(context) {
 
     return json({
       success: true,
-      products_found_on_site: productUrls.length,
+      products_found_on_site: productUrls.size,
       variants_updated: imported,
       codes_not_in_catalog: notFoundCodes,
       failed,
