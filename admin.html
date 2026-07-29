@@ -38,7 +38,7 @@
   <div id="auth-banner" class="hidden bg-amber-500 text-amber-950">
     <div class="max-w-7xl mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-3">
       <p class="text-sm font-medium">
-        ⚠️ This portal has no password yet — anyone with the link can see your cost prices and margins.
+        ⚠️ This portal has no password yet - anyone with the link can see your cost prices and margins.
       </p>
       <button onclick="openPasswordSetup()" class="bg-amber-950 text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-amber-900 transition">
         Set a password
@@ -239,19 +239,19 @@
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
           <p class="text-xs uppercase tracking-wider text-slate-500">Products</p>
-          <p id="cat-stat-total" class="text-2xl font-bold text-slate-900">—</p>
+          <p id="cat-stat-total" class="text-2xl font-bold text-slate-900">-</p>
         </div>
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
           <p class="text-xs uppercase tracking-wider text-slate-500">Awaiting sell price</p>
-          <p id="cat-stat-unpriced" class="text-2xl font-bold text-amber-600">—</p>
+          <p id="cat-stat-unpriced" class="text-2xl font-bold text-amber-600">-</p>
         </div>
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
           <p class="text-xs uppercase tracking-wider text-slate-500">Zero-rated (children's)</p>
-          <p id="cat-stat-zero" class="text-2xl font-bold text-slate-900">—</p>
+          <p id="cat-stat-zero" class="text-2xl font-bold text-slate-900">-</p>
         </div>
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
           <p class="text-xs uppercase tracking-wider text-slate-500">Matching filter</p>
-          <p id="cat-stat-matching" class="text-2xl font-bold text-indigo-600">—</p>
+          <p id="cat-stat-matching" class="text-2xl font-bold text-indigo-600">-</p>
         </div>
       </div>
 
@@ -493,13 +493,13 @@
         tbody.innerHTML = customers.map(c => `
           <tr class="hover:bg-slate-50 transition">
             <td class="p-4 font-semibold text-slate-900">${escapeHtml(c.name)}</td>
-            <td class="p-4 text-slate-600">${escapeHtml(c.company) || '—'}</td>
+            <td class="p-4 text-slate-600">${escapeHtml(c.company) || '-'}</td>
             <td class="p-4">
               <span class="px-2 py-1 text-xs font-semibold rounded-full ${c.type === 'Trade' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}">
                 ${escapeHtml(c.type)}
               </span>
             </td>
-            <td class="p-4 text-slate-600">${c.discount_pct ? escapeHtml(String(c.discount_pct)) + '%' : '—'}</td>
+            <td class="p-4 text-slate-600">${c.discount_pct ? escapeHtml(String(c.discount_pct)) + '%' : '-'}</td>
             <td class="p-4 text-xs text-slate-500">
               ${escapeHtml(c.email) || 'No email'}<br>
               ${escapeHtml(c.phone) || 'No phone'}
@@ -741,7 +741,7 @@
     }
 
     function money(n) {
-      return n === null || n === undefined || n === '' ? '—' : '£' + Number(n).toFixed(2);
+      return n === null || n === undefined || n === '' ? '-' : '£' + Number(n).toFixed(2);
     }
 
     async function loadFacets() {
@@ -812,7 +812,7 @@
           const cost = Number(p.cost_price) || 0;
           const sell = p.sell_price === null || p.sell_price === undefined ? null : Number(p.sell_price);
           const profit = sell === null ? null : sell - cost;
-          const margin = sell && sell > 0 ? ((profit / sell) * 100).toFixed(1) + '%' : '—';
+          const margin = sell && sell > 0 ? ((profit / sell) * 100).toFixed(1) + '%' : '-';
           const profitClass = profit === null ? 'text-slate-400' : (profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold');
           const vatLabel = Number(p.vat_rate) === 0
             ? '<span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">0%</span>'
@@ -830,9 +830,9 @@
             '<td class="p-3 text-right text-slate-700">' + money(cost) + '</td>' +
             '<td class="p-3 text-right">' +
               '<input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" ' +
-              'data-sell-id="' + escapeAttr(p.id) + '" placeholder="—" ' +
+              'data-sell-id="' + escapeAttr(p.id) + '" placeholder="-" ' +
               'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
-            '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '—' : money(profit)) + '</td>' +
+            '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '-' : money(profit)) + '</td>' +
             '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
             '<td class="p-3 text-center">' + vatLabel + '</td>' +
           '</tr>';
@@ -952,7 +952,7 @@
     async function openPasswordSetup() {
       const pw = prompt('Choose a password for the portal (at least 8 characters).\n\nYou will need it on every device that opens this site.');
       if (pw === null) return;
-      if (pw.length < 8) { alert('That password is too short — it needs at least 8 characters.'); return; }
+      if (pw.length < 8) { alert('That password is too short - it needs at least 8 characters.'); return; }
       const again = prompt('Type the same password once more to confirm.');
       if (again === null) return;
       if (again !== pw) { alert('Those two passwords did not match. Nothing has been changed.'); return; }
@@ -965,7 +965,7 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
-        alert('Password set. The portal is now protected — keep this password safe, there is no reset link.');
+        alert('Password set. The portal is now protected - keep this password safe, there is no reset link.');
         refreshAuthState();
       } catch (e) {
         alert('Could not set the password: ' + e.message);
