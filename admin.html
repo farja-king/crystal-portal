@@ -444,6 +444,22 @@
         <p id="ord-save-msg" class="text-sm mt-3"></p>
       </div>
 
+      <!-- View/Edit Order Panel -->
+      <div id="order-view-edit-panel" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <div class="flex justify-between items-center mb-6">
+          <h3 id="panel-title" class="text-lg font-bold text-slate-900">View Quote</h3>
+          <button onclick="closeOrderPanel()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
+        </div>
+
+        <div id="order-panel-content" class="space-y-4">
+          <!-- Content will be filled dynamically -->
+        </div>
+
+        <div id="panel-actions" class="mt-6 flex gap-3 justify-end">
+          <!-- Actions will be filled dynamically -->
+        </div>
+      </div>
+
       <!-- List -->
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table class="w-full text-left">
@@ -833,6 +849,8 @@
         case 'delete-quote': deleteQuoteRow(id); break;
         case 'edit-customer': openCustomerEditForm(id); break;
         case 'delete-customer': deleteCustomerRow(id); break;
+        case 'view-order': viewOrder(id); break;
+        case 'edit-order': editOrder(id); break;
       }
     });
 
@@ -1676,6 +1694,8 @@
           } else {
             actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
           }
+          actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold">View</button>`);
+          actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
           actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
           actions.push(`<button onclick="deleteOrder('${o.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold">Delete</button>`);
 
@@ -1691,6 +1711,193 @@
         }).join('');
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    let viewingOrderId = null;
+    let editingOrderId = null;
+
+    function closeOrderPanel() {
+      viewingOrderId = null;
+      editingOrderId = null;
+      document.getElementById('order-view-edit-panel').classList.add('hidden');
+    }
+
+    function viewOrder(id) {
+      const o = ordersById[id];
+      if (!o) return;
+      viewingOrderId = id;
+      editingOrderId = null;
+
+      const panel = document.getElementById('order-view-edit-panel');
+      const title = document.getElementById('panel-title');
+      const content = document.getElementById('order-panel-content');
+      const actions = document.getElementById('panel-actions');
+
+      const docLabel = o.doc_type === 'invoice' ? 'Invoice' : 'Quote';
+      const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
+      title.textContent = `${docLabel}: ${escapeHtml(docNumber)}`;
+
+      const itemsHtml = (o.items || []).map((item) => {
+        const baseLabel = item.source === 'catalog'
+          ? `${escapeHtml(item.supplier_code || '')} ${escapeHtml(item.title || '')}`
+          : escapeHtml(item.description || "Customer's own garment");
+        const breakdownLines = (item.breakdown && item.breakdown.length)
+          ? item.breakdown.map((b) => `<div class="text-xs text-slate-500">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}</div>`).join('')
+          : '';
+        const decLines = item.decorations.map((d) => {
+          const dQty = Number(d.qty) || 1;
+          const priceLabel = d.price
+            ? `£${Number(d.price).toFixed(2)} each${dQty > 1 ? ' × ' + dQty : ''}`
+            : 'included';
+          return `<div class="text-xs text-slate-500">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)} (${priceLabel})</div>`;
+        }).join('');
+        return `<div class="border-b border-slate-100 pb-3 mb-3 last:border-0">
+          <div class="font-medium text-slate-900">${baseLabel}</div>
+          ${breakdownLines}${decLines}
+          <div class="text-sm mt-1">Qty: ${item.qty} | £${Number(item.unit_price).toFixed(2)} each | Total: £${Number(item.line_total).toFixed(2)}</div>
+        </div>`;
+      }).join('');
+
+      content.innerHTML = `
+        <div class="grid gap-4 md:grid-cols-2 pb-4 border-b border-slate-200">
+          <div>
+            <p class="text-xs text-slate-500 font-medium mb-1">Customer</p>
+            <p class="font-semibold text-slate-900">${escapeHtml(o.customer_name)}</p>
+            ${o.customer_email ? `<p class="text-sm text-slate-600">${escapeHtml(o.customer_email)}</p>` : ''}
+          </div>
+          <div>
+            <p class="text-xs text-slate-500 font-medium mb-1">Date</p>
+            <p class="font-semibold text-slate-900">${escapeHtml(ukDate(o.created_at))}</p>
+          </div>
+        </div>
+        <div class="py-4 border-b border-slate-200">
+          <p class="text-xs text-slate-500 font-medium mb-2">Items</p>
+          ${itemsHtml}
+        </div>
+        <div class="grid gap-4 md:grid-cols-2 py-4 border-b border-slate-200">
+          <div>
+            <p class="text-xs text-slate-500 font-medium mb-1">Subtotal</p>
+            <p class="text-lg font-semibold text-slate-900">${money(o.subtotal)}</p>
+          </div>
+          ${o.discount_pct ? `<div>
+            <p class="text-xs text-slate-500 font-medium mb-1">Discount (${o.discount_pct}%)</p>
+            <p class="text-lg font-semibold text-slate-900">-${money(o.discount_amount)}</p>
+          </div>` : ''}
+          <div>
+            <p class="text-xs text-slate-500 font-medium mb-1">Total</p>
+            <p class="text-lg font-semibold text-slate-900">${money(o.total)}</p>
+          </div>
+        </div>
+        ${o.notes ? `<div class="py-4 border-b border-slate-200">
+          <p class="text-xs text-slate-500 font-medium mb-1">Notes</p>
+          <p class="text-slate-700 text-sm">${escapeHtml(o.notes)}</p>
+        </div>` : ''}
+      `;
+
+      actions.innerHTML = `
+        <button onclick="editOrder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+          Edit
+        </button>
+        <button onclick="closeOrderPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">
+          Close
+        </button>
+      `;
+
+      panel.classList.remove('hidden');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function editOrder(id) {
+      const o = ordersById[id];
+      if (!o) return;
+      editingOrderId = id;
+      viewingOrderId = null;
+
+      const panel = document.getElementById('order-view-edit-panel');
+      const title = document.getElementById('panel-title');
+      const content = document.getElementById('order-panel-content');
+      const actions = document.getElementById('panel-actions');
+
+      const docLabel = o.doc_type === 'invoice' ? 'Invoice' : 'Quote';
+      title.textContent = `Edit ${docLabel}`;
+
+      content.innerHTML = `
+        <div class="grid gap-4 md:grid-cols-2 mb-4">
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Customer Name</span>
+            <input id="ord-edit-customer-name" value="${escapeAttr(o.customer_name || '')}" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Status</span>
+            <select id="ord-edit-status" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+              <option value="draft" ${o.status === 'draft' ? 'selected' : ''}>Draft</option>
+              <option value="sent" ${o.status === 'sent' ? 'selected' : ''}>Sent</option>
+              <option value="approved" ${o.status === 'approved' ? 'selected' : ''}>Approved</option>
+              <option value="declined" ${o.status === 'declined' ? 'selected' : ''}>Declined</option>
+            </select>
+          </label>
+        </div>
+        <label class="block text-sm mb-4">
+          <span class="block font-medium text-slate-700 mb-1">Notes</span>
+          <textarea id="ord-edit-notes" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 min-h-20">${escapeHtml(o.notes || '')}</textarea>
+        </label>
+        <div class="bg-slate-50 rounded-lg p-4 mb-4">
+          <p class="text-sm font-medium text-slate-900 mb-2">Totals (read-only)</p>
+          <div class="grid grid-cols-3 gap-4 text-sm">
+            <div>
+              <p class="text-xs text-slate-500 mb-1">Subtotal</p>
+              <p class="font-semibold text-slate-900">${money(o.subtotal)}</p>
+            </div>
+            ${o.discount_pct ? `<div>
+              <p class="text-xs text-slate-500 mb-1">Discount</p>
+              <p class="font-semibold text-slate-900">-${money(o.discount_amount)}</p>
+            </div>` : ''}
+            <div>
+              <p class="text-xs text-slate-500 mb-1">Total</p>
+              <p class="font-semibold text-slate-900">${money(o.total)}</p>
+            </div>
+          </div>
+        </div>
+      `;
+
+      actions.innerHTML = `
+        <button onclick="saveOrderEdit()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+          Save Changes
+        </button>
+        <button onclick="closeOrderPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">
+          Cancel
+        </button>
+      `;
+
+      panel.classList.remove('hidden');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    async function saveOrderEdit() {
+      if (!editingOrderId) return;
+
+      const customerName = document.getElementById('ord-edit-customer-name').value.trim();
+      const status = document.getElementById('ord-edit-status').value;
+      const notes = document.getElementById('ord-edit-notes').value.trim();
+
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: editingOrderId,
+            action: 'edit',
+            customer_name: customerName,
+            status: status,
+            notes: notes,
+          })
+        });
+        if (!res.ok) throw new Error('Save failed');
+        closeOrderPanel();
+        loadOrders();
+      } catch (err) {
+        alert('Failed to save: ' + err.message);
       }
     }
 

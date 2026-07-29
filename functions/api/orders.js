@@ -214,6 +214,20 @@ export async function onRequest(context) {
         return json({ success: true });
       }
 
+      if (data.action === "edit") {
+        await db.prepare(`
+          UPDATE orders SET
+            customer_name = ?, status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(
+          data.customer_name ?? existing.customer_name,
+          String(data.status || existing.status).slice(0, 30),
+          data.notes ?? existing.notes,
+          data.id
+        ).run();
+        return json({ success: true });
+      }
+
       // Full edit: re-price from the submitted items, same as create.
       const priced = priceItems(
         data.items !== undefined ? data.items : JSON.parse(existing.items || "[]"),
