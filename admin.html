@@ -26,6 +26,9 @@
           <button id="tab-catalog" onclick="switchTab('catalog')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Garment Catalog
           </button>
+          <button id="tab-orders" onclick="switchTab('orders')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            Quotes & Invoices
+          </button>
         </div>
         <button id="logout-btn" onclick="logout()" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
           Sign out
@@ -366,6 +369,84 @@
       </div>
     </section>
 
+    <!-- QUOTES & INVOICES TAB -->
+    <section id="section-orders" class="hidden">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Quotes & Invoices</h2>
+          <p class="text-slate-500 text-sm">Build a garment quote, then convert it to an invoice when it's confirmed. No VAT is shown anywhere - you're not VAT registered.</p>
+        </div>
+        <button onclick="loadOrders()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+          🔄 Refresh
+        </button>
+      </div>
+
+      <!-- Builder -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+        <h3 class="font-bold text-slate-900 mb-4">New Quote</h3>
+
+        <div class="grid gap-3 md:grid-cols-3 mb-4">
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Customer</span>
+            <select id="ord-customer" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" onchange="onOrderCustomerChange()">
+              <option value="">Select a customer…</option>
+            </select>
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Discount %</span>
+            <input id="ord-discount" type="number" min="0" max="100" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
+          </label>
+        </div>
+
+        <div id="ord-lines" class="space-y-4 mb-4"></div>
+
+        <div class="flex flex-wrap gap-2 mb-4">
+          <button onclick="addOrderLine('catalog')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            + Garment we supply
+          </button>
+          <button onclick="addOrderLine('customer_supplied')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            + Customer's own garment
+          </button>
+        </div>
+
+        <label class="text-sm block mb-4">
+          <span class="block font-medium text-slate-700 mb-1">Notes</span>
+          <textarea id="ord-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" placeholder="Artwork notes, turnaround, special instructions…"></textarea>
+        </label>
+
+        <div class="bg-slate-50 rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="text-sm text-slate-600 space-y-0.5">
+            <div>Subtotal: <span id="ord-subtotal" class="font-semibold text-slate-900">£0.00</span></div>
+            <div>Discount: <span id="ord-discount-amt" class="font-semibold text-slate-900">£0.00</span></div>
+          </div>
+          <div class="text-2xl font-bold text-slate-900">Total: <span id="ord-total">£0.00</span></div>
+          <button onclick="saveOrder()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+            💾 Save as Quote
+          </button>
+        </div>
+        <p id="ord-save-msg" class="text-sm mt-3"></p>
+      </div>
+
+      <!-- List -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-left">
+          <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+            <tr>
+              <th class="p-4">Number</th>
+              <th class="p-4">Customer</th>
+              <th class="p-4">Date</th>
+              <th class="p-4">Total</th>
+              <th class="p-4">Status</th>
+              <th class="p-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="orders-table-body" class="divide-y divide-slate-100 text-sm">
+            <tr><td colspan="6" class="p-8 text-center text-slate-400">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 
   <script>
@@ -420,7 +501,7 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['quotes', 'customers', 'catalog'];
+    const ADMIN_TABS = ['quotes', 'customers', 'catalog', 'orders'];
     function switchTab(tab) {
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
@@ -430,6 +511,7 @@
       });
       // The catalog is big, so it's only fetched once the tab is actually opened
       if (tab === 'catalog' && !catalogLoaded) loadCatalog(0);
+      if (tab === 'orders' && !ordersLoaded) { loadOrders(); populateOrderCustomerSelect(); }
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
@@ -507,6 +589,7 @@
 
         customersById = {};
         (customers || []).forEach(c => { customersById[c.id] = c; });
+        populateOrderCustomerSelect();
 
         if (!customers || customers.length === 0) {
           tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No customers saved yet.</td></tr>';
@@ -1113,6 +1196,423 @@
       } catch (e) {}
       location.reload();
     }
+
+    // ============================== Quotes & Invoices (garment orders) ==============================
+    const API_ORDERS_URL = '/api/orders';
+    let orderLines = [];
+    let ordersLoaded = false;
+    let ordersById = {};
+    let orderSearchTimer = null;
+
+    // Martin's fixed embroidery pricing rules - see PLACEMENT_LABELS for the
+    // options this drives. Returns null (no default) for anything outside
+    // plain embroidery, e.g. DTF/sublimation stay manual-entry always.
+    function suggestDecorationPrice(method, placement, source) {
+      if (method !== 'embroidery') return null;
+      if (placement === 'left_chest') return source === 'customer_supplied' ? 5 : 0;
+      if (placement === 'sleeve') return 5;
+      if (placement === 'back') return 10;
+      return null;
+    }
+
+    const METHOD_LABELS = { embroidery: 'Embroidery', dtf: 'DTF', sublimation: 'Sublimation', other: 'Other' };
+    const PLACEMENT_LABELS = { left_chest: 'Left chest', sleeve: 'Sleeve', back: 'Back', other: 'Other' };
+
+    function populateOrderCustomerSelect() {
+      const sel = document.getElementById('ord-customer');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">Select a customer…</option>' +
+        Object.values(customersById).map((c) =>
+          `<option value="${escapeAttr(c.id)}">${escapeHtml(c.name)}${c.company ? ' - ' + escapeHtml(c.company) : ''}</option>`
+        ).join('');
+      sel.value = current;
+    }
+
+    function onOrderCustomerChange() {
+      const c = customersById[document.getElementById('ord-customer').value];
+      document.getElementById('ord-discount').value = c ? (c.discount_pct || 0) : 0;
+      renderOrderTotals();
+    }
+
+    function addOrderLine(source) {
+      orderLines.push({
+        source,
+        product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0,
+        description: '',
+        qty: 1,
+        decorations: [],
+      });
+      renderOrderLines();
+    }
+
+    function removeOrderLine(idx) {
+      orderLines.splice(idx, 1);
+      renderOrderLines();
+    }
+
+    function addOrderLineDecoration(idx) {
+      const line = orderLines[idx];
+      const method = 'embroidery';
+      const placement = 'left_chest';
+      line.decorations.push({ method, placement, price: suggestDecorationPrice(method, placement, line.source) ?? 0, notes: '' });
+      renderOrderLines();
+    }
+
+    function removeOrderLineDecoration(idx, decIdx) {
+      orderLines[idx].decorations.splice(decIdx, 1);
+      renderOrderLines();
+    }
+
+    function updateOrderLineQty(idx, value) {
+      orderLines[idx].qty = Math.max(1, parseInt(value, 10) || 1);
+      renderOrderTotals();
+    }
+
+    function updateOrderLineDescription(idx, value) {
+      orderLines[idx].description = value;
+    }
+
+    function updateDecorationMethod(idx, decIdx, value) {
+      const line = orderLines[idx];
+      const dec = line.decorations[decIdx];
+      dec.method = value;
+      const suggestion = suggestDecorationPrice(dec.method, dec.placement, line.source);
+      if (suggestion !== null) dec.price = suggestion;
+      renderOrderLines();
+    }
+
+    function updateDecorationPlacement(idx, decIdx, value) {
+      const line = orderLines[idx];
+      const dec = line.decorations[decIdx];
+      dec.placement = value;
+      const suggestion = suggestDecorationPrice(dec.method, dec.placement, line.source);
+      if (suggestion !== null) dec.price = suggestion;
+      renderOrderLines();
+    }
+
+    function setDecorationPrice(idx, decIdx, value) {
+      orderLines[idx].decorations[decIdx].price = Number(value) || 0;
+      renderOrderLines();
+    }
+
+    function updateDecorationPriceLive(idx, decIdx, value) {
+      orderLines[idx].decorations[decIdx].price = Number(value) || 0;
+      renderOrderTotals();
+    }
+
+    function updateDecorationNotes(idx, decIdx, value) {
+      orderLines[idx].decorations[decIdx].notes = value;
+    }
+
+    function searchOrderCatalog(idx) {
+      clearTimeout(orderSearchTimer);
+      const q = document.getElementById('ord-line-search-' + idx).value.trim();
+      const resultsEl = document.getElementById('ord-line-results-' + idx);
+      if (!q) { resultsEl.innerHTML = ''; return; }
+      orderSearchTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(API_PRODUCTS_URL + '?q=' + encodeURIComponent(q) + '&limit=12');
+          const data = await res.json();
+          orderLines[idx]._searchResults = data.results || [];
+          resultsEl.innerHTML = orderLines[idx]._searchResults.length
+            ? orderLines[idx]._searchResults.map((p, i) => `
+                <button type="button" onclick="selectOrderLineProduct(${idx}, ${i})" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm border-b border-slate-100 last:border-0">
+                  <span class="font-semibold">${escapeHtml(p.supplier_code)}</span> ${escapeHtml(p.title)} - ${escapeHtml(p.colour)} / ${escapeHtml(p.size)}
+                  <span class="float-right text-slate-500">${p.sell_price === null ? 'no price set' : money(p.sell_price)}</span>
+                </button>
+              `).join('')
+            : '<p class="px-3 py-2 text-sm text-slate-400">No matches.</p>';
+        } catch (e) {
+          resultsEl.innerHTML = '<p class="px-3 py-2 text-sm text-red-500">Search failed.</p>';
+        }
+      }, 300);
+    }
+
+    function selectOrderLineProduct(idx, resultIdx) {
+      const p = orderLines[idx]._searchResults[resultIdx];
+      if (!p) return;
+      Object.assign(orderLines[idx], {
+        product_id: p.id, supplier_code: p.supplier_code, title: p.title,
+        colour: p.colour, size: p.size, unit_price: Number(p.sell_price) || 0,
+      });
+      renderOrderLines();
+    }
+
+    function clearOrderLineProduct(idx) {
+      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0 });
+      renderOrderLines();
+    }
+
+    function lineTotal(line) {
+      const decTotal = line.decorations.reduce((sum, d) => sum + (Number(d.price) || 0), 0);
+      return line.qty * ((Number(line.unit_price) || 0) + decTotal);
+    }
+
+    function renderOrderLines() {
+      const container = document.getElementById('ord-lines');
+      if (!orderLines.length) {
+        container.innerHTML = '<p class="text-sm text-slate-400 italic">No garment lines yet - add one below.</p>';
+        renderOrderTotals();
+        return;
+      }
+
+      container.innerHTML = orderLines.map((line, idx) => {
+        const isCustomerSupplied = line.source === 'customer_supplied';
+
+        const productBlock = isCustomerSupplied
+          ? `<input value="${escapeAttr(line.description)}" oninput="updateOrderLineDescription(${idx}, this.value)" placeholder="e.g. Customer's own polo shirt" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />`
+          : (line.product_id
+              ? `<div class="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+                   <span class="text-sm"><span class="font-semibold">${escapeHtml(line.supplier_code)}</span> ${escapeHtml(line.title)} - ${escapeHtml(line.colour)} / ${escapeHtml(line.size)} <span class="text-slate-500">(${money(line.unit_price)} each)</span></span>
+                   <button type="button" onclick="clearOrderLineProduct(${idx})" class="text-xs text-indigo-700 hover:underline ml-2">Change</button>
+                 </div>`
+              : `<div class="relative">
+                   <input id="ord-line-search-${idx}" oninput="searchOrderCatalog(${idx})" placeholder="Search catalog by code, title, colour…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+                   <div id="ord-line-results-${idx}" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-64 overflow-y-auto"></div>
+                 </div>`);
+
+        const decorationsBlock = line.decorations.map((dec, decIdx) => {
+          const showQuickPicks = dec.method === 'embroidery' && dec.placement === 'left_chest' && isCustomerSupplied;
+          const includedNote = dec.method === 'embroidery' && dec.placement === 'left_chest' && !isCustomerSupplied;
+          return `
+            <div class="flex flex-wrap items-center gap-2 bg-slate-50 rounded-lg p-2 mt-2">
+              <select onchange="updateDecorationMethod(${idx}, ${decIdx}, this.value)" class="rounded border border-slate-300 px-2 py-1 text-sm">
+                ${Object.entries(METHOD_LABELS).map(([v, l]) => `<option value="${v}" ${dec.method === v ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+              <select onchange="updateDecorationPlacement(${idx}, ${decIdx}, this.value)" class="rounded border border-slate-300 px-2 py-1 text-sm">
+                ${Object.entries(PLACEMENT_LABELS).map(([v, l]) => `<option value="${v}" ${dec.placement === v ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+              ${includedNote
+                ? '<span class="text-xs text-emerald-700 font-medium px-1">Included with garment</span>'
+                : ''}
+              <span class="text-sm text-slate-500">£</span>
+              <input type="number" step="0.01" value="${dec.price}" oninput="updateDecorationPriceLive(${idx}, ${decIdx}, this.value)" class="w-20 rounded border border-slate-300 px-2 py-1 text-sm" />
+              ${showQuickPicks ? `
+                <span class="flex gap-1">
+                  <button type="button" onclick="setDecorationPrice(${idx}, ${decIdx}, 5)" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£5</button>
+                  <button type="button" onclick="setDecorationPrice(${idx}, ${decIdx}, 7.5)" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£7.50</button>
+                  <button type="button" onclick="setDecorationPrice(${idx}, ${decIdx}, 10)" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£10</button>
+                </span>` : ''}
+              <input value="${escapeAttr(dec.notes)}" oninput="updateDecorationNotes(${idx}, ${decIdx}, this.value)" placeholder="Notes (optional)" class="flex-1 min-w-[100px] rounded border border-slate-300 px-2 py-1 text-sm" />
+              <button type="button" onclick="removeOrderLineDecoration(${idx}, ${decIdx})" class="text-rose-500 hover:text-rose-700 text-sm px-1">✕</button>
+            </div>`;
+        }).join('');
+
+        return `
+          <div class="border border-slate-200 rounded-xl p-4">
+            <div class="flex items-start justify-between gap-2 mb-2">
+              <span class="text-xs font-semibold uppercase tracking-wide ${isCustomerSupplied ? 'text-amber-600' : 'text-indigo-600'}">
+                ${isCustomerSupplied ? "Customer's own garment" : 'Garment we supply'}
+              </span>
+              <button type="button" onclick="removeOrderLine(${idx})" class="text-rose-500 hover:text-rose-700 text-sm">Remove line</button>
+            </div>
+            <div class="grid gap-2 md:grid-cols-4 items-start">
+              <div class="md:col-span-3">${productBlock}</div>
+              <label class="text-sm">
+                <span class="block text-xs text-slate-500 mb-1">Qty</span>
+                <input type="number" min="1" value="${line.qty}" oninput="updateOrderLineQty(${idx}, this.value)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+              </label>
+            </div>
+            ${decorationsBlock}
+            <div class="flex items-center justify-between mt-2">
+              <button type="button" onclick="addOrderLineDecoration(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add decoration</button>
+              <span class="text-sm font-semibold text-slate-700">Line total: ${money(lineTotal(line))}</span>
+            </div>
+          </div>`;
+      }).join('');
+
+      renderOrderTotals();
+    }
+
+    function computeOrderPricing() {
+      const subtotal = orderLines.reduce((sum, l) => sum + lineTotal(l), 0);
+      const discountPct = Math.min(100, Math.max(0, Number(document.getElementById('ord-discount').value) || 0));
+      const discountAmt = subtotal * (discountPct / 100);
+      const total = subtotal - discountAmt;
+      return { subtotal, discountPct, discountAmt, total };
+    }
+
+    function renderOrderTotals() {
+      const { subtotal, discountAmt, total } = computeOrderPricing();
+      document.getElementById('ord-subtotal').textContent = money(subtotal);
+      document.getElementById('ord-discount-amt').textContent = money(discountAmt);
+      document.getElementById('ord-total').textContent = money(total);
+    }
+
+    async function saveOrder() {
+      const msg = document.getElementById('ord-save-msg');
+      const customerId = document.getElementById('ord-customer').value;
+      const customer = customersById[customerId];
+      if (!customer) { msg.className = 'text-sm mt-3 text-red-600'; msg.textContent = 'Select a customer first.'; return; }
+      if (!orderLines.length) { msg.className = 'text-sm mt-3 text-red-600'; msg.textContent = 'Add at least one garment line.'; return; }
+
+      const payload = {
+        customer_id: customer.id,
+        customer_name: customer.name,
+        customer_email: customer.email || '',
+        discount_pct: Number(document.getElementById('ord-discount').value) || 0,
+        notes: document.getElementById('ord-notes').value,
+        items: orderLines.map((l) => ({
+          source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
+          title: l.title, colour: l.colour, size: l.size, description: l.description,
+          qty: l.qty, unit_price: l.unit_price,
+          decorations: l.decorations.map((d) => ({ method: d.method, placement: d.placement, price: d.price, notes: d.notes })),
+        })),
+      };
+
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+
+        msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
+        msg.textContent = 'Saved as ' + data.quote_number + '.';
+        orderLines = [];
+        document.getElementById('ord-notes').value = '';
+        document.getElementById('ord-customer').value = '';
+        document.getElementById('ord-discount').value = 0;
+        renderOrderLines();
+        loadOrders();
+      } catch (e) {
+        msg.className = 'text-sm mt-3 text-red-600';
+        msg.textContent = 'Could not save: ' + e.message;
+      }
+    }
+
+    async function loadOrders() {
+      ordersLoaded = true;
+      const tbody = document.getElementById('orders-table-body');
+      tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">Loading…</td></tr>';
+      try {
+        const res = await fetch(API_ORDERS_URL);
+        const rows = await res.json();
+        ordersById = {};
+        rows.forEach((o) => { ordersById[o.id] = o; });
+
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">No quotes yet.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = rows.map((o) => {
+          const isInvoice = o.doc_type === 'invoice';
+          const number = isInvoice
+            ? `${escapeHtml(o.invoice_number)} <span class="text-xs text-slate-400 block">from ${escapeHtml(o.quote_number)}</span>`
+            : escapeHtml(o.quote_number);
+          const statusBadge = isInvoice
+            ? `<span class="px-2 py-1 text-xs font-semibold rounded-full ${o.paid_status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">${o.paid_status === 'paid' ? 'Paid' : 'Unpaid'}</span>`
+            : `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(o.status || 'draft')}</span>`;
+
+          const actions = [];
+          if (isInvoice) {
+            actions.push(`<button onclick="setOrderPaidStatus('${o.id}', '${o.paid_status === 'paid' ? 'unpaid' : 'paid'}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Mark ${o.paid_status === 'paid' ? 'Unpaid' : 'Paid'}</button>`);
+          } else {
+            actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
+          }
+          actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
+          actions.push(`<button onclick="deleteOrder('${o.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold">Delete</button>`);
+
+          return `
+            <tr class="hover:bg-slate-50">
+              <td class="p-4 font-semibold text-slate-900">${number}</td>
+              <td class="p-4">${escapeHtml(o.customer_name)}</td>
+              <td class="p-4 text-slate-500 text-xs">${escapeHtml((o.created_at || '').slice(0, 10))}</td>
+              <td class="p-4 font-semibold">${money(o.total)}</td>
+              <td class="p-4">${statusBadge}</td>
+              <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
+            </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    async function convertOrderToInvoice(id) {
+      if (!confirm('Convert this quote to an invoice? It will get its own invoice number.')) return;
+      await fetch(API_ORDERS_URL, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action: 'convert_to_invoice' }),
+      });
+      loadOrders();
+    }
+
+    async function setOrderPaidStatus(id, status) {
+      await fetch(API_ORDERS_URL, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action: 'set_paid_status', paid_status: status }),
+      });
+      loadOrders();
+    }
+
+    async function deleteOrder(id) {
+      const o = ordersById[id];
+      if (!confirm(`Delete ${o ? (o.invoice_number || o.quote_number) : id}? This cannot be undone.`)) return;
+      await fetch(API_ORDERS_URL, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+      });
+      loadOrders();
+    }
+
+    async function printOrder(id) {
+      const res = await fetch(API_ORDERS_URL + '?id=' + encodeURIComponent(id));
+      const o = await res.json();
+      const win = window.open('', '_blank', 'width=900,height=1200');
+      if (!win) return;
+
+      const docLabel = o.doc_type === 'invoice' ? 'Invoice' : 'Quote';
+      const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
+
+      const rows = o.items.map((item) => {
+        const label = item.source === 'catalog'
+          ? `${escapeHtml(item.supplier_code)} ${escapeHtml(item.title)} - ${escapeHtml(item.colour)} / ${escapeHtml(item.size)}`
+          : escapeHtml(item.description || "Customer's own garment");
+        const decLines = item.decorations.map((d) =>
+          `<div class="dec">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)}${d.price ? ' (£' + Number(d.price).toFixed(2) + ' each)' : ' (included)'}${d.notes ? ' - ' + escapeHtml(d.notes) : ''}</div>`
+        ).join('');
+        return `<tr><td>${label}${decLines}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
+      }).join('');
+
+      win.document.write(`
+        <html><head><title>${escapeHtml(docNumber)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 32px; color: #0f172a; }
+          h1 { margin: 0 0 4px; } .muted { color: #64748b; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
+          .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+          th { text-align: left; border-bottom: 2px solid #0f172a; padding: 8px 4px; font-size: 0.8rem; text-transform: uppercase; }
+          td { padding: 10px 4px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+          .dec { font-size: 0.8rem; color: #64748b; margin-top: 2px; }
+          .totals { margin-top: 16px; text-align: right; }
+          .totals .total { font-size: 1.3rem; font-weight: 700; }
+        </style></head>
+        <body>
+          <h1>Crystal Custom Embroidery</h1>
+          <div class="muted">${docLabel} - ${escapeHtml(docNumber)}${o.doc_type === 'invoice' ? ' (from ' + escapeHtml(o.quote_number) + ')' : ''}</div>
+          <div class="grid">
+            <div class="card"><strong>Customer</strong><br>${escapeHtml(o.customer_name)}${o.customer_email ? '<br>' + escapeHtml(o.customer_email) : ''}</div>
+            <div class="card"><strong>Details</strong><br>Date: ${escapeHtml((o.created_at || '').slice(0, 10))}${o.doc_type === 'invoice' ? '<br>Status: ' + (o.paid_status === 'paid' ? 'Paid' : 'Unpaid') : ''}</div>
+          </div>
+          <table>
+            <thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="totals">
+            <div>Subtotal: £${Number(o.subtotal).toFixed(2)}</div>
+            ${o.discount_amount ? `<div>Discount (${o.discount_pct}%): -£${Number(o.discount_amount).toFixed(2)}</div>` : ''}
+            <div class="total">Total: £${Number(o.total).toFixed(2)}</div>
+            <div class="muted" style="font-size:0.75rem;margin-top:4px;">VAT not applicable - not VAT registered.</div>
+          </div>
+          ${o.notes ? `<p class="muted" style="margin-top:24px;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ''}
+          <script>window.print();<\/script>
+        </body></html>
+      `);
+      win.document.close();
+    }
+
+    renderOrderLines();
 
     // Initial Load
     loadQuotes();
