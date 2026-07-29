@@ -99,6 +99,10 @@ export async function onRequest(context) {
         if (v) { where.push(`${col} = ?${binds.length + 1}`); binds.push(v); }
       }
       if (p.get("unpriced")) where.push("sell_price IS NULL");
+      // "priced" = items with a sell price set, i.e. what's actually live on
+      // the web store today (the sync job only ever sets sell_price for
+      // products it finds on the site).
+      if (p.get("priced")) where.push("sell_price IS NOT NULL");
       if (p.get("active")) where.push("active = 1");
 
       const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";

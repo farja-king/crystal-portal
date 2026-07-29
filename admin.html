@@ -281,10 +281,11 @@
             <select id="cat-category" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"><option value="">All</option></select>
           </label>
         </div>
-        <label class="flex items-center gap-2 mt-3 text-sm text-slate-700">
-          <input id="cat-unpriced" type="checkbox" class="rounded border-slate-300" />
-          Only show products with no sell price yet
-        </label>
+        <div class="flex items-center gap-1 mt-3 bg-slate-100 rounded-lg p-1 w-fit" id="cat-view-toggle">
+          <button type="button" data-view="priced" class="cat-view-btn px-3 py-1.5 rounded-md text-sm font-semibold">On my website</button>
+          <button type="button" data-view="unpriced" class="cat-view-btn px-3 py-1.5 rounded-md text-sm font-semibold">Awaiting price</button>
+          <button type="button" data-view="all" class="cat-view-btn px-3 py-1.5 rounded-md text-sm font-semibold">All products</button>
+        </div>
       </div>
 
       <!-- VAT note -->
@@ -751,6 +752,29 @@
     let catalogLoaded = false;
     let catalogOffset = 0;
     let catalogTotal = 0;
+    let catalogView = 'priced'; // 'priced' (on my website) | 'unpriced' (awaiting price) | 'all'
+
+    function styleCatalogViewButtons() {
+      document.querySelectorAll('.cat-view-btn').forEach((btn) => {
+        const active = btn.dataset.view === catalogView;
+        btn.classList.toggle('bg-white', active);
+        btn.classList.toggle('shadow-sm', active);
+        btn.classList.toggle('text-indigo-700', active);
+        btn.classList.toggle('text-slate-600', !active);
+      });
+    }
+
+    function setCatalogView(view) {
+      catalogView = view;
+      styleCatalogViewButtons();
+      loadCatalog(0);
+    }
+
+    document.getElementById('cat-view-toggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('.cat-view-btn');
+      if (btn) setCatalogView(btn.dataset.view);
+    });
+    styleCatalogViewButtons();
 
     function catalogFilters() {
       return {
@@ -758,7 +782,8 @@
         supplier: document.getElementById('cat-supplier').value,
         brand: document.getElementById('cat-brand').value,
         category: document.getElementById('cat-category').value,
-        unpriced: document.getElementById('cat-unpriced').checked,
+        unpriced: catalogView === 'unpriced',
+        priced: catalogView === 'priced',
       };
     }
 
@@ -809,6 +834,7 @@
       if (f.brand) params.set('brand', f.brand);
       if (f.category) params.set('category', f.category);
       if (f.unpriced) params.set('unpriced', '1');
+      if (f.priced) params.set('priced', '1');
       params.set('limit', CATALOG_PAGE_SIZE);
       params.set('offset', catalogOffset);
 
@@ -1027,7 +1053,7 @@
 
     // Debounced re-query as the filters are changed
     let catalogFilterTimer = null;
-    ['cat-q', 'cat-supplier', 'cat-brand', 'cat-category', 'cat-unpriced'].forEach((id) => {
+    ['cat-q', 'cat-supplier', 'cat-brand', 'cat-category'].forEach((id) => {
       const el = document.getElementById(id);
       const evt = el.tagName === 'INPUT' && el.type !== 'checkbox' ? 'input' : 'change';
       el.addEventListener(evt, () => {
