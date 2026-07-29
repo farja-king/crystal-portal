@@ -1313,6 +1313,9 @@
         try {
           const res = await fetch(API_PRODUCTS_URL + '?q=' + encodeURIComponent(q) + '&limit=12');
           const data = await res.json();
+          // The line can be removed (or the whole list re-rendered) while this
+          // fetch is in flight - bail out rather than write into stale state/DOM.
+          if (!orderLines[idx] || !document.getElementById('ord-line-results-' + idx)) return;
           orderLines[idx]._searchResults = data.results || [];
           resultsEl.innerHTML = orderLines[idx]._searchResults.length
             ? orderLines[idx]._searchResults.map((p, i) => `
