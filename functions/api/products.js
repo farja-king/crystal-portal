@@ -287,7 +287,12 @@ export async function onRequest(context) {
         const res = await db.prepare("DELETE FROM products WHERE supplier = ?").bind(data.supplier).run();
         return json({ success: true, deleted: res.meta ? res.meta.changes : null });
       }
-      return json({ error: "Provide an id, or a supplier with confirm:true" }, 400);
+      // Reset all sell prices to NULL (for wiping bad bulk imports).
+      if (data.reset_prices && data.confirm) {
+        const res = await db.prepare("UPDATE products SET sell_price = NULL, profit = NULL, updated_at = CURRENT_TIMESTAMP").run();
+        return json({ success: true, reset: res.meta ? res.meta.changes : null });
+      }
+      return json({ error: "Provide an id, or a supplier with confirm:true, or reset_prices with confirm:true" }, 400);
     }
 
     return json({ error: "Method not allowed" }, 405);
