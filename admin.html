@@ -388,14 +388,31 @@
         <div class="grid gap-3 md:grid-cols-3 mb-4">
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Customer</span>
-            <select id="ord-customer" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" onchange="onOrderCustomerChange()">
-              <option value="">Select a customer…</option>
-            </select>
+            <div class="flex gap-2">
+              <select id="ord-customer" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" onchange="onOrderCustomerChange()">
+                <option value="">Select a customer…</option>
+              </select>
+              <button type="button" onclick="toggleNewCustomerPanel()" class="shrink-0 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold shadow-sm">
+                + New
+              </button>
+            </div>
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Discount %</span>
             <input id="ord-discount" type="number" min="0" max="100" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
           </label>
+        </div>
+
+        <div id="ord-new-customer-panel" class="hidden grid gap-2 md:grid-cols-5 mb-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <input id="ord-nc-name" placeholder="Name *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="ord-nc-company" placeholder="Company" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="ord-nc-email" placeholder="Email" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="ord-nc-phone" placeholder="Phone" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <div class="flex gap-2">
+            <button type="button" onclick="saveNewCustomerFromOrder()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold">Save</button>
+            <button type="button" onclick="toggleNewCustomerPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold">✕</button>
+          </div>
+          <p id="ord-nc-msg" class="text-xs text-red-600 md:col-span-5"></p>
         </div>
 
         <div id="ord-lines" class="space-y-4 mb-4"></div>
@@ -874,6 +891,14 @@
       return n === null || n === undefined || n === '' ? '-' : '£' + Number(n).toFixed(2);
     }
 
+    // D1's CURRENT_TIMESTAMP comes back as "YYYY-MM-DD HH:MM:SS" - Martin
+    // wants UK-style DD-MM-YYYY on quotes/invoices, not the ISO order.
+    function ukDate(raw) {
+      const datePart = String(raw || '').slice(0, 10);
+      const m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return m ? `${m[3]}-${m[2]}-${m[1]}` : datePart;
+    }
+
     async function loadFacets() {
       try {
         const res = await fetch(API_PRODUCTS_URL + '?facets=1');
@@ -1234,12 +1259,58 @@
       renderOrderTotals();
     }
 
+    function toggleNewCustomerPanel() {
+      const panel = document.getElementById('ord-new-customer-panel');
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        document.getElementById('ord-nc-name').focus();
+      } else {
+        ['ord-nc-name', 'ord-nc-company', 'ord-nc-email', 'ord-nc-phone'].forEach((id) => { document.getElementById(id).value = ''; });
+        document.getElementById('ord-nc-msg').textContent = '';
+      }
+    }
+
+    async function saveNewCustomerFromOrder() {
+      const msg = document.getElementById('ord-nc-msg');
+      const name = document.getElementById('ord-nc-name').value.trim();
+      if (!name) { msg.textContent = 'Name is required.'; return; }
+
+      const payload = {
+        id: crypto.randomUUID(),
+        name,
+        company: document.getElementById('ord-nc-company').value.trim(),
+        email: document.getElementById('ord-nc-email').value.trim(),
+        phone: document.getElementById('ord-nc-phone').value.trim(),
+        type: 'Retail',
+        discount_pct: 0,
+        notes: '',
+      };
+
+      try {
+        const res = await fetch(API_CUSTOMERS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error('Save failed');
+
+        await loadCustomers();
+        document.getElementById('ord-customer').value = payload.id;
+        onOrderCustomerChange();
+        toggleNewCustomerPanel();
+      } catch (e) {
+        msg.textContent = 'Could not save: ' + e.message;
+      }
+    }
+
     function addOrderLine(source) {
       orderLines.push({
         source,
         product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0,
         description: '',
         qty: 1,
+        // Catalog rows are often a pricing tier, not one physical garment -
+        // "All Colours" / "XS - XXL" covers a whole size run at one price.
+        // breakdown is where the actual colour+size+qty per unit gets itemized.
+        breakdown: source === 'catalog' ? [{ colour: '', size: '', qty: 1 }] : [],
         decorations: [],
       });
       renderOrderLines();
@@ -1254,7 +1325,7 @@
       const line = orderLines[idx];
       const method = 'embroidery';
       const placement = 'left_chest';
-      line.decorations.push({ method, placement, price: suggestDecorationPrice(method, placement, line.source) ?? 0, notes: '' });
+      line.decorations.push({ method, placement, price: suggestDecorationPrice(method, placement, line.source) ?? 0, qty: 1, notes: '' });
       renderOrderLines();
     }
 
@@ -1300,6 +1371,11 @@
       renderOrderTotals();
     }
 
+    function updateDecorationQtyLive(idx, decIdx, value) {
+      orderLines[idx].decorations[decIdx].qty = Math.max(1, parseInt(value, 10) || 1);
+      renderOrderTotals();
+    }
+
     function updateDecorationNotes(idx, decIdx, value) {
       orderLines[idx].decorations[decIdx].notes = value;
     }
@@ -1334,21 +1410,54 @@
     function selectOrderLineProduct(idx, resultIdx) {
       const p = orderLines[idx]._searchResults[resultIdx];
       if (!p) return;
+      // The catalog row is often a pricing tier ("All Colours" / "XS - XXL"
+      // covering a whole size run at one price), not one physical garment -
+      // only prefill the breakdown's colour/size when the row is already a
+      // single specific value, otherwise leave it blank for Martin to itemize.
+      const specificColour = p.colour && p.colour.toLowerCase() !== 'all colours' ? p.colour : '';
+      const specificSize = p.size && !p.size.includes(' - ') ? p.size : '';
       Object.assign(orderLines[idx], {
         product_id: p.id, supplier_code: p.supplier_code, title: p.title,
         colour: p.colour, size: p.size, unit_price: Number(p.sell_price) || 0,
+        breakdown: [{ colour: specificColour, size: specificSize, qty: 1 }],
       });
       renderOrderLines();
     }
 
     function clearOrderLineProduct(idx) {
-      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0 });
+      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1 }] });
       renderOrderLines();
     }
 
+    function addBreakdownRow(idx) {
+      orderLines[idx].breakdown.push({ colour: '', size: '', qty: 1 });
+      renderOrderLines();
+    }
+
+    function removeBreakdownRow(idx, rowIdx) {
+      if (orderLines[idx].breakdown.length <= 1) return; // always keep at least one row
+      orderLines[idx].breakdown.splice(rowIdx, 1);
+      renderOrderLines();
+    }
+
+    function updateBreakdownField(idx, rowIdx, field, value) {
+      orderLines[idx].breakdown[rowIdx][field] = value;
+    }
+
+    function updateBreakdownQtyLive(idx, rowIdx, value) {
+      orderLines[idx].breakdown[rowIdx].qty = Math.max(1, parseInt(value, 10) || 1);
+      renderOrderTotals();
+    }
+
+    function lineQty(line) {
+      return line.source === 'catalog'
+        ? (line.breakdown || []).reduce((sum, b) => sum + (Number(b.qty) || 0), 0)
+        : (Number(line.qty) || 0);
+    }
+
     function lineTotal(line) {
-      const decTotal = line.decorations.reduce((sum, d) => sum + (Number(d.price) || 0), 0);
-      return line.qty * ((Number(line.unit_price) || 0) + decTotal);
+      const decTotal = line.decorations.reduce((sum, d) => sum + (Number(d.price) || 0) * (Number(d.qty) || 1), 0);
+      return lineQty(line) * ((Number(line.unit_price) || 0) + decTotal);
     }
 
     function renderOrderLines() {
@@ -1374,9 +1483,31 @@
                    <div id="ord-line-results-${idx}" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-64 overflow-y-auto"></div>
                  </div>`);
 
+        // The catalog row picked above is often just a pricing tier ("All
+        // Colours" / "XS - XXL"), not one physical garment, so once it's
+        // selected the actual colour/size/qty per unit gets itemized here.
+        const breakdownBlock = (!isCustomerSupplied && line.product_id) ? `
+          <div class="mt-2 space-y-1.5">
+            <div class="flex items-center gap-2 text-xs text-slate-500 font-medium px-1">
+              <span class="flex-1">Colour</span><span class="w-24">Size</span><span class="w-16">Qty</span><span class="w-5"></span>
+            </div>
+            ${line.breakdown.map((b, rowIdx) => `
+              <div class="flex items-center gap-2">
+                <input value="${escapeAttr(b.colour)}" oninput="updateBreakdownField(${idx}, ${rowIdx}, 'colour', this.value)" placeholder="e.g. Red" class="flex-1 rounded border border-slate-300 px-2 py-1 text-sm" />
+                <input value="${escapeAttr(b.size)}" oninput="updateBreakdownField(${idx}, ${rowIdx}, 'size', this.value)" placeholder="e.g. M" class="w-24 rounded border border-slate-300 px-2 py-1 text-sm" />
+                <input type="number" min="1" value="${b.qty}" oninput="updateBreakdownQtyLive(${idx}, ${rowIdx}, this.value)" class="w-16 rounded border border-slate-300 px-2 py-1 text-sm" />
+                <button type="button" onclick="removeBreakdownRow(${idx}, ${rowIdx})" class="w-5 text-rose-500 hover:text-rose-700 text-sm ${line.breakdown.length <= 1 ? 'invisible' : ''}">✕</button>
+              </div>`).join('')}
+            <div class="flex items-center justify-between pt-0.5">
+              <button type="button" onclick="addBreakdownRow(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add colour/size</button>
+              <span class="text-xs text-slate-500">Total qty: ${lineQty(line)}</span>
+            </div>
+          </div>` : '';
+
         const decorationsBlock = line.decorations.map((dec, decIdx) => {
           const showQuickPicks = dec.method === 'embroidery' && dec.placement === 'left_chest' && isCustomerSupplied;
           const includedNote = dec.method === 'embroidery' && dec.placement === 'left_chest' && !isCustomerSupplied;
+          const decQty = Number(dec.qty) || 1;
           return `
             <div class="flex flex-wrap items-center gap-2 bg-slate-50 rounded-lg p-2 mt-2">
               <select onchange="updateDecorationMethod(${idx}, ${decIdx}, this.value)" class="rounded border border-slate-300 px-2 py-1 text-sm">
@@ -1396,10 +1527,26 @@
                   <button type="button" onclick="setDecorationPrice(${idx}, ${decIdx}, 7.5)" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£7.50</button>
                   <button type="button" onclick="setDecorationPrice(${idx}, ${decIdx}, 10)" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£10</button>
                 </span>` : ''}
+              <span class="text-sm text-slate-500">×</span>
+              <input type="number" min="1" value="${decQty}" oninput="updateDecorationQtyLive(${idx}, ${decIdx}, this.value)" title="e.g. 2 for both sleeves" class="w-14 rounded border border-slate-300 px-2 py-1 text-sm" />
+              ${decQty > 1 ? `<span class="text-xs text-slate-500">= £${((Number(dec.price) || 0) * decQty).toFixed(2)}</span>` : ''}
               <input value="${escapeAttr(dec.notes)}" oninput="updateDecorationNotes(${idx}, ${decIdx}, this.value)" placeholder="Notes (optional)" class="flex-1 min-w-[100px] rounded border border-slate-300 px-2 py-1 text-sm" />
               <button type="button" onclick="removeOrderLineDecoration(${idx}, ${decIdx})" class="text-rose-500 hover:text-rose-700 text-sm px-1">✕</button>
             </div>`;
         }).join('');
+
+        const topRow = isCustomerSupplied
+          ? `<div class="grid gap-2 md:grid-cols-4 items-start">
+               <div class="md:col-span-3">
+                 <span class="block text-xs text-slate-500 mb-1">Description</span>
+                 ${productBlock}
+               </div>
+               <label class="text-sm">
+                 <span class="block text-xs text-slate-500 mb-1">Qty</span>
+                 <input type="number" min="1" value="${line.qty}" oninput="updateOrderLineQty(${idx}, this.value)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+               </label>
+             </div>`
+          : `${productBlock}${breakdownBlock}`;
 
         return `
           <div class="border border-slate-200 rounded-xl p-4">
@@ -1409,13 +1556,7 @@
               </span>
               <button type="button" onclick="removeOrderLine(${idx})" class="text-rose-500 hover:text-rose-700 text-sm">Remove line</button>
             </div>
-            <div class="grid gap-2 md:grid-cols-4 items-start">
-              <div class="md:col-span-3">${productBlock}</div>
-              <label class="text-sm">
-                <span class="block text-xs text-slate-500 mb-1">Qty</span>
-                <input type="number" min="1" value="${line.qty}" oninput="updateOrderLineQty(${idx}, this.value)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
-              </label>
-            </div>
+            ${topRow}
             ${decorationsBlock}
             <div class="flex items-center justify-between mt-2">
               <button type="button" onclick="addOrderLineDecoration(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add decoration</button>
@@ -1459,7 +1600,8 @@
           source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
           title: l.title, colour: l.colour, size: l.size, description: l.description,
           qty: l.qty, unit_price: l.unit_price,
-          decorations: l.decorations.map((d) => ({ method: d.method, placement: d.placement, price: d.price, notes: d.notes })),
+          breakdown: l.breakdown ? l.breakdown.map((b) => ({ colour: b.colour, size: b.size, qty: b.qty })) : [],
+          decorations: l.decorations.map((d) => ({ method: d.method, placement: d.placement, price: d.price, qty: d.qty, notes: d.notes })),
         })),
       };
 
@@ -1521,7 +1663,7 @@
             <tr class="hover:bg-slate-50">
               <td class="p-4 font-semibold text-slate-900">${number}</td>
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
-              <td class="p-4 text-slate-500 text-xs">${escapeHtml((o.created_at || '').slice(0, 10))}</td>
+              <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
               <td class="p-4">${statusBadge}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
@@ -1568,13 +1710,23 @@
       const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
 
       const rows = o.items.map((item) => {
-        const label = item.source === 'catalog'
-          ? `${escapeHtml(item.supplier_code)} ${escapeHtml(item.title)} - ${escapeHtml(item.colour)} / ${escapeHtml(item.size)}`
+        const baseLabel = item.source === 'catalog'
+          ? `${escapeHtml(item.supplier_code)} ${escapeHtml(item.title)}`
           : escapeHtml(item.description || "Customer's own garment");
-        const decLines = item.decorations.map((d) =>
-          `<div class="dec">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)}${d.price ? ' (£' + Number(d.price).toFixed(2) + ' each)' : ' (included)'}${d.notes ? ' - ' + escapeHtml(d.notes) : ''}</div>`
-        ).join('');
-        return `<tr><td>${label}${decLines}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
+        // Itemized colour/size/qty per unit - the catalog row itself is
+        // often just a pricing tier ("All Colours" / "XS - XXL"), not what
+        // was actually cut and packed.
+        const breakdownLines = (item.breakdown && item.breakdown.length)
+          ? item.breakdown.map((b) => `<div class="dec">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}</div>`).join('')
+          : '';
+        const decLines = item.decorations.map((d) => {
+          const dQty = Number(d.qty) || 1;
+          const priceLabel = d.price
+            ? `£${Number(d.price).toFixed(2)} each${dQty > 1 ? ' × ' + dQty + ' = £' + (d.price * dQty).toFixed(2) : ''}`
+            : 'included';
+          return `<div class="dec">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)} (${priceLabel})${d.notes ? ' - ' + escapeHtml(d.notes) : ''}</div>`;
+        }).join('');
+        return `<tr><td>${baseLabel}${breakdownLines}${decLines}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
       }).join('');
 
       win.document.write(`
@@ -1596,7 +1748,7 @@
           <div class="muted">${docLabel} - ${escapeHtml(docNumber)}${o.doc_type === 'invoice' ? ' (from ' + escapeHtml(o.quote_number) + ')' : ''}</div>
           <div class="grid">
             <div class="card"><strong>Customer</strong><br>${escapeHtml(o.customer_name)}${o.customer_email ? '<br>' + escapeHtml(o.customer_email) : ''}</div>
-            <div class="card"><strong>Details</strong><br>Date: ${escapeHtml((o.created_at || '').slice(0, 10))}${o.doc_type === 'invoice' ? '<br>Status: ' + (o.paid_status === 'paid' ? 'Paid' : 'Unpaid') : ''}</div>
+            <div class="card"><strong>Details</strong><br>Date: ${escapeHtml(ukDate(o.created_at))}${o.doc_type === 'invoice' ? '<br>Status: ' + (o.paid_status === 'paid' ? 'Paid' : 'Unpaid') : ''}</div>
           </div>
           <table>
             <thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>

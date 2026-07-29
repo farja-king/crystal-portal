@@ -35,18 +35,33 @@ export async function onRequest(context) {
   // stored total has to be right.
   function priceItems(items, discountPct) {
     const priced = (Array.isArray(items) ? items : []).map((item) => {
-      const qty = Math.max(1, parseInt(item.qty, 10) || 1);
+      const source = item.source === "customer_supplied" ? "customer_supplied" : "catalog";
+
+      // Catalog rows are often a pricing tier ("All Colours" / "XS - XXL"),
+      // not one physical garment, so the real per-unit colour/size/qty is
+      // itemized in breakdown - qty for the line is the sum of those, not a
+      // single number the client could otherwise send disconnected from it.
+      const breakdown = (Array.isArray(item.breakdown) ? item.breakdown : []).map((b) => ({
+        colour: String(b.colour || "").slice(0, 60),
+        size: String(b.size || "").slice(0, 60),
+        qty: Math.max(1, parseInt(b.qty, 10) || 1),
+      }));
+      const qty = source === "catalog" && breakdown.length
+        ? breakdown.reduce((sum, b) => sum + b.qty, 0)
+        : Math.max(1, parseInt(item.qty, 10) || 1);
+
       const unitPrice = Number(item.unit_price) || 0;
       const decorations = (Array.isArray(item.decorations) ? item.decorations : []).map((d) => ({
         method: String(d.method || "").slice(0, 40),
         placement: String(d.placement || "").slice(0, 40),
         price: Number(d.price) || 0,
+        qty: Math.max(1, parseInt(d.qty, 10) || 1),
         notes: String(d.notes || "").slice(0, 200),
       }));
-      const decorationTotal = decorations.reduce((sum, d) => sum + d.price, 0);
+      const decorationTotal = decorations.reduce((sum, d) => sum + d.price * d.qty, 0);
       const lineTotal = round2(qty * (unitPrice + decorationTotal));
       return {
-        source: item.source === "customer_supplied" ? "customer_supplied" : "catalog",
+        source,
         product_id: item.product_id || null,
         supplier_code: item.supplier_code || "",
         title: item.title || "",
@@ -55,6 +70,7 @@ export async function onRequest(context) {
         description: item.description || "",
         qty,
         unit_price: unitPrice,
+        breakdown,
         decorations,
         line_total: lineTotal,
       };
