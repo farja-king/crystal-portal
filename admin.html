@@ -232,7 +232,7 @@
 
       <!-- Customers Table -->
       <div class="grid gap-4 sm:grid-cols-2 items-start mb-6">
-        <input id="cust-search" type="text" placeholder="Search by name or phone…" oninput="filterCustomers()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="cust-search" type="text" placeholder="Search by name, company, email or phone…" oninput="filterCustomers()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
 
         <!-- Import from Square's customer export CSV - see importCustomersCsv().
              Re-importing an updated export updates existing customers (matched
@@ -818,9 +818,9 @@
       }
     }
 
-    // Matches the search box against name or phone - phone comparison
-    // strips everything but digits so formatting (spaces, dashes, leading 0
-    // vs +44) doesn't stop a match.
+    // Matches the search box against name, company, email or phone - phone
+    // comparison strips everything but digits so formatting (spaces,
+    // dashes, leading 0 vs +44) doesn't stop a match.
     function filterCustomers() {
       const raw = document.getElementById('cust-search').value.trim().toLowerCase();
       if (!raw) { renderCustomersTable(allCustomers); return; }
@@ -828,8 +828,10 @@
       const digits = raw.replace(/\D/g, '');
       const filtered = allCustomers.filter(c => {
         const nameMatch = (c.name || '').toLowerCase().includes(raw);
+        const companyMatch = (c.company || '').toLowerCase().includes(raw);
+        const emailMatch = (c.email || '').toLowerCase().includes(raw);
         const phoneMatch = digits && (c.phone || '').replace(/\D/g, '').includes(digits);
-        return nameMatch || phoneMatch;
+        return nameMatch || companyMatch || emailMatch || phoneMatch;
       });
       renderCustomersTable(filtered);
     }
