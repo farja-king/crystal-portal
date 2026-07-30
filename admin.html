@@ -1378,17 +1378,23 @@
       }
     }
 
+    // Quick-apply's whole point is copying one price onto every filtered
+    // variant - including ones that already have a (different) price, e.g.
+    // making a product's variants uniform after a markup pass gave them
+    // slightly different amounts. It deliberately ignores "Skip
+    // already-priced" (that checkbox is for the Bulk pricing box below),
+    // since respecting it would silently match zero rows whenever the
+    // filtered products already have prices - which is the normal case.
     async function applyPriceToAllFiltered(price) {
       const f = catalogFilters();
-      const onlyUnpriced = document.getElementById('cat-bulk-only-unpriced').checked;
       const msg = document.getElementById('cat-bulk-msg');
 
       const priceNum = Number(price);
       if (!isFinite(priceNum) || priceNum < 0) { alert('Enter a valid price'); return; }
 
-      const hasFilter = !!(f.q || f.supplier || f.brand || f.category) || onlyUnpriced;
+      const hasFilter = !!(f.q || f.supplier || f.brand || f.category);
       const scope = hasFilter ? 'the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
-      const ok = await confirmModal('Set the sell price of ' + scope + ' to £' + priceNum.toFixed(2) + '?\n\nThis will overwrite prices already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'));
+      const ok = await confirmModal('Set the sell price of ' + scope + ' to £' + priceNum.toFixed(2) + '?\n\nThis will overwrite any price already set on those products.');
       if (!ok) return;
 
       msg.className = 'text-sm mt-3 text-slate-600';
@@ -1406,7 +1412,6 @@
               supplier: f.supplier || undefined,
               brand: f.brand || undefined,
               category: f.category || undefined,
-              only_unpriced: onlyUnpriced || undefined,
               confirm_all: hasFilter ? undefined : true,
             },
           }),
