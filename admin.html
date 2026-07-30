@@ -244,19 +244,64 @@
       </div>
       <p id="cat-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
 
-      <!-- Colour/size import from PenCarrie's own CSV price-list export - see
-           importColoursSizesFromCsv(). Not rate-limited like the live
-           PenCarrie sync, since it's a pure DB write once parsed. -->
-      <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4 mb-6">
-        <h3 class="font-bold text-slate-900 mb-1">Import colours/sizes from PenCarrie CSV</h3>
-        <p class="text-sm text-slate-600 mb-3">Select all the <code>products-NN.csv</code> files from PenCarrie's product data zip. Fills in colour/size dropdowns for every matching code in one go - no rate limit, unlike the live site sync above.</p>
-        <div class="flex flex-wrap items-center gap-3">
-          <input id="cat-csv-input" type="file" accept=".csv" multiple class="text-sm" />
-          <button id="cat-csv-btn" onclick="importColoursSizesFromCsv()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+      <!-- Three compact action boxes: import colours/sizes (PenCarrie CSV),
+           import UNEEK (stub - not built yet), bulk pricing. -->
+      <div class="grid gap-4 md:grid-cols-3 mb-6">
+        <!-- Colour/size import from PenCarrie's own CSV price-list export -
+             see importColoursSizesFromCsv(). Not rate-limited like the live
+             PenCarrie sync, since it's a pure DB write once parsed. -->
+        <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4">
+          <h3 class="font-bold text-slate-900 mb-1 text-sm">Import colours/sizes</h3>
+          <p class="text-xs text-slate-600 mb-2">PenCarrie's <code>products-NN.csv</code> files - fills colour/size dropdowns, no rate limit.</p>
+          <input id="cat-csv-input" type="file" accept=".csv" multiple class="text-xs w-full mb-2" />
+          <button id="cat-csv-btn" onclick="importColoursSizesFromCsv()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
             Import
           </button>
+          <p id="cat-csv-status" class="text-xs mt-2 hidden"></p>
         </div>
-        <p id="cat-csv-status" class="text-sm mt-3 hidden"></p>
+
+        <!-- UNEEK price-list import - not built yet. Their price list is a
+             PDF with a very different, harder-to-parse layout than
+             PenCarrie's CSV (multi-line wrapped entries, 4 quantity-based
+             price tiers, no per-size rows at all) - an earlier parsing pass
+             had real bugs (rows bleeding into each other), so this isn't
+             wired up to real logic yet rather than risk corrupting cost data. -->
+        <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4">
+          <h3 class="font-bold text-slate-900 mb-1 text-sm">Import UNEEK</h3>
+          <p class="text-xs text-slate-600 mb-2">UNEEK's PDF price list - parsing isn't finished yet, so this doesn't do anything real yet.</p>
+          <button onclick="alert('UNEEK import isn\'t built yet - the price list is a much harder format to parse reliably (PDF, no per-size data, wrapped multi-line entries). Ask Claude to finish it when ready.')" class="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
+            Import (not ready)
+          </button>
+        </div>
+
+        <!-- Bulk pricing -->
+        <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4">
+          <h3 class="font-bold text-slate-900 mb-1 text-sm">Bulk pricing</h3>
+          <p class="text-xs text-slate-600 mb-2">Applies to <span id="cat-bulk-scope" class="font-semibold">the current filter</span>.</p>
+          <div class="flex flex-wrap items-end gap-2 mb-2">
+            <select id="cat-bulk-mode" class="rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900">
+              <option value="markup">Markup on cost</option>
+              <option value="margin">Margin on sell price</option>
+            </select>
+            <input id="cat-bulk-percent" type="number" step="0.1" value="100" class="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900" />
+            <span class="text-sm text-slate-600">%</span>
+          </div>
+          <label class="flex items-center gap-2 text-xs text-slate-700 mb-2">
+            <input id="cat-bulk-only-unpriced" type="checkbox" checked class="rounded border-slate-300" />
+            Skip already-priced
+          </label>
+          <button onclick="applyBulkPricing()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
+            Apply pricing
+          </button>
+          <p id="cat-bulk-msg" class="text-xs mt-2"></p>
+        </div>
+      </div>
+
+      <!-- VAT note -->
+      <div class="bg-emerald-50 rounded-xl border border-emerald-200 p-4 mb-6">
+        <p class="text-sm text-emerald-900">
+          <strong>VAT note:</strong> Since you're not VAT registered, you pay VAT to suppliers but can't claim it back. <strong>Profit is calculated as: Sell Price − (Cost + VAT you pay).</strong> For example: £3.55 cost + £0.71 VAT (20%) = £4.26 total cost. If you sell for £18, your real profit is £13.74.
+        </p>
       </div>
 
       <!-- Headline numbers -->
@@ -304,51 +349,16 @@
           <button type="button" data-view="unpriced" class="cat-view-btn px-3 py-1.5 rounded-md text-sm font-semibold">Awaiting price</button>
           <button type="button" data-view="all" class="cat-view-btn px-3 py-1.5 rounded-md text-sm font-semibold">All products</button>
         </div>
-      </div>
 
-      <!-- VAT note -->
-      <div class="bg-emerald-50 rounded-xl border border-emerald-200 p-4 mb-6">
-        <p class="text-sm text-emerald-900">
-          <strong>VAT note:</strong> Since you're not VAT registered, you pay VAT to suppliers but can't claim it back. <strong>Profit is calculated as: Sell Price − (Cost + VAT you pay).</strong> For example: £3.55 cost + £0.71 VAT (20%) = £4.26 total cost. If you sell for £18, your real profit is £13.74.
-        </p>
-      </div>
-
-      <!-- Bulk pricing -->
-      <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4 mb-6">
-        <h3 class="font-bold text-slate-900 mb-1">Bulk pricing</h3>
-
-        <!-- Quick apply: copy a price to all filtered -->
-        <div id="cat-quick-apply" class="mb-4 p-3 bg-white rounded-lg border border-indigo-300 hidden">
+        <!-- Quick apply: copy a just-entered price to every filtered product.
+             Lives here (not in the Bulk pricing box) since it's really an
+             extension of "what's currently filtered", not a separate tool. -->
+        <div id="cat-quick-apply" class="mt-3 p-3 bg-indigo-50 rounded-lg border border-indigo-300 hidden">
           <p class="text-sm text-slate-700 mb-2">Just entered a price? Apply it to all filtered products:</p>
-          <button id="cat-quick-apply-btn" onclick="applyPriceToAllFiltered(document.querySelector('[data-sell-id]')?.value || '')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
+          <button id="cat-quick-apply-btn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
             Apply to all filtered
           </button>
         </div>
-
-        <p class="text-sm text-slate-600 mb-3">
-          Applies to <span id="cat-bulk-scope" class="font-semibold">the current filter</span>. Markup is added to cost; margin is taken off your sell price.
-        </p>
-        <div class="flex flex-wrap items-end gap-3">
-          <label class="text-sm">
-            <span class="block font-medium text-slate-700 mb-1">Mode</span>
-            <select id="cat-bulk-mode" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
-              <option value="markup">Markup on cost</option>
-              <option value="margin">Margin on sell price</option>
-            </select>
-          </label>
-          <label class="text-sm">
-            <span class="block font-medium text-slate-700 mb-1">Percent</span>
-            <input id="cat-bulk-percent" type="number" step="0.1" value="100" class="w-28 rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
-          </label>
-          <label class="flex items-center gap-2 text-sm text-slate-700 pb-2">
-            <input id="cat-bulk-only-unpriced" type="checkbox" checked class="rounded border-slate-300" />
-            Skip products I've already priced
-          </label>
-          <button onclick="applyBulkPricing()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            Apply pricing
-          </button>
-        </div>
-        <p id="cat-bulk-msg" class="text-sm mt-3"></p>
       </div>
 
       <!-- Catalog table -->
@@ -502,6 +512,18 @@
     </section>
 
   </main>
+
+  <!-- Reusable Yes/No confirm overlay - see confirmModal() - replaces the
+       native browser confirm() for bulk-pricing actions. -->
+  <div id="confirm-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
+      <p id="confirm-modal-msg" class="text-sm text-slate-800 whitespace-pre-line mb-5"></p>
+      <div class="flex justify-end gap-3">
+        <button id="confirm-modal-no" type="button" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">No</button>
+        <button id="confirm-modal-yes" type="button" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Yes</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     const API_URL = '/api/quotes';
@@ -1288,6 +1310,29 @@
       }
     }
 
+    // Custom Yes/No overlay used in place of the native confirm() for
+    // bulk-pricing actions - resolves true/false rather than blocking the
+    // whole tab like a native dialog does.
+    function confirmModal(message) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('confirm-modal');
+        document.getElementById('confirm-modal-msg').textContent = message;
+        const yesBtn = document.getElementById('confirm-modal-yes');
+        const noBtn = document.getElementById('confirm-modal-no');
+        const cleanup = (result) => {
+          modal.classList.add('hidden');
+          yesBtn.removeEventListener('click', onYes);
+          noBtn.removeEventListener('click', onNo);
+          resolve(result);
+        };
+        const onYes = () => cleanup(true);
+        const onNo = () => cleanup(false);
+        yesBtn.addEventListener('click', onYes);
+        noBtn.addEventListener('click', onNo);
+        modal.classList.remove('hidden');
+      });
+    }
+
     async function applyBulkPricing() {
       const f = catalogFilters();
       const mode = document.getElementById('cat-bulk-mode').value;
@@ -1299,7 +1344,8 @@
 
       const hasFilter = !!(f.q || f.supplier || f.brand || f.category) || onlyUnpriced;
       const scope = hasFilter ? 'the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
-      if (!confirm('Set the sell price of ' + scope + ' using a ' + percent + '% ' + mode + '?\n\nThis overwrites any sell price already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'))) return;
+      const ok = await confirmModal('Set the sell price of ' + scope + ' using a ' + percent + '% ' + mode + '?\n\nThis overwrites any sell price already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'));
+      if (!ok) return;
 
       msg.className = 'text-sm mt-3 text-slate-600';
       msg.textContent = 'Applying…';
@@ -1342,7 +1388,8 @@
 
       const hasFilter = !!(f.q || f.supplier || f.brand || f.category) || onlyUnpriced;
       const scope = hasFilter ? 'the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
-      if (!confirm('Set the sell price of ' + scope + ' to £' + priceNum.toFixed(2) + '?\n\nThis will overwrite prices already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'))) return;
+      const ok = await confirmModal('Set the sell price of ' + scope + ' to £' + priceNum.toFixed(2) + '?\n\nThis will overwrite prices already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'));
+      if (!ok) return;
 
       msg.className = 'text-sm mt-3 text-slate-600';
       msg.textContent = 'Applying…';
