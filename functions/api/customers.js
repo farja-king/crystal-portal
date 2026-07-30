@@ -28,16 +28,24 @@ export async function onRequest(context) {
         lifetime_spend REAL DEFAULT 0,
         transaction_count INTEGER DEFAULT 0,
         last_visit TEXT,
+        address_1 TEXT,
+        address_2 TEXT,
+        city TEXT,
+        county TEXT,
+        postcode TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
 
-    // The table already existed on live D1 before the square_* columns were
-    // added to the CREATE TABLE above - "IF NOT EXISTS" is a no-op against
-    // an existing table, so they need adding here instead (same pattern as
+    // The table already existed on live D1 before these columns were added
+    // to the CREATE TABLE above - "IF NOT EXISTS" is a no-op against an
+    // existing table, so they need adding here instead (same pattern as
     // products.js). ALTER TABLE throws if the column's already there, so
     // each attempt is swallowed individually.
-    for (const col of ["square_customer_id TEXT", "lifetime_spend REAL DEFAULT 0", "transaction_count INTEGER DEFAULT 0", "last_visit TEXT"]) {
+    for (const col of [
+      "square_customer_id TEXT", "lifetime_spend REAL DEFAULT 0", "transaction_count INTEGER DEFAULT 0", "last_visit TEXT",
+      "address_1 TEXT", "address_2 TEXT", "city TEXT", "county TEXT", "postcode TEXT",
+    ]) {
       try {
         await db.prepare(`ALTER TABLE customers ADD COLUMN ${col}`).run();
       } catch {
@@ -64,8 +72,9 @@ export async function onRequest(context) {
         const stmt = db.prepare(`
           INSERT INTO customers (
             id, name, company, email, phone, type, discount_pct, notes,
-            square_customer_id, lifetime_spend, transaction_count, last_visit
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            square_customer_id, lifetime_spend, transaction_count, last_visit,
+            address_1, address_2, city, county, postcode
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             company = excluded.company,
@@ -74,7 +83,12 @@ export async function onRequest(context) {
             square_customer_id = excluded.square_customer_id,
             lifetime_spend = excluded.lifetime_spend,
             transaction_count = excluded.transaction_count,
-            last_visit = excluded.last_visit
+            last_visit = excluded.last_visit,
+            address_1 = excluded.address_1,
+            address_2 = excluded.address_2,
+            city = excluded.city,
+            county = excluded.county,
+            postcode = excluded.postcode
         `);
         // type/discount_pct/notes are left off the DO UPDATE SET - those are
         // Martin's own edits (trade discount, notes), which a re-import of
@@ -92,7 +106,12 @@ export async function onRequest(context) {
           r.square_customer_id || "",
           Number(r.lifetime_spend) || 0,
           Number(r.transaction_count) || 0,
-          r.last_visit || ""
+          r.last_visit || "",
+          r.address_1 || "",
+          r.address_2 || "",
+          r.city || "",
+          r.county || "",
+          r.postcode || ""
         ));
 
         await db.batch(batch);
@@ -102,8 +121,8 @@ export async function onRequest(context) {
       const id = data.id || crypto.randomUUID();
 
       await db.prepare(`
-        INSERT INTO customers (id, name, company, email, phone, type, discount_pct, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO customers (id, name, company, email, phone, type, discount_pct, notes, address_1, address_2, city, county, postcode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         data.name || "Unnamed",
@@ -112,7 +131,12 @@ export async function onRequest(context) {
         data.phone || "",
         data.type || "Retail",
         data.discount_pct ?? 0,
-        data.notes || ""
+        data.notes || "",
+        data.address_1 || "",
+        data.address_2 || "",
+        data.city || "",
+        data.county || "",
+        data.postcode || ""
       ).run();
 
       return new Response(JSON.stringify({ success: true, id }), { headers: corsHeaders });
@@ -124,7 +148,8 @@ export async function onRequest(context) {
 
       await db.prepare(`
         UPDATE customers
-        SET name = ?, company = ?, email = ?, phone = ?, type = ?, discount_pct = ?, notes = ?
+        SET name = ?, company = ?, email = ?, phone = ?, type = ?, discount_pct = ?, notes = ?,
+            address_1 = ?, address_2 = ?, city = ?, county = ?, postcode = ?
         WHERE id = ?
       `).bind(
         data.name || "Unnamed",
@@ -134,6 +159,11 @@ export async function onRequest(context) {
         data.type || "Retail",
         data.discount_pct ?? 0,
         data.notes || "",
+        data.address_1 || "",
+        data.address_2 || "",
+        data.city || "",
+        data.county || "",
+        data.postcode || "",
         data.id
       ).run();
 
