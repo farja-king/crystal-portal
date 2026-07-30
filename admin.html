@@ -5,10 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Crystal Embroidery - Back Office Admin</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- SheetJS - parses the UNEEK .xlsx price list client-side. See
-       importUneekXlsx() - hand-rolling an XLSX (zip+XML) parser wasn't
-       worth it when this is a well-established library. -->
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 </head>
 <body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
   
@@ -264,16 +260,16 @@
           <p id="cat-csv-status" class="text-xs mt-2 hidden"></p>
         </div>
 
-        <!-- UNEEK price-list import - see importUneekXlsx(). UNEEK's own
-             .xlsx export (not the PDF - that one's much harder to parse
-             reliably) has one row per code+colour-group with real columns:
-             Item, Description, Colour(s), and the 4 price tiers. No
-             per-size data anywhere in either format though. -->
+        <!-- UNEEK import - see importUneekCsv(). Their account-specific
+             "UneekProdData.csv" export (one row per actual SKU: code +
+             colour + size, with account pricing and an explicit VAT flag)
+             is far better than either the PDF or the general price list -
+             use that, not the .xlsx price list which has no size data. -->
         <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4">
           <h3 class="font-bold text-slate-900 mb-1 text-sm">Import UNEEK</h3>
-          <p class="text-xs text-slate-600 mb-2">UNEEK's <code>.xlsx</code> price list - uses Pack Price as cost, ex-VAT. No size data available.</p>
-          <input id="cat-uneek-input" type="file" accept=".xlsx" class="text-xs w-full mb-2" />
-          <button id="cat-uneek-btn" onclick="importUneekXlsx()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
+          <p class="text-xs text-slate-600 mb-2">Your account's <code>*ProdData.csv</code> export - real per-size pricing (MyPrice), ex-VAT.</p>
+          <input id="cat-uneek-input" type="file" accept=".csv" class="text-xs w-full mb-2" />
+          <button id="cat-uneek-btn" onclick="importUneekCsv()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
             Import
           </button>
           <p id="cat-uneek-status" class="text-xs mt-2 hidden"></p>
@@ -1192,22 +1188,24 @@
       return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     }
 
-    // UNEEK's .xlsx price list is one row per code+colour-group: Item code
-    // only appears on the first row of a group (blank on continuation rows
-    // for the same code at a different colour/price - e.g. "White" vs the
-    // rest of the range at a higher price), same for Description. Category
-    // header rows have only the Description cell filled. There's no
-    // per-size data anywhere in this file - Colour(s) is the only variant
-    // axis - so every product row this creates has size left blank.
-    // cost_price uses Pack Price (ex-VAT) per Martin's instruction; VAT
-    // stays at the catalog's default 20% except the "Childrens" section,
-    // zero-rated the same way the rest of the catalog already is.
-    async function importUneekXlsx() {
+    // UNEEK's account-specific product data export is one row per actual
+    // SKU (code + colour + size already broken out into their own columns -
+    // no carry-forward or colour-list-splitting needed, unlike the general
+    // price list). MyPrice is this account's correct price for that exact
+    // SKU - it already has any large-size surcharge baked in (verified:
+    // GR11 Bottle Green goes 4.20 for XS-XL, 4.70 for 3XL/4XL, 5.20 for
+    // 5XL/6XL, matching the price list's own surcharge table exactly), so
+    // no separate surcharge handling is needed here. Tax Code is an explicit
+    // STANDARD/ZERORATED flag, more reliable than inferring VAT from category.
+    // The file is Windows-1252 encoded, not UTF-8 (confirmed against a
+    // decode failure on a stray ¼ character), so it's read as an ArrayBuffer
+    // and decoded explicitly rather than via file.text().
+    async function importUneekCsv() {
       const input = document.getElementById('cat-uneek-input');
       const status = document.getElementById('cat-uneek-status');
       const btn = document.getElementById('cat-uneek-btn');
       const file = input.files && input.files[0];
-      if (!file) { status.classList.remove('hidden'); status.textContent = 'Choose the UNEEK .xlsx file first.'; return; }
+      if (!file) { status.classList.remove('hidden'); status.textContent = 'Choose the UNEEK product data CSV first.'; return; }
 
       btn.disabled = true;
       status.classList.remove('hidden');
@@ -1215,80 +1213,64 @@
 
       try {
         const buf = await file.arrayBuffer();
-        const wb = XLSX.read(buf, { type: 'array' });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+        const text = new TextDecoder('windows-1252').decode(buf);
+        const rows = parseCsv(text);
+        if (!rows.length) throw new Error('File is empty');
 
-        // Find the header row (has "Item" and "Colour(s)" in it) rather than
-        // assuming a fixed row number, since that could shift between
-        // UNEEK's price list versions.
-        let headerIdx = rows.findIndex((r) => r.includes('Item') && r.some((c) => typeof c === 'string' && c.startsWith('Colour')));
-        if (headerIdx === -1) throw new Error('Could not find the header row (expected "Item" / "Colour(s)" columns) - is this the UNEEK price list?');
+        const header = rows[0];
+        const col = (name) => {
+          const idx = header.indexOf(name);
+          if (idx === -1) throw new Error('Missing expected column "' + name + '" - is this the UNEEK product data CSV?');
+          return idx;
+        };
+        const codeIdx = col('Product Code');
+        const nameIdx = col('Product Name');
+        const categoryIdx = col('Category');
+        const colourIdx = col('Colour');
+        const sizeIdx = col('Size');
+        const priceIdx = col('MyPrice');
+        const taxIdx = col('Tax Code');
 
         const productRows = [];
         const colourByCode = {};
-        let category = '';
-        let lastCode = null;
-        let lastDesc = null;
+        const sizeByCode = {};
 
-        for (let i = headerIdx + 1; i < rows.length; i++) {
-          const row = rows[i] || [];
-          const newFlag = row[0];
-          const code = row[1];
-          const desc = row[2];
-          const coloursRaw = row[3];
-          const p1k = row[4], pCarton = row[5], pPack = row[6], pSingle = row[7];
-          const surcharge = row[9];
+        for (let i = 1; i < rows.length; i++) {
+          const r = rows[i];
+          const code = (r[codeIdx] || '').trim();
+          if (!code) continue;
+          const colour = (r[colourIdx] || '').trim();
+          const size = (r[sizeIdx] || '').trim();
+          const price = Number(r[priceIdx]);
+          if (!isFinite(price)) continue;
 
-          const allBlank = code == null && desc == null && coloursRaw == null && p1k == null;
-          if (allBlank) continue;
+          const title = (r[nameIdx] || '').trim();
+          const category = (r[categoryIdx] || '').trim();
+          const vatRate = (r[taxIdx] || '').trim().toUpperCase() === 'ZERORATED' ? 0 : 0.2;
 
-          // Category header: only the description cell is populated.
-          if (desc != null && coloursRaw == null && p1k == null && code == null) {
-            const label = String(desc).trim();
-            if (label === 'Brochures') break; // footer notes, not products
-            category = label;
-            lastCode = null;
-            lastDesc = null;
-            continue;
-          }
+          if (colour) { (colourByCode[code] || (colourByCode[code] = new Set())).add(colour); }
+          if (size) { (sizeByCode[code] || (sizeByCode[code] = new Set())).add(size); }
 
-          if (code != null) lastCode = String(code).trim();
-          if (desc != null) lastDesc = String(desc).trim();
-          if (pPack == null || !lastCode) continue; // not a priced item row
-
-          const colours = String(coloursRaw || '').split(',').map((c) => c.trim()).filter(Boolean);
-          if (!colours.length) continue;
-
-          const costPrice = Number(pPack);
-          const surchargeCategory = surcharge && surcharge !== 'N/A' ? String(surcharge).trim() : '';
-          const vatRate = category === 'Childrens' ? 0 : 0.2;
-          const title = lastDesc || '';
-
-          if (!colourByCode[lastCode]) colourByCode[lastCode] = new Set();
-          colours.forEach((c) => colourByCode[lastCode].add(c));
-
-          for (const colour of colours) {
-            productRows.push({
-              id: 'uneek-' + slugify(lastCode) + '-' + slugify(colour),
-              supplier: 'UNEEK',
-              supplier_code: lastCode,
-              supplier_ref: '',
-              brand: 'UNEEK',
-              title,
-              colour,
-              size: '',
-              category,
-              cost_price: costPrice,
-              surcharge_category: surchargeCategory,
-              vat_rate: vatRate,
-            });
-          }
+          productRows.push({
+            id: 'uneek-' + slugify(code) + '-' + slugify(colour) + '-' + slugify(size),
+            supplier: 'UNEEK',
+            supplier_code: code,
+            supplier_ref: '',
+            brand: 'UNEEK',
+            title,
+            colour,
+            size,
+            category,
+            cost_price: price,
+            surcharge_category: '',
+            vat_rate: vatRate,
+          });
         }
 
         if (!productRows.length) throw new Error('No product rows parsed - check this is the right file.');
 
-        status.textContent = 'Parsed ' + productRows.length + ' row(s) across ' + Object.keys(colourByCode).length + ' code(s). Uploading…';
+        const codeCount = new Set(productRows.map((r) => r.supplier_code)).size;
+        status.textContent = 'Parsed ' + productRows.length + ' SKU(s) across ' + codeCount + ' code(s). Uploading…';
 
         const importRes = await fetch(API_PRODUCTS_URL, {
           method: 'POST',
@@ -1298,12 +1280,15 @@
         const importData = await importRes.json();
         if (!importRes.ok || !importData.success) throw new Error(importData.error || 'HTTP ' + importRes.status);
 
-        // Also fill available_colours for the order-builder dropdowns, reusing
-        // the same endpoint the PenCarrie CSV import uses. UNEEK has no size
-        // data, so sizes is always empty here.
+        // Fill available_colours/available_sizes for the order-builder
+        // dropdowns from the same parsed data, reusing the endpoint the
+        // PenCarrie CSV import uses.
         const coloursPayload = {};
-        for (const code in colourByCode) {
-          coloursPayload[code] = { colours: [...colourByCode[code]], sizes: [] };
+        for (const code of new Set([...Object.keys(colourByCode), ...Object.keys(sizeByCode)])) {
+          coloursPayload[code] = {
+            colours: colourByCode[code] ? [...colourByCode[code]] : [],
+            sizes: sizeByCode[code] ? [...sizeByCode[code]] : [],
+          };
         }
         const colourRes = await fetch('/api/import-colours-sizes', {
           method: 'POST',
@@ -1312,8 +1297,8 @@
         });
         const colourData = await colourRes.json();
 
-        status.textContent = 'Done: ' + importData.imported + ' product row(s) imported/updated across ' + Object.keys(colourByCode).length + ' code(s)' +
-          (colourRes.ok && colourData.success ? ', colour dropdowns filled for ' + colourData.codes_matched + ' code(s).' : ' (colour dropdown fill failed).');
+        status.textContent = 'Done: ' + importData.imported + ' SKU(s) imported/updated across ' + codeCount + ' code(s)' +
+          (colourRes.ok && colourData.success ? ', colour/size dropdowns filled for ' + colourData.codes_matched + ' code(s).' : ' (colour/size dropdown fill failed).');
         loadCatalog(catalogOffset);
         loadFacets();
       } catch (e) {
