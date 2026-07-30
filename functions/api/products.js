@@ -84,6 +84,22 @@ export async function onRequest(context) {
       )
     `).run();
 
+    // The products table already existed on live D1 before these columns were
+    // added to the CREATE TABLE above - "IF NOT EXISTS" is a no-op against an
+    // existing table, so they need adding here instead. ALTER TABLE ADD COLUMN
+    // throws if the column's already there, so each attempt is swallowed
+    // individually - once they all exist this block is a harmless no-op. This
+    // must run before the index creation below - CREATE INDEX on a column
+    // that doesn't exist yet throws "no such column", which would otherwise
+    // break every request against a table that predates customer_id.
+    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0", "customer_id TEXT"]) {
+      try {
+        await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
+    }
+
     // 6k+ rows, so every list view is filtered/paged - these carry that load.
     await db.batch([
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_code ON products (supplier_code)"),
@@ -92,19 +108,6 @@ export async function onRequest(context) {
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_brand ON products (brand)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_customer ON products (customer_id)"),
     ]);
-
-    // The products table already existed on live D1 before these columns were
-    // added to the CREATE TABLE above - "IF NOT EXISTS" is a no-op against an
-    // existing table, so they need adding here instead. ALTER TABLE ADD COLUMN
-    // throws if the column's already there, so each attempt is swallowed
-    // individually - once they all exist this block is a harmless no-op.
-    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0", "customer_id TEXT"]) {
-      try {
-        await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run();
-      } catch {
-        // already exists
-      }
-    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
