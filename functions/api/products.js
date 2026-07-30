@@ -79,6 +79,7 @@ export async function onRequest(context) {
         available_colours TEXT DEFAULT '[]',
         available_sizes TEXT DEFAULT '[]',
         on_website INTEGER DEFAULT 0,
+        customer_id TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
@@ -89,6 +90,7 @@ export async function onRequest(context) {
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_supplier ON products (supplier)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_title ON products (title)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_brand ON products (brand)"),
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_products_customer ON products (customer_id)"),
     ]);
 
     // The products table already existed on live D1 before these columns were
@@ -96,7 +98,7 @@ export async function onRequest(context) {
     // existing table, so they need adding here instead. ALTER TABLE ADD COLUMN
     // throws if the column's already there, so each attempt is swallowed
     // individually - once they all exist this block is a harmless no-op.
-    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0"]) {
+    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0", "customer_id TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run();
       } catch {
@@ -109,16 +111,20 @@ export async function onRequest(context) {
       const url = new URL(request.url);
       const p = url.searchParams;
 
-      // ?facets=1 -> the dropdown values the catalog UI filters by
+      // ?facets=1 -> the dropdown values the catalog UI filters by. Customer-
+      // specific items (see customer_id below) are excluded - they're a
+      // per-customer price list, not part of the general catalog Martin
+      // browses/bulk-prices here.
       if (p.get("facets")) {
+        const globalOnly = "(customer_id IS NULL OR customer_id = '')";
         const [suppliers, brands, categories, totals] = await db.batch([
-          db.prepare("SELECT supplier AS value, COUNT(*) AS n FROM products GROUP BY supplier ORDER BY supplier"),
-          db.prepare("SELECT brand AS value, COUNT(*) AS n FROM products WHERE brand <> '' GROUP BY brand ORDER BY brand"),
-          db.prepare("SELECT category AS value, COUNT(*) AS n FROM products WHERE category <> '' GROUP BY category ORDER BY category"),
+          db.prepare(`SELECT supplier AS value, COUNT(*) AS n FROM products WHERE ${globalOnly} GROUP BY supplier ORDER BY supplier`),
+          db.prepare(`SELECT brand AS value, COUNT(*) AS n FROM products WHERE brand <> '' AND ${globalOnly} GROUP BY brand ORDER BY brand`),
+          db.prepare(`SELECT category AS value, COUNT(*) AS n FROM products WHERE category <> '' AND ${globalOnly} GROUP BY category ORDER BY category`),
           db.prepare(`SELECT COUNT(*) AS total,
                              SUM(CASE WHEN sell_price IS NULL THEN 1 ELSE 0 END) AS unpriced,
                              SUM(CASE WHEN vat_rate = 0 THEN 1 ELSE 0 END) AS zero_rated
-                      FROM products`),
+                      FROM products WHERE ${globalOnly}`),
         ]);
         return json({
           suppliers: suppliers.results,
@@ -144,6 +150,18 @@ export async function onRequest(context) {
       for (const [param, col] of [["supplier", "supplier"], ["brand", "brand"], ["category", "category"]]) {
         const v = p.get(param);
         if (v) { where.push(`${col} = ?${binds.length + 1}`); binds.push(v); }
+      }
+      // customer_id scopes to one customer's own price list (e.g. imported
+      // from their Square export) - without it, customer-tagged rows are
+      // hidden from the general catalog entirely, so one customer's bespoke
+      // items never surface in another customer's quote or in the shared
+      // Garment Catalog tab.
+      const customerId = (p.get("customer_id") || "").trim();
+      if (customerId) {
+        where.push(`customer_id = ?${binds.length + 1}`);
+        binds.push(customerId);
+      } else {
+        where.push("(customer_id IS NULL OR customer_id = '')");
       }
       if (p.get("unpriced")) where.push("sell_price IS NULL");
       // "priced" = "On my website" in the UI - this is on_website, not just
@@ -210,12 +228,17 @@ export async function onRequest(context) {
       if (Array.isArray(data.rows)) {
         // Re-running the import must refresh cost prices without ever wiping the
         // sell prices Martin has already set, so sell_price/profit are left alone
-        // on conflict and profit is recomputed against the new cost.
+        // on conflict and profit is recomputed against the new cost. A row can
+        // optionally carry its own sell_price (e.g. a customer's Square export,
+        // where the exported "Price" *is* what's charged) - that only fills the
+        // price in on first import, same protection as above, and customer_id
+        // tags the row as belonging to one customer's own price list rather
+        // than the shared catalog (see the GET handler's customer_id filter).
         const stmt = db.prepare(`
           INSERT INTO products (
             id, supplier, supplier_code, supplier_ref, brand, title, colour, size,
-            category, cost_price, surcharge_category, vat_rate, sell_price, profit, active, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 1, CURRENT_TIMESTAMP)
+            category, cost_price, surcharge_category, vat_rate, sell_price, profit, active, customer_id, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             supplier_ref = excluded.supplier_ref,
             brand = excluded.brand,
@@ -224,25 +247,36 @@ export async function onRequest(context) {
             cost_price = excluded.cost_price,
             surcharge_category = excluded.surcharge_category,
             vat_rate = excluded.vat_rate,
-            profit = CASE WHEN products.sell_price IS NULL THEN NULL
+            sell_price = CASE WHEN products.sell_price IS NULL THEN excluded.sell_price ELSE products.sell_price END,
+            profit = CASE WHEN products.sell_price IS NULL
+                          THEN CASE WHEN excluded.sell_price IS NULL THEN NULL ELSE ROUND(excluded.sell_price - excluded.cost_price, 2) END
                           ELSE ROUND(products.sell_price - excluded.cost_price, 2) END,
+            customer_id = excluded.customer_id,
             updated_at = CURRENT_TIMESTAMP
         `);
 
-        const batch = data.rows.map((r) => stmt.bind(
-          r.id,
-          r.supplier || "",
-          r.supplier_code || "",
-          r.supplier_ref || "",
-          r.brand || "",
-          r.title || "",
-          r.colour || "",
-          r.size || "",
-          r.category || "",
-          Number(r.cost_price) || 0,
-          r.surcharge_category || "",
-          r.vat_rate === undefined || r.vat_rate === null || r.vat_rate === "" ? 0.2 : Number(r.vat_rate)
-        ));
+        const batch = data.rows.map((r) => {
+          const cost = Number(r.cost_price) || 0;
+          const vatRate = r.vat_rate === undefined || r.vat_rate === null || r.vat_rate === "" ? 0.2 : Number(r.vat_rate);
+          const sell = r.sell_price === undefined || r.sell_price === null || r.sell_price === "" ? null : Number(r.sell_price);
+          return stmt.bind(
+            r.id,
+            r.supplier || "",
+            r.supplier_code || "",
+            r.supplier_ref || "",
+            r.brand || "",
+            r.title || "",
+            r.colour || "",
+            r.size || "",
+            r.category || "",
+            cost,
+            r.surcharge_category || "",
+            vatRate,
+            sell,
+            profitOf(sell, cost, vatRate),
+            r.customer_id || null
+          );
+        });
 
         await db.batch(batch);
         return json({ success: true, imported: batch.length });
@@ -253,8 +287,8 @@ export async function onRequest(context) {
       await db.prepare(`
         INSERT INTO products (
           id, supplier, supplier_code, supplier_ref, brand, title, colour, size,
-          category, cost_price, surcharge_category, vat_rate, sell_price, profit, active
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          category, cost_price, surcharge_category, vat_rate, sell_price, profit, active, customer_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         data.supplier || "",
@@ -270,7 +304,8 @@ export async function onRequest(context) {
         data.vat_rate ?? 0.2,
         data.sell_price ?? null,
         profitOf(data.sell_price, cost, data.vat_rate ?? 0.2),
-        data.active === 0 ? 0 : 1
+        data.active === 0 ? 0 : 1,
+        data.customer_id || null
       ).run();
 
       return json({ success: true, id });
@@ -299,6 +334,12 @@ export async function onRequest(context) {
         if (!where.length && !a.confirm_all) {
           return json({ error: "Refusing to reprice the entire catalog without confirm_all" }, 400);
         }
+        // Bulk pricing is a Garment Catalog tool for the shared catalog - a
+        // customer's own imported price list is edited from their customer
+        // record instead, never swept up in a markup/margin pass here. Added
+        // after the confirm_all check so it never counts as a user-supplied
+        // filter for that safety gate.
+        where.push("(customer_id IS NULL OR customer_id = '')");
         const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
         let expr;
@@ -348,7 +389,7 @@ export async function onRequest(context) {
         UPDATE products SET
           supplier = ?, supplier_code = ?, supplier_ref = ?, brand = ?, title = ?,
           colour = ?, size = ?, category = ?, cost_price = ?, surcharge_category = ?,
-          vat_rate = ?, sell_price = ?, profit = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+          vat_rate = ?, sell_price = ?, profit = ?, active = ?, customer_id = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         data.supplier ?? existing.supplier,
@@ -365,6 +406,7 @@ export async function onRequest(context) {
         sell === "" ? null : sell,
         sell === "" ? null : profitOf(sell, cost, data.vat_rate ?? existing.vat_rate),
         data.active ?? existing.active,
+        data.customer_id ?? existing.customer_id,
         data.id
       ).run();
 

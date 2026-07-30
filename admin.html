@@ -616,6 +616,37 @@
 
       <p id="cv-square-summary" class="hidden bg-slate-50 rounded-lg p-3 mb-4 text-sm text-slate-700"></p>
 
+      <!-- A customer-specific price list (e.g. imported from their Square
+           export) - tagged to this customer via products.customer_id, so it
+           shows as quick-picks in the quote builder once they're selected
+           there, and never leaks into the shared Garment Catalog. -->
+      <div class="border-t border-slate-200 pt-4 mb-4">
+        <h4 class="font-bold text-slate-900 mb-2">Custom Price List</h4>
+        <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-3 mb-3">
+          <p class="text-xs text-slate-600 mb-2">Import this customer's items from a Square export CSV. Safe to re-run - won't overwrite prices you've already adjusted here.</p>
+          <div class="flex flex-wrap items-center gap-3">
+            <input id="cv-catalog-csv-input" type="file" accept=".csv" class="text-xs" />
+            <button id="cv-catalog-csv-btn" onclick="importCustomerCatalogCsv()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              Import
+            </button>
+          </div>
+          <p id="cv-catalog-csv-status" class="text-xs mt-2 hidden"></p>
+        </div>
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+              <tr>
+                <th class="p-2">Item</th>
+                <th class="p-2">SKU</th>
+                <th class="p-2 text-right">Price</th>
+                <th class="p-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="cv-catalog-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
       <h4 class="font-bold text-slate-900 mb-3">Order History</h4>
 
       <div class="flex flex-wrap items-end gap-3 mb-3">
@@ -1049,6 +1080,8 @@
       document.getElementById('cv-orders-body').innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading order history…</td></tr>';
       document.getElementById('customer-view-modal').classList.remove('hidden');
 
+      loadCustomerCatalogItems(id);
+
       try {
         const res = await fetch(API_ORDERS_URL + '?customer_id=' + encodeURIComponent(id));
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1064,6 +1097,154 @@
     function closeCustomerViewModal() {
       document.getElementById('customer-view-modal').classList.add('hidden');
       customerHistoryOrders = [];
+      cvCatalogCustomerId = null;
+      cvCatalogItems = [];
+    }
+
+    // This customer's own price list (see the "Custom Price List" card in
+    // the view modal) - products.customer_id-tagged rows, kept separate
+    // from customerCatalogItems below (the quote builder's own copy of the
+    // currently-selected order customer's items).
+    let cvCatalogCustomerId = null;
+    let cvCatalogItems = [];
+
+    async function loadCustomerCatalogItems(customerId) {
+      cvCatalogCustomerId = customerId;
+      const tbody = document.getElementById('cv-catalog-body');
+      tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      try {
+        const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(customerId) + '&limit=500');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        cvCatalogItems = data.results || [];
+      } catch (e) {
+        cvCatalogItems = [];
+        tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-red-500 text-sm">Could not load price list.</td></tr>';
+        return;
+      }
+      renderCustomerCatalogItems();
+    }
+
+    function renderCustomerCatalogItems() {
+      const tbody = document.getElementById('cv-catalog-body');
+      if (!cvCatalogItems.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">No custom items imported yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = cvCatalogItems.map((p) => `
+        <tr>
+          <td class="p-2 text-slate-800">${escapeHtml(p.title)}</td>
+          <td class="p-2 text-slate-500">${escapeHtml(p.supplier_code)}</td>
+          <td class="p-2 text-right">
+            £<input type="number" step="0.01" min="0" value="${p.sell_price ?? ''}" onchange="updateCustomerCatalogItemPrice('${escapeAttr(p.id)}', this.value)" class="w-20 rounded border border-slate-300 px-2 py-1 text-sm text-right" />
+          </td>
+          <td class="p-2 text-right">
+            <button type="button" onclick="deleteCustomerCatalogItem('${escapeAttr(p.id)}')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function updateCustomerCatalogItemPrice(id, value) {
+      const price = value === '' ? null : Math.max(0, Number(value) || 0);
+      try {
+        await fetch(API_PRODUCTS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, sell_price: price }),
+        });
+        const item = cvCatalogItems.find((p) => p.id === id);
+        if (item) item.sell_price = price;
+      } catch (e) {}
+    }
+
+    async function deleteCustomerCatalogItem(id) {
+      if (!confirm('Remove this item from the price list?')) return;
+      await fetch(API_PRODUCTS_URL, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+      });
+      cvCatalogItems = cvCatalogItems.filter((p) => p.id !== id);
+      renderCustomerCatalogItems();
+    }
+
+    // Square's "Items" export - one row per item/variation, "Categories" is
+    // usually the customer's name/account (e.g. "Sloane Helicopters"), and
+    // "Price" is what's actually charged (no separate cost to track, unlike
+    // the supplier garment imports). id is derived from the Square Token
+    // (falling back to SKU/title) plus this customer, so re-importing the
+    // same export upserts rather than duplicates, and the sell_price
+    // protection in the products POST handler keeps any price Martin has
+    // since adjusted here from being overwritten by a re-import.
+    async function importCustomerCatalogCsv() {
+      const input = document.getElementById('cv-catalog-csv-input');
+      const status = document.getElementById('cv-catalog-csv-status');
+      const btn = document.getElementById('cv-catalog-csv-btn');
+      const file = input.files && input.files[0];
+      if (!file) { status.classList.remove('hidden'); status.textContent = 'Choose the Square item export CSV first.'; return; }
+      if (!cvCatalogCustomerId) return;
+
+      btn.disabled = true;
+      status.classList.remove('hidden');
+      status.textContent = 'Reading ' + file.name + '…';
+
+      try {
+        const text = await file.text();
+        const rows = parseCsv(text);
+        if (!rows.length) throw new Error('File is empty');
+
+        const header = rows[0];
+        const nameIdx = header.indexOf('Item Name');
+        const priceIdx = header.indexOf('Price');
+        if (nameIdx === -1 || priceIdx === -1) throw new Error('Missing "Item Name" or "Price" column - is this a Square item export?');
+        const tokenIdx = header.indexOf('Token');
+        const skuIdx = header.indexOf('SKU');
+        const categoryIdx = header.indexOf('Categories');
+        const archivedIdx = header.indexOf('Archived');
+
+        const productRows = [];
+        let skipped = 0;
+        for (let i = 1; i < rows.length; i++) {
+          const r = rows[i];
+          if (!r.length || (r.length === 1 && !r[0].trim())) continue;
+          const title = (r[nameIdx] || '').trim();
+          if (!title) { skipped++; continue; }
+          if (archivedIdx !== -1 && (r[archivedIdx] || '').trim().toUpperCase() === 'Y') { skipped++; continue; }
+          const price = Number(r[priceIdx]);
+          if (!isFinite(price)) { skipped++; continue; }
+
+          const token = tokenIdx !== -1 ? (r[tokenIdx] || '').trim() : '';
+          const sku = skuIdx !== -1 ? (r[skuIdx] || '').trim() : '';
+          const category = categoryIdx !== -1 ? (r[categoryIdx] || '').trim() : '';
+
+          productRows.push({
+            id: 'sq-' + slugify(token || sku || title) + '-' + slugify(cvCatalogCustomerId),
+            supplier: 'Square Import',
+            supplier_code: sku,
+            title,
+            category,
+            cost_price: 0,
+            vat_rate: 0.2,
+            sell_price: price,
+            customer_id: cvCatalogCustomerId,
+          });
+        }
+
+        if (!productRows.length) throw new Error('No usable rows found - check this is the right file.');
+
+        status.textContent = 'Parsed ' + productRows.length + ' item(s). Uploading…';
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: productRows }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        status.textContent = 'Done: ' + data.imported + ' item(s) imported/updated' + (skipped ? ', ' + skipped + ' row(s) skipped.' : '.');
+        input.value = '';
+        loadCustomerCatalogItems(cvCatalogCustomerId);
+      } catch (e) {
+        status.textContent = 'Import failed: ' + e.message;
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     function applyCustomerHistoryFilters() {
@@ -2061,6 +2242,12 @@
     let ordersById = {};
     let orderSearchTimer = null;
 
+    // The currently-selected order customer's own price list (products
+    // tagged with their customer_id) - shown as quick-pick chips on any
+    // catalog line so their saved items don't need re-searching every quote.
+    let orderCustomerItems = [];
+    let orderCustomerName = '';
+
     // Martin's fixed embroidery pricing rules - see PLACEMENT_LABELS for the
     // options this drives. Returns null (no default) for anything outside
     // plain embroidery, e.g. DTF/sublimation stay manual-entry always.
@@ -2085,10 +2272,21 @@
       sel.value = current;
     }
 
-    function onOrderCustomerChange() {
+    async function onOrderCustomerChange() {
       const c = customersById[document.getElementById('ord-customer').value];
       document.getElementById('ord-discount').value = c ? (c.discount_pct || 0) : 0;
       renderOrderTotals();
+
+      orderCustomerItems = [];
+      orderCustomerName = c ? c.name : '';
+      if (c) {
+        try {
+          const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(c.id) + '&limit=200');
+          const data = await res.json();
+          orderCustomerItems = data.results || [];
+        } catch (e) {}
+      }
+      renderOrderLines();
     }
 
     function toggleNewCustomerPanel() {
@@ -2272,6 +2470,22 @@
       await loadOrderLineVariantOptions(idx, p.supplier_code);
     }
 
+    // Picking one of the selected customer's own saved items (see
+    // orderCustomerItems) - these are simple priced items (patches,
+    // services) with no colour/size variants, so unlike selectOrderLineProduct
+    // there's no variant lookup to follow up with.
+    function selectOrderLineCustomerItem(idx, id) {
+      const p = orderCustomerItems.find((x) => x.id === id);
+      if (!p) return;
+      Object.assign(orderLines[idx], {
+        product_id: p.id, supplier_code: p.supplier_code, title: p.title,
+        colour: p.colour || '', size: p.size || '', unit_price: Number(p.sell_price) || 0,
+        breakdown: [{ colour: '', size: '', qty: 1 }],
+        colourOptions: [], sizeOptions: [],
+      });
+      renderOrderLines();
+    }
+
     // Pulls available colours and sizes for this product code from the
     // available_colours and available_sizes fields (scraped from the website).
     // These are the primary source - they come directly from the website scraping.
@@ -2378,9 +2592,22 @@
                    </span>
                    <button type="button" onclick="clearOrderLineProduct(${idx})" class="text-xs text-indigo-700 hover:underline">Change</button>
                  </div>`
-              : `<div class="relative">
-                   <input id="ord-line-search-${idx}" oninput="searchOrderCatalog(${idx})" placeholder="Search catalog by code, title, colour…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-                   <div id="ord-line-results-${idx}" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-64 overflow-y-auto"></div>
+              : `<div>
+                   ${orderCustomerItems.length ? `
+                     <div class="mb-2">
+                       <p class="text-xs font-medium text-slate-500 mb-1">${escapeHtml(orderCustomerName)}'s saved items</p>
+                       <div class="flex flex-wrap gap-1.5">
+                         ${orderCustomerItems.map((p) => `
+                           <button type="button" onclick="selectOrderLineCustomerItem(${idx}, '${escapeAttr(p.id)}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-full px-3 py-1">
+                             ${escapeHtml(p.title)}${p.sell_price !== null ? ' · ' + money(p.sell_price) : ''}
+                           </button>
+                         `).join('')}
+                       </div>
+                     </div>` : ''}
+                   <div class="relative">
+                     <input id="ord-line-search-${idx}" oninput="searchOrderCatalog(${idx})" placeholder="Search catalog by code, title, colour…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+                     <div id="ord-line-results-${idx}" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-64 overflow-y-auto"></div>
+                   </div>
                  </div>`);
 
         // The catalog row picked above is often just a pricing tier ("All
@@ -2554,6 +2781,8 @@
           document.getElementById('ord-customer').value = '';
           document.getElementById('ord-discount').value = 0;
           document.getElementById('ord-discount-flat').value = 0;
+          orderCustomerItems = [];
+          orderCustomerName = '';
           renderOrderLines();
         }
         loadOrders();
@@ -2592,6 +2821,7 @@
       const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
       document.getElementById('ord-builder-heading').textContent = 'Editing ' + docNumber;
       document.getElementById('ord-customer').value = o.customer_id || '';
+      onOrderCustomerChange();
       document.getElementById('ord-discount').value = o.discount_pct || 0;
       document.getElementById('ord-discount-flat').value = o.discount_flat || 0;
       document.getElementById('ord-notes').value = o.notes || '';
@@ -2622,6 +2852,8 @@
       document.getElementById('ord-discount').value = 0;
       document.getElementById('ord-discount-flat').value = 0;
       document.getElementById('ord-notes').value = '';
+      orderCustomerItems = [];
+      orderCustomerName = '';
       document.getElementById('ord-status-field').classList.add('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Save as Quote';
       document.getElementById('ord-cancel-edit-btn').classList.add('hidden');
