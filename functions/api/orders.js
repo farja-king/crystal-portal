@@ -139,11 +139,17 @@ export async function onRequest(context) {
         return json({ ...row, items: JSON.parse(row.items || "[]") });
       }
 
+      // ?customer_id=X -> a customer's full quote/invoice history, used by
+      // the Customer Directory's View button.
       const docType = url.searchParams.get("doc_type");
-      const where = docType ? "WHERE doc_type = ?" : "";
-      const binds = docType ? [docType] : [];
+      const customerId = url.searchParams.get("customer_id");
+      const where = [];
+      const binds = [];
+      if (docType) { where.push("doc_type = ?"); binds.push(docType); }
+      if (customerId) { where.push("customer_id = ?"); binds.push(customerId); }
+      const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
       const { results } = await db.prepare(
-        `SELECT * FROM orders ${where} ORDER BY created_at DESC`
+        `SELECT * FROM orders ${clause} ORDER BY created_at DESC`
       ).bind(...binds).all();
 
       return json(results.map((r) => ({ ...r, items: JSON.parse(r.items || "[]") })));

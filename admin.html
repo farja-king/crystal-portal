@@ -584,6 +584,80 @@
     </div>
   </div>
 
+  <!-- Read-only customer view - contact/address plus full quote/invoice
+       history, filterable by date and amount. See viewCustomerHistory(). -->
+  <div id="customer-view-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6">
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <h3 id="cv-name" class="text-lg font-bold text-slate-900"></h3>
+          <p id="cv-company" class="text-sm text-slate-500"></p>
+        </div>
+        <button onclick="closeCustomerViewModal()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
+      </div>
+
+      <div class="grid gap-4 md:grid-cols-2 pb-4 border-b border-slate-200 mb-4">
+        <div>
+          <p class="text-xs text-slate-500 font-medium mb-1">Contact</p>
+          <p id="cv-contact" class="text-sm text-slate-800"></p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500 font-medium mb-1">Address</p>
+          <p id="cv-address" class="text-sm text-slate-800"></p>
+        </div>
+      </div>
+
+      <p id="cv-square-summary" class="hidden bg-slate-50 rounded-lg p-3 mb-4 text-sm text-slate-700"></p>
+
+      <h4 class="font-bold text-slate-900 mb-3">Order History</h4>
+
+      <div class="flex flex-wrap items-end gap-3 mb-3">
+        <label class="text-xs">
+          <span class="block text-slate-500 mb-1">From</span>
+          <input id="cv-filter-from" type="date" class="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+        </label>
+        <label class="text-xs">
+          <span class="block text-slate-500 mb-1">To</span>
+          <input id="cv-filter-to" type="date" class="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+        </label>
+        <label class="text-xs">
+          <span class="block text-slate-500 mb-1">Min £</span>
+          <input id="cv-filter-min" type="number" step="0.01" min="0" class="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+        </label>
+        <label class="text-xs">
+          <span class="block text-slate-500 mb-1">Max £</span>
+          <input id="cv-filter-max" type="number" step="0.01" min="0" class="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+        </label>
+        <label class="text-xs">
+          <span class="block text-slate-500 mb-1">Sort</span>
+          <select id="cv-sort" class="rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
+            <option value="date-desc">Newest first</option>
+            <option value="date-asc">Oldest first</option>
+            <option value="amount-desc">Highest amount</option>
+            <option value="amount-asc">Lowest amount</option>
+          </select>
+        </label>
+        <button onclick="applyCustomerHistoryFilters()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">Filter</button>
+        <button onclick="clearCustomerHistoryFilters()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">Clear</button>
+      </div>
+
+      <div class="overflow-x-auto border border-slate-200 rounded-lg">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+            <tr>
+              <th class="p-2">Number</th>
+              <th class="p-2">Date</th>
+              <th class="p-2 text-right">Total</th>
+              <th class="p-2">Status</th>
+            </tr>
+          </thead>
+          <tbody id="cv-orders-body" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+      <p id="cv-orders-summary" class="text-xs text-slate-500 mt-3"></p>
+    </div>
+  </div>
+
   <script>
     const API_URL = '/api/quotes';
     const API_CUSTOMERS_URL = '/api/customers';
@@ -757,6 +831,9 @@
             <td class="p-4 text-xs text-slate-500">${activityCell}</td>
             <td class="p-4 text-xs text-slate-500">${escapeHtml(c.notes) || ''}</td>
             <td class="p-4 text-right space-x-2 whitespace-nowrap">
+              <button data-action="view-customer" data-id="${escapeHtml(c.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+                View
+              </button>
               <button data-action="edit-customer" data-id="${escapeHtml(c.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold shadow-sm">
                 Edit
               </button>
@@ -896,6 +973,125 @@
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+    }
+
+    // Read-only view: contact/address plus this customer's full quote/invoice
+    // history (from the orders table, not Square's aggregate spend figure -
+    // that's just a total with no itemized dates/amounts to filter on).
+    let customerHistoryOrders = [];
+
+    async function viewCustomerHistory(id) {
+      const c = customersById[id];
+      if (!c) return;
+
+      document.getElementById('cv-name').textContent = c.name || 'Unnamed';
+      document.getElementById('cv-company').textContent = c.company || '';
+
+      const contactLines = [];
+      if (c.email) contactLines.push(escapeHtml(c.email));
+      if (c.phone) contactLines.push(escapeHtml(c.phone));
+      document.getElementById('cv-contact').innerHTML = contactLines.length ? contactLines.join('<br>') : '<span class="text-slate-400">No contact details on file</span>';
+
+      const addressLines = [c.address_1, c.address_2, c.city, c.county, c.postcode].filter(Boolean).map(escapeHtml);
+      document.getElementById('cv-address').innerHTML = addressLines.length ? addressLines.join('<br>') : '<span class="text-slate-400">No address on file</span>';
+
+      const squareSummary = document.getElementById('cv-square-summary');
+      if (c.square_customer_id) {
+        squareSummary.classList.remove('hidden');
+        squareSummary.innerHTML = '<strong>Square activity:</strong> ' + money(c.lifetime_spend) + ' across ' + (c.transaction_count || 0) + ' transaction' + (c.transaction_count === 1 ? '' : 's') +
+          (c.last_visit ? ', last ' + escapeHtml(ukDate(c.last_visit)) : '') + ' - separate from the quote/invoice history below.';
+      } else {
+        squareSummary.classList.add('hidden');
+      }
+
+      document.getElementById('cv-filter-from').value = '';
+      document.getElementById('cv-filter-to').value = '';
+      document.getElementById('cv-filter-min').value = '';
+      document.getElementById('cv-filter-max').value = '';
+      document.getElementById('cv-sort').value = 'date-desc';
+
+      document.getElementById('cv-orders-body').innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading order history…</td></tr>';
+      document.getElementById('customer-view-modal').classList.remove('hidden');
+
+      try {
+        const res = await fetch(API_ORDERS_URL + '?customer_id=' + encodeURIComponent(id));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        customerHistoryOrders = await res.json();
+      } catch (e) {
+        customerHistoryOrders = [];
+        document.getElementById('cv-orders-body').innerHTML = '<tr><td colspan="4" class="p-4 text-center text-red-500 text-sm">Could not load order history.</td></tr>';
+        return;
+      }
+      renderCustomerHistoryOrders();
+    }
+
+    function closeCustomerViewModal() {
+      document.getElementById('customer-view-modal').classList.add('hidden');
+      customerHistoryOrders = [];
+    }
+
+    function applyCustomerHistoryFilters() {
+      renderCustomerHistoryOrders();
+    }
+
+    function clearCustomerHistoryFilters() {
+      document.getElementById('cv-filter-from').value = '';
+      document.getElementById('cv-filter-to').value = '';
+      document.getElementById('cv-filter-min').value = '';
+      document.getElementById('cv-filter-max').value = '';
+      document.getElementById('cv-sort').value = 'date-desc';
+      renderCustomerHistoryOrders();
+    }
+
+    function renderCustomerHistoryOrders() {
+      const from = document.getElementById('cv-filter-from').value;
+      const to = document.getElementById('cv-filter-to').value;
+      const minRaw = document.getElementById('cv-filter-min').value;
+      const maxRaw = document.getElementById('cv-filter-max').value;
+      const min = minRaw === '' ? null : Number(minRaw);
+      const max = maxRaw === '' ? null : Number(maxRaw);
+      const sort = document.getElementById('cv-sort').value;
+
+      let rows = customerHistoryOrders.filter((o) => {
+        const datePart = String(o.created_at || '').slice(0, 10);
+        if (from && datePart < from) return false;
+        if (to && datePart > to) return false;
+        if (min !== null && Number(o.total) < min) return false;
+        if (max !== null && Number(o.total) > max) return false;
+        return true;
+      });
+
+      rows.sort((a, b) => {
+        if (sort === 'date-asc') return new Date(a.created_at) - new Date(b.created_at);
+        if (sort === 'amount-desc') return Number(b.total) - Number(a.total);
+        if (sort === 'amount-asc') return Number(a.total) - Number(b.total);
+        return new Date(b.created_at) - new Date(a.created_at); // date-desc, default
+      });
+
+      const tbody = document.getElementById('cv-orders-body');
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">' + (customerHistoryOrders.length ? 'No orders match those filters.' : 'No quotes or invoices for this customer yet.') + '</td></tr>';
+      } else {
+        tbody.innerHTML = rows.map((o) => {
+          const isInvoice = o.doc_type === 'invoice';
+          const number = isInvoice ? o.invoice_number : o.quote_number;
+          const statusLabel = isInvoice ? (o.paid_status === 'paid' ? 'Paid' : 'Unpaid') : (o.status || 'draft');
+          const statusClass = isInvoice
+            ? (o.paid_status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700')
+            : 'bg-slate-100 text-slate-700';
+          return '<tr class="hover:bg-slate-50">' +
+            '<td class="p-2 font-semibold text-slate-900">' + escapeHtml(number) + '</td>' +
+            '<td class="p-2 text-slate-600">' + escapeHtml(ukDate(o.created_at)) + '</td>' +
+            '<td class="p-2 text-right font-medium text-slate-900">' + money(o.total) + '</td>' +
+            '<td class="p-2"><span class="px-2 py-0.5 text-xs font-semibold rounded-full ' + statusClass + '">' + escapeHtml(statusLabel) + '</span></td>' +
+          '</tr>';
+        }).join('');
+      }
+
+      const totalValue = rows.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+      document.getElementById('cv-orders-summary').textContent = rows.length
+        ? 'Showing ' + rows.length + ' of ' + customerHistoryOrders.length + ' order(s), totalling ' + money(totalValue) + '.'
+        : '';
     }
 
     // Open the edit form prefilled with the selected customer's data
@@ -1098,6 +1294,7 @@
         case 'delete-quote': deleteQuoteRow(id); break;
         case 'edit-customer': openCustomerEditForm(id); break;
         case 'delete-customer': deleteCustomerRow(id); break;
+        case 'view-customer': viewCustomerHistory(id); break;
         case 'view-order': viewOrder(id); break;
         case 'edit-order': editOrderInBuilder(id); break;
       }
