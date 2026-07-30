@@ -24,9 +24,26 @@ export async function onRequest(context) {
         type TEXT,
         discount_pct REAL DEFAULT 0,
         notes TEXT,
+        square_customer_id TEXT,
+        lifetime_spend REAL DEFAULT 0,
+        transaction_count INTEGER DEFAULT 0,
+        last_visit TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+
+    // The table already existed on live D1 before the square_* columns were
+    // added to the CREATE TABLE above - "IF NOT EXISTS" is a no-op against
+    // an existing table, so they need adding here instead (same pattern as
+    // products.js). ALTER TABLE throws if the column's already there, so
+    // each attempt is swallowed individually.
+    for (const col of ["square_customer_id TEXT", "lifetime_spend REAL DEFAULT 0", "transaction_count INTEGER DEFAULT 0", "last_visit TEXT"]) {
+      try {
+        await db.prepare(`ALTER TABLE customers ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
+    }
 
     // GET: Fetch all customers for the Portal and Back Office
     if (request.method === "GET") {
@@ -36,9 +53,52 @@ export async function onRequest(context) {
       return new Response(JSON.stringify(results), { headers: corsHeaders });
     }
 
-    // POST: Save a new customer
+    // POST: Save a new customer, or bulk-import { rows: [...] } from a Square
+    // export - upserts by id (see importCustomersCsv in admin.html, which
+    // derives a stable id from the Square Customer ID so re-importing an
+    // updated export updates existing customers rather than duplicating them).
     if (request.method === "POST") {
       const data = await request.json();
+
+      if (Array.isArray(data.rows)) {
+        const stmt = db.prepare(`
+          INSERT INTO customers (
+            id, name, company, email, phone, type, discount_pct, notes,
+            square_customer_id, lifetime_spend, transaction_count, last_visit
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            company = excluded.company,
+            email = excluded.email,
+            phone = excluded.phone,
+            square_customer_id = excluded.square_customer_id,
+            lifetime_spend = excluded.lifetime_spend,
+            transaction_count = excluded.transaction_count,
+            last_visit = excluded.last_visit
+        `);
+        // type/discount_pct/notes are left off the DO UPDATE SET - those are
+        // Martin's own edits (trade discount, notes), which a re-import of
+        // the same Square data shouldn't ever overwrite.
+
+        const batch = data.rows.map((r) => stmt.bind(
+          r.id,
+          r.name || "Unnamed",
+          r.company || "",
+          r.email || "",
+          r.phone || "",
+          r.type || "Retail",
+          r.discount_pct ?? 0,
+          r.notes || "",
+          r.square_customer_id || "",
+          Number(r.lifetime_spend) || 0,
+          Number(r.transaction_count) || 0,
+          r.last_visit || ""
+        ));
+
+        await db.batch(batch);
+        return new Response(JSON.stringify({ success: true, imported: batch.length }), { headers: corsHeaders });
+      }
+
       const id = data.id || crypto.randomUUID();
 
       await db.prepare(`

@@ -152,9 +152,30 @@
           <h2 class="text-2xl font-bold text-slate-900">Customer Directory</h2>
           <p class="text-slate-500 text-sm">Manage accounts, discounts, and contact details.</p>
         </div>
-        <button onclick="loadCustomers()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
-          🔄 Refresh Customers
-        </button>
+        <div class="flex items-center gap-2">
+          <button onclick="exportCustomersCsv()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            ⬇️ Export
+          </button>
+          <button onclick="loadCustomers()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            🔄 Refresh Customers
+          </button>
+        </div>
+      </div>
+
+      <!-- Import from Square's customer export CSV - see importCustomersCsv().
+           Re-importing an updated export updates existing customers (matched
+           by Square Customer ID) rather than duplicating them; Martin's own
+           edits (type, discount, notes) are never overwritten by a re-import. -->
+      <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4 mb-6">
+        <h3 class="font-bold text-slate-900 mb-1 text-sm">Import from Square</h3>
+        <p class="text-xs text-slate-600 mb-2">Square's customer export CSV. Safe to re-run with a fresh export - matches by Square Customer ID and never touches type/discount/notes you've already set.</p>
+        <div class="flex flex-wrap items-center gap-3">
+          <input id="cust-csv-input" type="file" accept=".csv" class="text-xs" />
+          <button id="cust-csv-btn" onclick="importCustomersCsv()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Import
+          </button>
+        </div>
+        <p id="cust-csv-status" class="text-xs mt-2 hidden"></p>
       </div>
 
       <!-- Edit Customer Form (hidden until Edit is clicked) -->
@@ -213,13 +234,14 @@
               <th class="p-4">Type</th>
               <th class="p-4">Discount</th>
               <th class="p-4">Contact</th>
+              <th class="p-4">Activity</th>
               <th class="p-4">Notes</th>
               <th class="p-4 text-right">Actions</th>
             </tr>
           </thead>
           <tbody id="customers-table-body" class="divide-y divide-slate-100 text-sm">
             <tr>
-              <td colspan="7" class="p-8 text-center text-slate-400">Loading customers from database...</td>
+              <td colspan="8" class="p-8 text-center text-slate-400">Loading customers from database...</td>
             </tr>
           </tbody>
         </table>
@@ -672,7 +694,7 @@
     // Fetch All Customers from Cloudflare D1
     async function loadCustomers() {
       const tbody = document.getElementById('customers-table-body');
-      tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Fetching latest customers...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">Fetching latest customers...</td></tr>';
 
       try {
         const res = await fetch(API_CUSTOMERS_URL);
@@ -683,11 +705,20 @@
         populateOrderCustomerSelect();
 
         if (!customers || customers.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No customers saved yet.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">No customers saved yet.</td></tr>';
           return;
         }
 
-        tbody.innerHTML = customers.map(c => `
+        tbody.innerHTML = customers.map(c => {
+          // lifetime_spend/transaction_count/last_visit only ever come from
+          // a Square import - blank for anyone added by hand in the portal.
+          const hasActivity = c.square_customer_id || Number(c.transaction_count) > 0;
+          const activityCell = hasActivity
+            ? money(c.lifetime_spend) + ' <span class="text-slate-400">· ' + (c.transaction_count || 0) + ' order' + (c.transaction_count === 1 ? '' : 's') + '</span>' +
+              (c.last_visit ? '<br><span class="text-slate-400">Last: ' + escapeHtml(ukDate(c.last_visit)) + '</span>' : '')
+            : '-';
+
+          return `
           <tr class="hover:bg-slate-50 transition">
             <td class="p-4 font-semibold text-slate-900">${escapeHtml(c.name)}</td>
             <td class="p-4 text-slate-600">${escapeHtml(c.company) || '-'}</td>
@@ -701,6 +732,7 @@
               ${escapeHtml(c.email) || 'No email'}<br>
               ${escapeHtml(c.phone) || 'No phone'}
             </td>
+            <td class="p-4 text-xs text-slate-500">${activityCell}</td>
             <td class="p-4 text-xs text-slate-500">${escapeHtml(c.notes) || ''}</td>
             <td class="p-4 text-right space-x-2 whitespace-nowrap">
               <button data-action="edit-customer" data-id="${escapeHtml(c.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold shadow-sm">
@@ -711,10 +743,130 @@
               </button>
             </td>
           </tr>
-        `).join('');
+        `;
+        }).join('');
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
       }
+    }
+
+    // Square's customer export CSV. Column mapping: First Name + Last Name
+    // combine into the portal's single "name" field, Phone Number has a
+    // leading "'" (a common spreadsheet trick to stop leading "+"/0 being
+    // stripped) that needs removing, and money columns like "£1,234.56"
+    // need their currency symbol and thousands commas stripped before
+    // Number() will parse them. Rows with nothing at all to identify the
+    // customer by (no name, company, email or phone - Square's bare
+    // "Instant Profile" entries) are skipped, since there'd be no way to
+    // pick them when building a quote anyway.
+    function parseSquareMoney(raw) {
+      const n = Number(String(raw || '').replace(/[£,]/g, ''));
+      return isFinite(n) ? n : 0;
+    }
+
+    async function importCustomersCsv() {
+      const input = document.getElementById('cust-csv-input');
+      const status = document.getElementById('cust-csv-status');
+      const btn = document.getElementById('cust-csv-btn');
+      const file = input.files && input.files[0];
+      if (!file) { status.classList.remove('hidden'); status.textContent = 'Choose the Square export CSV first.'; return; }
+
+      btn.disabled = true;
+      status.classList.remove('hidden');
+      status.textContent = 'Reading ' + file.name + '…';
+
+      try {
+        const text = await file.text();
+        const rows = parseCsv(text);
+        if (!rows.length) throw new Error('File is empty');
+
+        const header = rows[0];
+        const col = (name) => header.indexOf(name);
+        const idx = {
+          first: col('First Name'), last: col('Last name'), email: col('Email Address'),
+          phone: col('Phone Number'), company: col('Company Name'), memo: col('Memo'),
+          squareId: col('Square Customer ID'), lastVisit: col('Last Visit'),
+          txCount: col('Transaction Count'), spend: col('Lifetime spend'),
+        };
+        if (idx.squareId === -1) throw new Error('Missing "Square Customer ID" column - is this a Square customer export?');
+
+        const customerRows = [];
+        let skipped = 0;
+
+        for (let i = 1; i < rows.length; i++) {
+          const r = rows[i];
+          const first = (r[idx.first] || '').trim();
+          const last = (r[idx.last] || '').trim();
+          const email = (r[idx.email] || '').trim();
+          const phone = (r[idx.phone] || '').replace(/^'/, '').trim();
+          const company = (r[idx.company] || '').trim();
+          const squareId = (r[idx.squareId] || '').trim();
+          const name = [first, last].filter(Boolean).join(' ');
+
+          if (!squareId || (!name && !email && !phone && !company)) { skipped++; continue; }
+
+          customerRows.push({
+            id: 'square-' + slugify(squareId),
+            name: name || company || 'Unnamed',
+            company,
+            email,
+            phone,
+            square_customer_id: squareId,
+            lifetime_spend: parseSquareMoney(r[idx.spend]),
+            transaction_count: parseInt(r[idx.txCount], 10) || 0,
+            last_visit: (r[idx.lastVisit] || '').trim(),
+            notes: (r[idx.memo] || '').trim(),
+          });
+        }
+
+        if (!customerRows.length) throw new Error('No usable rows parsed - check this is the Square customer export.');
+
+        status.textContent = 'Parsed ' + customerRows.length + ' customer(s) (' + skipped + ' skipped - no name, email, phone or company). Uploading…';
+
+        const res = await fetch(API_CUSTOMERS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: customerRows }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        status.textContent = 'Done: ' + data.imported + ' customer(s) imported/updated (' + skipped + ' skipped - no usable contact details).';
+        loadCustomers();
+      } catch (e) {
+        status.textContent = 'Import failed: ' + e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function csvField(v) {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+
+    function exportCustomersCsv() {
+      const customers = Object.values(customersById);
+      if (!customers.length) { alert('No customers loaded yet.'); return; }
+
+      const header = ['Name', 'Company', 'Email', 'Phone', 'Type', 'Discount %', 'Notes', 'Lifetime Spend', 'Order Count', 'Last Visit', 'Square Customer ID'];
+      const lines = [header.map(csvField).join(',')];
+      customers.forEach((c) => {
+        lines.push([
+          c.name, c.company, c.email, c.phone, c.type, c.discount_pct, c.notes,
+          c.lifetime_spend, c.transaction_count, c.last_visit, c.square_customer_id,
+        ].map(csvField).join(','));
+      });
+
+      const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'customers-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     }
 
     // Open the edit form prefilled with the selected customer's data
