@@ -162,22 +162,6 @@
         </div>
       </div>
 
-      <!-- Import from Square's customer export CSV - see importCustomersCsv().
-           Re-importing an updated export updates existing customers (matched
-           by Square Customer ID) rather than duplicating them; Martin's own
-           edits (type, discount, notes) are never overwritten by a re-import. -->
-      <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4 mb-6">
-        <h3 class="font-bold text-slate-900 mb-1 text-sm">Import from Square</h3>
-        <p class="text-xs text-slate-600 mb-2">Square's customer export CSV. Safe to re-run with a fresh export - matches by Square Customer ID and never touches type/discount/notes you've already set.</p>
-        <div class="flex flex-wrap items-center gap-3">
-          <input id="cust-csv-input" type="file" accept=".csv" class="text-xs" />
-          <button id="cust-csv-btn" onclick="importCustomersCsv()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            Import
-          </button>
-        </div>
-        <p id="cust-csv-status" class="text-xs mt-2 hidden"></p>
-      </div>
-
       <!-- Edit Customer Form (hidden until Edit is clicked) -->
       <div id="customer-edit-form" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
         <h3 class="text-lg font-bold text-slate-900 mb-4">Edit Customer</h3>
@@ -247,6 +231,25 @@
       </div>
 
       <!-- Customers Table -->
+      <div class="grid gap-4 sm:grid-cols-2 items-start mb-6">
+        <input id="cust-search" type="text" placeholder="Search by name or phone…" oninput="filterCustomers()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+
+        <!-- Import from Square's customer export CSV - see importCustomersCsv().
+             Re-importing an updated export updates existing customers (matched
+             by Square Customer ID) rather than duplicating them; Martin's own
+             edits (type, discount, notes) are never overwritten by a re-import. -->
+        <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4">
+          <h3 class="font-bold text-slate-900 mb-1 text-sm">Import from Square</h3>
+          <p class="text-xs text-slate-600 mb-2">Square's customer export CSV. Safe to re-run with a fresh export.</p>
+          <div class="flex flex-wrap items-center gap-3">
+            <input id="cust-csv-input" type="file" accept=".csv" class="text-xs" />
+            <button id="cust-csv-btn" onclick="importCustomersCsv()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              Import
+            </button>
+          </div>
+          <p id="cust-csv-status" class="text-xs mt-2 hidden"></p>
+        </div>
+      </div>
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table class="w-full text-left border-collapse">
           <thead>
@@ -476,6 +479,10 @@
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Discount %</span>
             <input id="ord-discount" type="number" min="0" max="100" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Discount £</span>
+            <input id="ord-discount-flat" type="number" min="0" step="0.01" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
           </label>
           <label id="ord-status-field" class="text-sm hidden">
             <span class="block font-medium text-slate-700 mb-1">Status</span>
@@ -787,6 +794,10 @@
     let customersById = {};
     let editingCustomerId = null;
 
+    // Full list from the last load - filterCustomers() re-renders a subset
+    // of this rather than re-fetching, so search stays instant.
+    let allCustomers = [];
+
     // Fetch All Customers from Cloudflare D1
     async function loadCustomers() {
       const tbody = document.getElementById('customers-table-body');
@@ -800,12 +811,38 @@
         (customers || []).forEach(c => { customersById[c.id] = c; });
         populateOrderCustomerSelect();
 
-        if (!customers || customers.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">No customers saved yet.</td></tr>';
-          return;
-        }
+        allCustomers = customers || [];
+        renderCustomersTable(allCustomers);
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
+      }
+    }
 
-        tbody.innerHTML = customers.map(c => {
+    // Matches the search box against name or phone - phone comparison
+    // strips everything but digits so formatting (spaces, dashes, leading 0
+    // vs +44) doesn't stop a match.
+    function filterCustomers() {
+      const raw = document.getElementById('cust-search').value.trim().toLowerCase();
+      if (!raw) { renderCustomersTable(allCustomers); return; }
+
+      const digits = raw.replace(/\D/g, '');
+      const filtered = allCustomers.filter(c => {
+        const nameMatch = (c.name || '').toLowerCase().includes(raw);
+        const phoneMatch = digits && (c.phone || '').replace(/\D/g, '').includes(digits);
+        return nameMatch || phoneMatch;
+      });
+      renderCustomersTable(filtered);
+    }
+
+    function renderCustomersTable(customers) {
+      const tbody = document.getElementById('customers-table-body');
+
+      if (!customers || customers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">No customers found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = customers.map(c => {
           // lifetime_spend/transaction_count/last_visit only ever come from
           // a Square import - blank for anyone added by hand in the portal.
           const hasActivity = c.square_customer_id || Number(c.transaction_count) > 0;
@@ -843,10 +880,7 @@
             </td>
           </tr>
         `;
-        }).join('');
-      } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
-      }
+      }).join('');
     }
 
     // Square's customer export CSV. Column mapping: First Name + Last Name
@@ -2142,27 +2176,15 @@
 
     // Lets Martin quote a garment that has no catalog price yet (or override
     // one that does) right from the order line, instead of only through the
-    // Garment Catalog tab. Saves back to that product's sell_price so it's
-    // remembered next time - but never touches on_website, which stays
-    // controlled solely by the site sync, so this never makes an
-    // off-website item start showing as "On my website".
-    async function updateOrderLineUnitPrice(idx, value) {
+    // Garment Catalog tab. This is local to the quote only - the catalog's
+    // own sell_price is never touched from here, so a one-off quote price
+    // can't drift the price everyone else sees.
+    function updateOrderLineUnitPrice(idx, value) {
       const line = orderLines[idx];
       if (!line) return;
       const price = Math.max(0, Number(value) || 0);
       line.unit_price = price;
       renderOrderLines();
-
-      if (!line.product_id) return;
-      try {
-        await fetch(API_PRODUCTS_URL, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: line.product_id, sell_price: price }),
-        });
-      } catch (e) {
-        // the quote line already has the price locally even if this save fails
-      }
     }
 
     function updateDecorationMethod(idx, decIdx, value) {
@@ -2350,7 +2372,7 @@
               ? `<div class="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 gap-2">
                    <span class="text-sm flex-1"><span class="font-semibold">${escapeHtml(line.supplier_code)}</span> ${escapeHtml(line.title)} - ${escapeHtml(line.colour)} / ${escapeHtml(line.size)}</span>
                    <span class="flex items-center gap-1 text-sm text-slate-600 shrink-0">
-                     £<input type="number" step="0.01" min="0" value="${line.unit_price || ''}" onchange="updateOrderLineUnitPrice(${idx}, this.value)" placeholder="0.00" title="Saved to this product's catalog price for next time - does not add it to the website" class="w-20 rounded border ${line.unit_price ? 'border-slate-300' : 'border-amber-400 bg-amber-50'} px-2 py-1 text-sm text-right" /> each
+                     £<input type="number" step="0.01" min="0" value="${line.unit_price || ''}" onchange="updateOrderLineUnitPrice(${idx}, this.value)" placeholder="0.00" title="Only applies to this quote - does not change the catalog price" class="w-20 rounded border ${line.unit_price ? 'border-slate-300' : 'border-amber-400 bg-amber-50'} px-2 py-1 text-sm text-right" /> each
                    </span>
                    <button type="button" onclick="clearOrderLineProduct(${idx})" class="text-xs text-indigo-700 hover:underline">Change</button>
                  </div>`
@@ -2453,9 +2475,19 @@
     function computeOrderPricing() {
       const subtotal = orderLines.reduce((sum, l) => sum + lineTotal(l), 0);
       const discountPct = Math.min(100, Math.max(0, Number(document.getElementById('ord-discount').value) || 0));
-      const discountAmt = subtotal * (discountPct / 100);
-      const total = subtotal - discountAmt;
-      return { subtotal, discountPct, discountAmt, total };
+      const discountFlat = Math.max(0, Number(document.getElementById('ord-discount-flat').value) || 0);
+      const discountAmt = subtotal * (discountPct / 100) + discountFlat;
+      const total = Math.max(0, subtotal - discountAmt);
+      return { subtotal, discountPct, discountFlat, discountAmt, total };
+    }
+
+    // Builds the "(10% + £5)" style suffix shown next to "Discount" - a quote
+    // can have a percentage discount, a flat £ discount, or both at once.
+    function discountLabel(o) {
+      const parts = [];
+      if (o.discount_pct) parts.push(o.discount_pct + '%');
+      if (o.discount_flat) parts.push(money(o.discount_flat));
+      return parts.length ? ` (${parts.join(' + ')})` : '';
     }
 
     function renderOrderTotals() {
@@ -2482,6 +2514,7 @@
         customer_name: customer.name,
         customer_email: customer.email || '',
         discount_pct: Number(document.getElementById('ord-discount').value) || 0,
+        discount_flat: Number(document.getElementById('ord-discount-flat').value) || 0,
         notes: document.getElementById('ord-notes').value,
         items: orderLines.map((l) => ({
           source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
@@ -2518,6 +2551,7 @@
           document.getElementById('ord-notes').value = '';
           document.getElementById('ord-customer').value = '';
           document.getElementById('ord-discount').value = 0;
+          document.getElementById('ord-discount-flat').value = 0;
           renderOrderLines();
         }
         loadOrders();
@@ -2557,6 +2591,7 @@
       document.getElementById('ord-builder-heading').textContent = 'Editing ' + docNumber;
       document.getElementById('ord-customer').value = o.customer_id || '';
       document.getElementById('ord-discount').value = o.discount_pct || 0;
+      document.getElementById('ord-discount-flat').value = o.discount_flat || 0;
       document.getElementById('ord-notes').value = o.notes || '';
       document.getElementById('ord-status').value = o.status || 'draft';
       document.getElementById('ord-status-field').classList.remove('hidden');
@@ -2583,6 +2618,7 @@
       document.getElementById('ord-builder-heading').textContent = 'New Quote';
       document.getElementById('ord-customer').value = '';
       document.getElementById('ord-discount').value = 0;
+      document.getElementById('ord-discount-flat').value = 0;
       document.getElementById('ord-notes').value = '';
       document.getElementById('ord-status-field').classList.add('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Save as Quote';
@@ -2712,8 +2748,8 @@
             <p class="text-xs text-slate-500 font-medium mb-1">Subtotal</p>
             <p class="text-lg font-semibold text-slate-900">${money(o.subtotal)}</p>
           </div>
-          ${o.discount_pct ? `<div>
-            <p class="text-xs text-slate-500 font-medium mb-1">Discount (${o.discount_pct}%)</p>
+          ${o.discount_amount ? `<div>
+            <p class="text-xs text-slate-500 font-medium mb-1">Discount${discountLabel(o)}</p>
             <p class="text-lg font-semibold text-slate-900">-${money(o.discount_amount)}</p>
           </div>` : ''}
           <div>
@@ -2823,7 +2859,7 @@
           </table>
           <div class="totals">
             <div>Subtotal: £${Number(o.subtotal).toFixed(2)}</div>
-            ${o.discount_amount ? `<div>Discount (${o.discount_pct}%): -£${Number(o.discount_amount).toFixed(2)}</div>` : ''}
+            ${o.discount_amount ? `<div>Discount${discountLabel(o)}: -£${Number(o.discount_amount).toFixed(2)}</div>` : ''}
             <div class="total">Total: £${Number(o.total).toFixed(2)}</div>
             <div class="muted" style="font-size:0.75rem;margin-top:4px;">VAT not applicable - not VAT registered.</div>
           </div>

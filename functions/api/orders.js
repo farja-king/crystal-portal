@@ -33,7 +33,7 @@ export async function onRequest(context) {
   // Recomputed from the submitted items every time, never trusted verbatim
   // from the client - this is the thing that becomes an invoice, so the
   // stored total has to be right.
-  function priceItems(items, discountPct) {
+  function priceItems(items, discountPct, discountFlat) {
     const priced = (Array.isArray(items) ? items : []).map((item) => {
       const source = item.source === "customer_supplied" ? "customer_supplied" : "catalog";
 
@@ -78,10 +78,11 @@ export async function onRequest(context) {
 
     const subtotal = round2(priced.reduce((sum, i) => sum + i.line_total, 0));
     const discount_pct = Math.min(100, Math.max(0, Number(discountPct) || 0));
-    const discount_amount = round2(subtotal * (discount_pct / 100));
-    const total = round2(subtotal - discount_amount);
+    const discount_flat = Math.max(0, Number(discountFlat) || 0);
+    const discount_amount = round2(subtotal * (discount_pct / 100) + discount_flat);
+    const total = Math.max(0, round2(subtotal - discount_amount));
 
-    return { items: priced, subtotal, discount_pct, discount_amount, total };
+    return { items: priced, subtotal, discount_pct, discount_flat, discount_amount, total };
   }
 
   async function nextNumber(kind) {
@@ -118,6 +119,7 @@ export async function onRequest(context) {
         items TEXT NOT NULL DEFAULT '[]',
         subtotal REAL DEFAULT 0,
         discount_pct REAL DEFAULT 0,
+        discount_flat REAL DEFAULT 0,
         discount_amount REAL DEFAULT 0,
         total REAL DEFAULT 0,
         status TEXT DEFAULT 'draft',
@@ -128,6 +130,15 @@ export async function onRequest(context) {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+
+    // The table already existed on live D1 before discount_flat was added to
+    // the CREATE TABLE above - "IF NOT EXISTS" is a no-op against an existing
+    // table, so it needs adding here instead (same pattern as customers.js).
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN discount_flat REAL DEFAULT 0`).run();
+    } catch {
+      // already exists
+    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
@@ -161,14 +172,14 @@ export async function onRequest(context) {
     if (request.method === "POST") {
       const data = await request.json();
       const id = crypto.randomUUID();
-      const priced = priceItems(data.items, data.discount_pct);
+      const priced = priceItems(data.items, data.discount_pct, data.discount_flat);
       const quote_number = await nextNumber("quote");
 
       await db.prepare(`
         INSERT INTO orders (
           id, doc_type, quote_number, customer_id, customer_name, customer_email,
-          items, subtotal, discount_pct, discount_amount, total, status, notes
-        ) VALUES (?, 'quote', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, notes
+        ) VALUES (?, 'quote', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         quote_number,
@@ -178,6 +189,7 @@ export async function onRequest(context) {
         JSON.stringify(priced.items),
         priced.subtotal,
         priced.discount_pct,
+        priced.discount_flat,
         priced.discount_amount,
         priced.total,
         data.status || "draft",
@@ -223,13 +235,14 @@ export async function onRequest(context) {
       // Full edit: re-price from the submitted items, same as create.
       const priced = priceItems(
         data.items !== undefined ? data.items : JSON.parse(existing.items || "[]"),
-        data.discount_pct !== undefined ? data.discount_pct : existing.discount_pct
+        data.discount_pct !== undefined ? data.discount_pct : existing.discount_pct,
+        data.discount_flat !== undefined ? data.discount_flat : existing.discount_flat
       );
 
       await db.prepare(`
         UPDATE orders SET
           customer_id = ?, customer_name = ?, customer_email = ?,
-          items = ?, subtotal = ?, discount_pct = ?, discount_amount = ?, total = ?,
+          items = ?, subtotal = ?, discount_pct = ?, discount_flat = ?, discount_amount = ?, total = ?,
           notes = ?, status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
@@ -239,6 +252,7 @@ export async function onRequest(context) {
         JSON.stringify(priced.items),
         priced.subtotal,
         priced.discount_pct,
+        priced.discount_flat,
         priced.discount_amount,
         priced.total,
         data.notes ?? existing.notes,
