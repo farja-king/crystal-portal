@@ -414,8 +414,8 @@
       <p id="ord-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
 
       <!-- Builder -->
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
-        <h3 class="font-bold text-slate-900 mb-4">New Quote</h3>
+      <div id="ord-builder" class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+        <h3 id="ord-builder-heading" class="font-bold text-slate-900 mb-4">New Quote</h3>
 
         <div class="grid gap-3 md:grid-cols-3 mb-4">
           <label class="text-sm">
@@ -432,6 +432,15 @@
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Discount %</span>
             <input id="ord-discount" type="number" min="0" max="100" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
+          </label>
+          <label id="ord-status-field" class="text-sm hidden">
+            <span class="block font-medium text-slate-700 mb-1">Status</span>
+            <select id="ord-status" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+              <option value="draft">Draft</option>
+              <option value="sent">Sent</option>
+              <option value="approved">Approved</option>
+              <option value="declined">Declined</option>
+            </select>
           </label>
         </div>
 
@@ -469,9 +478,14 @@
             <div>Discount: <span id="ord-discount-amt" class="font-semibold text-slate-900">£0.00</span></div>
           </div>
           <div class="text-2xl font-bold text-slate-900">Total: <span id="ord-total">£0.00</span></div>
-          <button onclick="saveOrder()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
-            💾 Save as Quote
-          </button>
+          <div class="flex gap-2">
+            <button id="ord-cancel-edit-btn" onclick="cancelOrderEdit()" class="hidden bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+              Cancel Edit
+            </button>
+            <button id="ord-save-btn" onclick="saveOrder()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+              💾 Save as Quote
+            </button>
+          </div>
         </div>
         <p id="ord-save-msg" class="text-sm mt-3"></p>
       </div>
@@ -894,7 +908,7 @@
         case 'edit-customer': openCustomerEditForm(id); break;
         case 'delete-customer': deleteCustomerRow(id); break;
         case 'view-order': viewOrder(id); break;
-        case 'edit-order': editOrder(id); break;
+        case 'edit-order': editOrderInBuilder(id); break;
       }
     });
 
@@ -2063,6 +2077,11 @@
       document.getElementById('ord-total').textContent = money(total);
     }
 
+    // Set while editing an existing quote/invoice in the builder (see
+    // editOrderInBuilder) - saveOrder() branches on this to PUT an update
+    // instead of POSTing a brand new quote.
+    let editingExistingOrderId = null;
+
     async function saveOrder() {
       const msg = document.getElementById('ord-save-msg');
       const customerId = document.getElementById('ord-customer').value;
@@ -2086,24 +2105,102 @@
       };
 
       try {
-        const res = await fetch(API_ORDERS_URL, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+        if (editingExistingOrderId) {
+          payload.id = editingExistingOrderId;
+          payload.status = document.getElementById('ord-status').value;
+          const res = await fetch(API_ORDERS_URL, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
 
-        msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
-        msg.textContent = 'Saved as ' + data.quote_number + '.';
-        orderLines = [];
-        document.getElementById('ord-notes').value = '';
-        document.getElementById('ord-customer').value = '';
-        document.getElementById('ord-discount').value = 0;
-        renderOrderLines();
+          msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
+          msg.textContent = 'Updated.';
+          cancelOrderEdit();
+        } else {
+          const res = await fetch(API_ORDERS_URL, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+
+          msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
+          msg.textContent = 'Saved as ' + data.quote_number + '.';
+          orderLines = [];
+          document.getElementById('ord-notes').value = '';
+          document.getElementById('ord-customer').value = '';
+          document.getElementById('ord-discount').value = 0;
+          renderOrderLines();
+        }
         loadOrders();
       } catch (e) {
         msg.className = 'text-sm mt-3 text-red-600';
         msg.textContent = 'Could not save: ' + e.message;
       }
+    }
+
+    // Loads an existing quote/invoice's items into the same builder used to
+    // create new ones, so every field (garments, colour/size breakdown,
+    // decorations, qty) is actually editable - not just customer/status/notes.
+    function editOrderInBuilder(id) {
+      const o = ordersById[id];
+      if (!o) return;
+      closeOrderPanel();
+      editingExistingOrderId = id;
+
+      orderLines = (o.items || []).map((item) => ({
+        source: item.source,
+        product_id: item.product_id || null,
+        supplier_code: item.supplier_code || '',
+        title: item.title || '',
+        colour: item.colour || '',
+        size: item.size || '',
+        unit_price: Number(item.unit_price) || 0,
+        description: item.description || '',
+        qty: item.qty || 1,
+        breakdown: (item.breakdown || []).map((b) => ({ colour: b.colour || '', size: b.size || '', qty: b.qty || 1 })),
+        colourOptions: [], sizeOptions: [],
+        decorations: (item.decorations || []).map((d) => ({
+          method: d.method, placement: d.placement, price: d.price, qty: d.qty || 1, notes: d.notes || '',
+        })),
+      }));
+
+      const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
+      document.getElementById('ord-builder-heading').textContent = 'Editing ' + docNumber;
+      document.getElementById('ord-customer').value = o.customer_id || '';
+      document.getElementById('ord-discount').value = o.discount_pct || 0;
+      document.getElementById('ord-notes').value = o.notes || '';
+      document.getElementById('ord-status').value = o.status || 'draft';
+      document.getElementById('ord-status-field').classList.remove('hidden');
+      document.getElementById('ord-save-btn').textContent = '💾 Update ' + (o.doc_type === 'invoice' ? 'Invoice' : 'Quote');
+      document.getElementById('ord-cancel-edit-btn').classList.remove('hidden');
+      document.getElementById('ord-save-msg').textContent = '';
+
+      renderOrderLines();
+      // Colour/size dropdowns start empty (same as a freshly-picked catalog
+      // line) and get filled in per line, same lookup used when building a
+      // new quote.
+      orderLines.forEach((line, idx) => {
+        if (line.source === 'catalog' && line.supplier_code) {
+          loadOrderLineVariantOptions(idx, line.supplier_code);
+        }
+      });
+
+      document.getElementById('ord-builder').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function cancelOrderEdit() {
+      editingExistingOrderId = null;
+      orderLines = [];
+      document.getElementById('ord-builder-heading').textContent = 'New Quote';
+      document.getElementById('ord-customer').value = '';
+      document.getElementById('ord-discount').value = 0;
+      document.getElementById('ord-notes').value = '';
+      document.getElementById('ord-status-field').classList.add('hidden');
+      document.getElementById('ord-save-btn').textContent = '💾 Save as Quote';
+      document.getElementById('ord-cancel-edit-btn').classList.add('hidden');
+      document.getElementById('ord-save-msg').textContent = '';
+      renderOrderLines();
     }
 
     async function loadOrders() {
@@ -2157,7 +2254,6 @@
     }
 
     let viewingOrderId = null;
-    let editingOrderId = null;
 
     async function syncDataFromWebsite() {
       await runFullSync(
@@ -2169,7 +2265,6 @@
 
     function closeOrderPanel() {
       viewingOrderId = null;
-      editingOrderId = null;
       document.getElementById('order-view-edit-panel').classList.add('hidden');
     }
 
@@ -2177,7 +2272,6 @@
       const o = ordersById[id];
       if (!o) return;
       viewingOrderId = id;
-      editingOrderId = null;
 
       const panel = document.getElementById('order-view-edit-panel');
       const title = document.getElementById('panel-title');
@@ -2246,7 +2340,7 @@
       `;
 
       actions.innerHTML = `
-        <button onclick="editOrder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+        <button onclick="editOrderInBuilder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
           Edit
         </button>
         <button onclick="closeOrderPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">
@@ -2258,98 +2352,6 @@
       panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function editOrder(id) {
-      const o = ordersById[id];
-      if (!o) return;
-      editingOrderId = id;
-      viewingOrderId = null;
-
-      const panel = document.getElementById('order-view-edit-panel');
-      const title = document.getElementById('panel-title');
-      const content = document.getElementById('order-panel-content');
-      const actions = document.getElementById('panel-actions');
-
-      const docLabel = o.doc_type === 'invoice' ? 'Invoice' : 'Quote';
-      title.textContent = `Edit ${docLabel}`;
-
-      content.innerHTML = `
-        <div class="grid gap-4 md:grid-cols-2 mb-4">
-          <label class="text-sm">
-            <span class="block font-medium text-slate-700 mb-1">Customer Name</span>
-            <input id="ord-edit-customer-name" value="${escapeAttr(o.customer_name || '')}" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
-          </label>
-          <label class="text-sm">
-            <span class="block font-medium text-slate-700 mb-1">Status</span>
-            <select id="ord-edit-status" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
-              <option value="draft" ${o.status === 'draft' ? 'selected' : ''}>Draft</option>
-              <option value="sent" ${o.status === 'sent' ? 'selected' : ''}>Sent</option>
-              <option value="approved" ${o.status === 'approved' ? 'selected' : ''}>Approved</option>
-              <option value="declined" ${o.status === 'declined' ? 'selected' : ''}>Declined</option>
-            </select>
-          </label>
-        </div>
-        <label class="block text-sm mb-4">
-          <span class="block font-medium text-slate-700 mb-1">Notes</span>
-          <textarea id="ord-edit-notes" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 min-h-20">${escapeHtml(o.notes || '')}</textarea>
-        </label>
-        <div class="bg-slate-50 rounded-lg p-4 mb-4">
-          <p class="text-sm font-medium text-slate-900 mb-2">Totals (read-only)</p>
-          <div class="grid grid-cols-3 gap-4 text-sm">
-            <div>
-              <p class="text-xs text-slate-500 mb-1">Subtotal</p>
-              <p class="font-semibold text-slate-900">${money(o.subtotal)}</p>
-            </div>
-            ${o.discount_pct ? `<div>
-              <p class="text-xs text-slate-500 mb-1">Discount</p>
-              <p class="font-semibold text-slate-900">-${money(o.discount_amount)}</p>
-            </div>` : ''}
-            <div>
-              <p class="text-xs text-slate-500 mb-1">Total</p>
-              <p class="font-semibold text-slate-900">${money(o.total)}</p>
-            </div>
-          </div>
-        </div>
-      `;
-
-      actions.innerHTML = `
-        <button onclick="saveOrderEdit()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
-          Save Changes
-        </button>
-        <button onclick="closeOrderPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">
-          Cancel
-        </button>
-      `;
-
-      panel.classList.remove('hidden');
-      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
-    async function saveOrderEdit() {
-      if (!editingOrderId) return;
-
-      const customerName = document.getElementById('ord-edit-customer-name').value.trim();
-      const status = document.getElementById('ord-edit-status').value;
-      const notes = document.getElementById('ord-edit-notes').value.trim();
-
-      try {
-        const res = await fetch(API_ORDERS_URL, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: editingOrderId,
-            action: 'edit',
-            customer_name: customerName,
-            status: status,
-            notes: notes,
-          })
-        });
-        if (!res.ok) throw new Error('Save failed');
-        closeOrderPanel();
-        loadOrders();
-      } catch (err) {
-        alert('Failed to save: ' + err.message);
-      }
-    }
 
     async function convertOrderToInvoice(id) {
       if (!confirm('Convert this quote to an invoice? It will get its own invoice number.')) return;

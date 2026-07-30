@@ -214,20 +214,6 @@ export async function onRequest(context) {
         return json({ success: true });
       }
 
-      if (data.action === "edit") {
-        await db.prepare(`
-          UPDATE orders SET
-            customer_name = ?, status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).bind(
-          data.customer_name ?? existing.customer_name,
-          String(data.status || existing.status).slice(0, 30),
-          data.notes ?? existing.notes,
-          data.id
-        ).run();
-        return json({ success: true });
-      }
-
       // Full edit: re-price from the submitted items, same as create.
       const priced = priceItems(
         data.items !== undefined ? data.items : JSON.parse(existing.items || "[]"),
@@ -238,7 +224,7 @@ export async function onRequest(context) {
         UPDATE orders SET
           customer_id = ?, customer_name = ?, customer_email = ?,
           items = ?, subtotal = ?, discount_pct = ?, discount_amount = ?, total = ?,
-          notes = ?, updated_at = CURRENT_TIMESTAMP
+          notes = ?, status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         data.customer_id ?? existing.customer_id,
@@ -250,6 +236,7 @@ export async function onRequest(context) {
         priced.discount_amount,
         priced.total,
         data.notes ?? existing.notes,
+        data.status !== undefined ? String(data.status).slice(0, 30) : existing.status,
         data.id
       ).run();
 
