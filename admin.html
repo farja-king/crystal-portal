@@ -620,7 +620,12 @@
            shows as quick-picks in the quote builder once they're selected
            there, and never leaks into the shared Garment Catalog. -->
       <div class="border-t border-slate-200 pt-4 mb-4">
-        <h4 class="font-bold text-slate-900 mb-2">Custom Price List</h4>
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="font-bold text-slate-900">Custom Price List</h4>
+          <button type="button" onclick="toggleCvAddItemForm()" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+            + Add item manually
+          </button>
+        </div>
         <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-3 mb-3">
           <p class="text-xs text-slate-600 mb-2">Import this customer's items from a Square export CSV. Safe to re-run - won't overwrite prices you've already adjusted here.</p>
           <div class="flex flex-wrap items-center gap-3">
@@ -630,6 +635,17 @@
             </button>
           </div>
           <p id="cv-catalog-csv-status" class="text-xs mt-2 hidden"></p>
+        </div>
+        <div id="cv-add-item-form" class="hidden grid gap-2 md:grid-cols-4 mb-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <input id="cv-add-item-title" placeholder="Item name *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
+          <input id="cv-add-item-variation" placeholder="Variation (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="cv-add-item-sku" placeholder="SKU (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="cv-add-item-price" type="number" step="0.01" min="0" placeholder="Price" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <div class="flex gap-2 md:col-span-3">
+            <button type="button" onclick="saveManualCatalogItem()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Save</button>
+            <button type="button" onclick="toggleCvAddItemForm()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Cancel</button>
+          </div>
+          <p id="cv-add-item-msg" class="text-xs text-red-600 md:col-span-4"></p>
         </div>
         <input id="cv-catalog-search" type="text" oninput="renderCustomerCatalogItems()" placeholder="Search this price list…" class="hidden w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm mb-3" />
         <div class="overflow-x-auto border border-slate-200 rounded-lg">
@@ -1336,6 +1352,61 @@
         status.textContent = 'Import failed: ' + e.message;
       } finally {
         btn.disabled = false;
+      }
+    }
+
+    // One-off items don't always come from a customer's full CSV export -
+    // a call taking a single new logo/patch for a team not on file yet
+    // shouldn't require building a whole spreadsheet first.
+    function toggleCvAddItemForm() {
+      const panel = document.getElementById('cv-add-item-form');
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        document.getElementById('cv-add-item-title').value = '';
+        document.getElementById('cv-add-item-variation').value = '';
+        document.getElementById('cv-add-item-sku').value = '';
+        document.getElementById('cv-add-item-price').value = '';
+        document.getElementById('cv-add-item-msg').textContent = '';
+        document.getElementById('cv-add-item-title').focus();
+      }
+    }
+
+    async function saveManualCatalogItem() {
+      const msg = document.getElementById('cv-add-item-msg');
+      const title = document.getElementById('cv-add-item-title').value.trim();
+      if (!title) { msg.textContent = 'Item name is required.'; return; }
+      const priceRaw = document.getElementById('cv-add-item-price').value;
+      const price = priceRaw === '' ? null : Number(priceRaw);
+      if (priceRaw !== '' && (!isFinite(price) || price < 0)) { msg.textContent = 'Price must be a non-negative number.'; return; }
+      if (!cvCatalogCustomerId) return;
+
+      msg.className = 'text-xs text-slate-500 md:col-span-4';
+      msg.textContent = 'Saving…';
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: crypto.randomUUID(),
+            supplier: 'Manual',
+            supplier_code: document.getElementById('cv-add-item-sku').value.trim(),
+            title,
+            size: document.getElementById('cv-add-item-variation').value.trim(),
+            category: '',
+            cost_price: 0,
+            vat_rate: 0.2,
+            sell_price: price,
+            customer_id: cvCatalogCustomerId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        toggleCvAddItemForm();
+        loadCustomerCatalogItems(cvCatalogCustomerId);
+      } catch (e) {
+        msg.className = 'text-xs text-red-600 md:col-span-4';
+        msg.textContent = 'Could not save: ' + e.message;
       }
     }
 
