@@ -1614,16 +1614,28 @@
         tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">No design files uploaded yet.</td></tr>';
         return;
       }
-      tbody.innerHTML = cvDesignFiles.map((f) => `
+      tbody.innerHTML = cvDesignFiles.map((f) => {
+        // DST/EMB have no browser-renderable form at all - only offer
+        // "View" for types a browser can actually display inline (PDF
+        // proofs, and any image). Everything else only gets Download.
+        const viewable = /^application\/pdf|^image\//.test(f.content_type || '');
+        return `
         <tr>
           <td class="p-2 text-slate-800">${escapeHtml(f.filename)}</td>
           <td class="p-2 text-slate-500 text-xs">${escapeHtml(ukDate(f.uploaded_at))}</td>
           <td class="p-2 text-right text-slate-600 text-xs">${formatFileSize(f.size_bytes)}</td>
           <td class="p-2 text-right whitespace-nowrap">
+            ${viewable ? `<button type="button" onclick="viewCustomerDesignFile('${escapeAttr(f.id)}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">View</button>` : ''}
             <a href="${API_DESIGN_FILES_URL}?download=${encodeURIComponent(f.id)}" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">Download</a>
             <button type="button" onclick="deleteCustomerDesignFile('${escapeAttr(f.id)}')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
+    }
+
+    function viewCustomerDesignFile(id) {
+      const url = API_DESIGN_FILES_URL + '?view=' + encodeURIComponent(id);
+      window.open(url, 'design-file-view-' + id, 'width=900,height=800,noopener');
     }
 
     async function uploadCustomerDesignFiles() {

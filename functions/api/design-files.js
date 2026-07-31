@@ -45,10 +45,13 @@ export async function onRequest(context) {
     const url = new URL(request.url);
 
     // Streams the actual file bytes back from R2 - a plain GET with
-    // ?download=<file id> rather than its own route, so a simple <a href>
-    // in the customer view can trigger it directly.
-    if (request.method === "GET" && url.searchParams.get("download")) {
-      const id = url.searchParams.get("download");
+    // ?download=<file id> (forces a save-to-disk prompt) or ?view=<file id>
+    // (inline, so a browser-renderable type like a PDF opens directly in
+    // the popup window instead) rather than its own route, so a simple
+    // <a href>/window.open in the customer view can trigger it directly.
+    if (request.method === "GET" && (url.searchParams.get("download") || url.searchParams.get("view"))) {
+      const inline = !!url.searchParams.get("view");
+      const id = url.searchParams.get("download") || url.searchParams.get("view");
       const row = await db.prepare("SELECT * FROM design_files WHERE id = ?").bind(id).first();
       if (!row) return json({ error: "File not found" }, 404);
 
@@ -58,7 +61,7 @@ export async function onRequest(context) {
       return new Response(obj.body, {
         headers: {
           "Content-Type": row.content_type || "application/octet-stream",
-          "Content-Disposition": `attachment; filename="${row.filename.replace(/"/g, "")}"`,
+          "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${row.filename.replace(/"/g, "")}"`,
           "Cache-Control": "no-store",
         },
       });
