@@ -1635,7 +1635,14 @@
 
     function viewCustomerDesignFile(id) {
       const url = API_DESIGN_FILES_URL + '?view=' + encodeURIComponent(id);
-      window.open(url, 'design-file-view-' + id, 'width=576,height=512,noopener');
+      const w = 576, h = 512;
+      // Without explicit left/top the browser drops the popup at a fixed
+      // top-left position, stacking it in the corner on top of both the
+      // main window and the customer view modal underneath rather than
+      // over the middle of whichever screen it's opened on.
+      const left = Math.round(window.screenX + (window.outerWidth - w) / 2);
+      const top = Math.round(window.screenY + (window.outerHeight - h) / 2);
+      window.open(url, 'design-file-view-' + id, `width=${w},height=${h},left=${left},top=${top},noopener`);
     }
 
     async function uploadCustomerDesignFiles() {
