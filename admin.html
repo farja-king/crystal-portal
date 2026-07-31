@@ -631,6 +631,7 @@
           </div>
           <p id="cv-catalog-csv-status" class="text-xs mt-2 hidden"></p>
         </div>
+        <input id="cv-catalog-search" type="text" oninput="renderCustomerCatalogItems()" placeholder="Search this price list…" class="hidden w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm mb-3" />
         <div class="overflow-x-auto border border-slate-200 rounded-lg">
           <table class="w-full text-left text-sm">
             <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
@@ -1129,6 +1130,7 @@
 
     async function loadCustomerCatalogItems(customerId) {
       cvCatalogCustomerId = customerId;
+      document.getElementById('cv-catalog-search').value = '';
       const tbody = document.getElementById('cv-catalog-body');
       tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
       try {
@@ -1153,15 +1155,35 @@
       renderCustomerCatalogItems();
     }
 
+    // Search box only shows once the list is big enough that scrolling to
+    // find one product stops being reasonable (Sloane's ~14 items don't
+    // need it; Karl Sports' 234 do).
+    const CATALOG_SEARCH_THRESHOLD = 12;
+
     // One row per variant when a product has just one price (the common
     // case - see groupCatalogItemsByProduct), otherwise a clickable header
     // row ("Product Name  ·  4 variations  ·  £1.00 - £5.40") that expands
     // into an indented row per variation - so a 434-row export (234 actual
     // products) reads as ~234 scannable rows, not a wall of near-duplicates.
+    // Searching auto-expands every matching group, so a hit on a variation
+    // name (e.g. "Tag Line") surfaces immediately without a second click.
     function renderCustomerCatalogItems() {
       const tbody = document.getElementById('cv-catalog-body');
+      const searchBox = document.getElementById('cv-catalog-search');
       if (!cvCatalogItems.length) {
+        searchBox.classList.add('hidden');
         tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">No custom items imported yet.</td></tr>';
+        return;
+      }
+      searchBox.classList.toggle('hidden', cvCatalogItems.length <= CATALOG_SEARCH_THRESHOLD);
+
+      const query = searchBox.value.trim().toLowerCase();
+      const items = query
+        ? cvCatalogItems.filter((p) => p.title.toLowerCase().includes(query) || (p.size || '').toLowerCase().includes(query) || (p.supplier_code || '').toLowerCase().includes(query))
+        : cvCatalogItems;
+
+      if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">No items match "' + escapeHtml(searchBox.value.trim()) + '".</td></tr>';
         return;
       }
 
@@ -1177,11 +1199,11 @@
           </td>
         </tr>`;
 
-      const groups = groupCatalogItemsByProduct(cvCatalogItems);
+      const groups = groupCatalogItemsByProduct(items);
       tbody.innerHTML = groups.map((g) => {
         if (g.variants.length === 1) return variantRow(g.variants[0], false);
 
-        const expanded = cvCatalogExpanded.has(g.title);
+        const expanded = query || cvCatalogExpanded.has(g.title);
         const header = `
           <tr class="cursor-pointer hover:bg-slate-50" onclick="toggleCatalogGroup('${toAttrToken(g.title)}')">
             <td class="p-2 font-medium text-slate-900">${expanded ? '▾' : '▸'} ${escapeHtml(g.title)}</td>
@@ -2358,6 +2380,12 @@
     // picking the wrong one isn't a "Change" click away. Only one open at a
     // time, cleared whenever the lines re-render for any other reason.
     let orderLineOpenVariantPicker = null;
+    // Per-line search text for orderCustomerItems (keyed by line index) -
+    // once a customer has more than a handful of saved items (Karl Sports:
+    // 234), dumping them all as chips is unusable, so the chips only show
+    // once the line's search box narrows things down. See
+    // renderCustomerItemPicker / CUSTOMER_ITEM_CHIP_THRESHOLD.
+    let orderCustomerItemQuery = {};
 
     // Martin's fixed embroidery pricing rules - see PLACEMENT_LABELS for the
     // options this drives. Returns null (no default) for anything outside
@@ -2446,6 +2474,7 @@
       orderCustomerItems = [];
       orderCustomerName = c ? c.name : '';
       orderLineOpenVariantPicker = null;
+      orderCustomerItemQuery = {};
       if (c) {
         try {
           const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(c.id) + '&limit=200');
@@ -2519,6 +2548,7 @@
     function removeOrderLine(idx) {
       orderLines.splice(idx, 1);
       orderLineOpenVariantPicker = null;
+      orderCustomerItemQuery = {};
       renderOrderLines();
     }
 
@@ -2659,6 +2689,7 @@
         customer_item: true,
       });
       orderLineOpenVariantPicker = null;
+      delete orderCustomerItemQuery[idx];
       renderOrderLines();
     }
 
@@ -2668,6 +2699,80 @@
       const key = idx + '|' + title;
       orderLineOpenVariantPicker = orderLineOpenVariantPicker === key ? null : key;
       renderOrderLines();
+    }
+
+    function filterOrderLineCustomerItems(idx, value) {
+      orderCustomerItemQuery[idx] = value;
+      renderOrderLines();
+    }
+
+    // A single chip for one product ("PENNANT FC · £3.00") or, for a
+    // multi-variation product, a "(N)" chip that opens the inline variation
+    // picker (see toggleOrderLineVariantPicker) instead of adding directly.
+    function renderCustomerItemChip(lineIdx, g) {
+      if (g.variants.length === 1) {
+        const p = g.variants[0];
+        return `<button type="button" onclick="selectOrderLineCustomerItem(${lineIdx}, '${escapeAttr(p.id)}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-full px-3 py-1">
+          ${escapeHtml(p.title)} · ${escapeHtml(money(p.sell_price))}
+        </button>`;
+      }
+      const pickerKey = lineIdx + '|' + g.title;
+      const isOpen = orderLineOpenVariantPicker === pickerKey;
+      return `<span class="relative inline-block">
+        <button type="button" onclick="toggleOrderLineVariantPicker(${lineIdx}, '${toAttrToken(g.title)}')" class="text-xs ${isOpen ? 'bg-indigo-100' : 'bg-indigo-50 hover:bg-indigo-100'} border border-indigo-200 text-indigo-800 rounded-full px-3 py-1">
+          ${escapeHtml(g.title)} <span class="text-indigo-500">(${g.variants.length})</span>
+        </button>
+        ${isOpen ? `
+          <div class="absolute z-20 left-0 top-full mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+            ${g.variants.map((p) => `
+              <button type="button" onclick="selectOrderLineCustomerItem(${lineIdx}, '${escapeAttr(p.id)}')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm border-b border-slate-100 last:border-0">
+                ${escapeHtml(p.size || '(unnamed variation)')}
+                <span class="float-right text-slate-500">${escapeHtml(money(p.sell_price))}</span>
+              </button>
+            `).join('')}
+          </div>` : ''}
+      </span>`;
+    }
+
+    // Chips only show once the selected customer's saved-item count is small
+    // enough to scan at a glance (Sloane's ~14 stay as chips always); past
+    // that, a search box gates them - typing narrows to matches, nothing is
+    // shown up front. Karl Sports has 234 products; dumping all of them as
+    // buttons on every catalog line would be unusable.
+    const CUSTOMER_ITEM_CHIP_THRESHOLD = 10;
+    const CUSTOMER_ITEM_MAX_SHOWN = 25;
+
+    function renderCustomerItemPicker(idx) {
+      const useSearch = orderCustomerItems.length > CUSTOMER_ITEM_CHIP_THRESHOLD;
+      const query = (orderCustomerItemQuery[idx] || '').trim().toLowerCase();
+      const matched = query
+        ? orderCustomerItems.filter((p) => p.title.toLowerCase().includes(query) || (p.size || '').toLowerCase().includes(query))
+        : orderCustomerItems;
+      const groups = groupCatalogItemsByProduct(matched);
+      const shown = groups.slice(0, CUSTOMER_ITEM_MAX_SHOWN);
+      const hiddenCount = groups.length - shown.length;
+
+      const searchBox = useSearch
+        ? `<input value="${escapeAttr(orderCustomerItemQuery[idx] || '')}" oninput="filterOrderLineCustomerItems(${idx}, this.value)" placeholder="Search ${escapeAttr(orderCustomerName)}'s ${orderCustomerItems.length} saved items…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm mb-1.5" />`
+        : '';
+
+      let body;
+      if (useSearch && !query) {
+        body = `<p class="text-xs text-slate-400 italic">Type to search - ${orderCustomerItems.length} items on file.</p>`;
+      } else if (!groups.length) {
+        body = `<p class="text-xs text-slate-400 italic">No matches.</p>`;
+      } else {
+        body = `<div class="flex flex-wrap items-center gap-1.5">
+          ${shown.map((g) => renderCustomerItemChip(idx, g)).join('')}
+          ${hiddenCount ? `<span class="text-xs text-slate-400">+${hiddenCount} more - refine your search</span>` : ''}
+        </div>`;
+      }
+
+      return `<div class="mb-2">
+        <p class="text-xs font-medium text-slate-500 mb-1">${escapeHtml(orderCustomerName)}'s saved items</p>
+        ${searchBox}
+        ${body}
+      </div>`;
     }
 
     // Pulls available colours and sizes for this product code from the
@@ -2722,6 +2827,7 @@
     function clearOrderLineProduct(idx) {
       Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1 }], colourOptions: [], sizeOptions: [], customer_item: false });
       orderLineOpenVariantPicker = null;
+      delete orderCustomerItemQuery[idx];
       renderOrderLines();
     }
 
@@ -2780,36 +2886,7 @@
                    <button type="button" onclick="clearOrderLineProduct(${idx})" class="text-xs text-indigo-700 hover:underline">Change</button>
                  </div>`
               : `<div>
-                   ${orderCustomerItems.length ? `
-                     <div class="mb-2">
-                       <p class="text-xs font-medium text-slate-500 mb-1">${escapeHtml(orderCustomerName)}'s saved items</p>
-                       <div class="flex flex-wrap gap-1.5">
-                         ${groupCatalogItemsByProduct(orderCustomerItems).map((g) => {
-                           if (g.variants.length === 1) {
-                             const p = g.variants[0];
-                             return `<button type="button" onclick="selectOrderLineCustomerItem(${idx}, '${escapeAttr(p.id)}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-full px-3 py-1">
-                               ${escapeHtml(p.title)} · ${escapeHtml(money(p.sell_price))}
-                             </button>`;
-                           }
-                           const pickerKey = idx + '|' + g.title;
-                           const isOpen = orderLineOpenVariantPicker === pickerKey;
-                           return `<span class="relative inline-block">
-                             <button type="button" onclick="toggleOrderLineVariantPicker(${idx}, '${toAttrToken(g.title)}')" class="text-xs ${isOpen ? 'bg-indigo-100' : 'bg-indigo-50 hover:bg-indigo-100'} border border-indigo-200 text-indigo-800 rounded-full px-3 py-1">
-                               ${escapeHtml(g.title)} <span class="text-indigo-500">(${g.variants.length})</span>
-                             </button>
-                             ${isOpen ? `
-                               <div class="absolute z-20 left-0 top-full mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                                 ${g.variants.map((p) => `
-                                   <button type="button" onclick="selectOrderLineCustomerItem(${idx}, '${escapeAttr(p.id)}')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm border-b border-slate-100 last:border-0">
-                                     ${escapeHtml(p.size || '(unnamed variation)')}
-                                     <span class="float-right text-slate-500">${escapeHtml(money(p.sell_price))}</span>
-                                   </button>
-                                 `).join('')}
-                               </div>` : ''}
-                           </span>`;
-                         }).join('')}
-                       </div>
-                     </div>` : ''}
+                   ${orderCustomerItems.length ? renderCustomerItemPicker(idx) : ''}
                    <div class="relative">
                      <input id="ord-line-search-${idx}" oninput="searchOrderCatalog(${idx})" placeholder="Search catalog by code, title, colour…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
                      <div id="ord-line-results-${idx}" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-64 overflow-y-auto"></div>
@@ -2997,6 +3074,7 @@
           orderCustomerItems = [];
           orderCustomerName = '';
           orderLineOpenVariantPicker = null;
+          orderCustomerItemQuery = {};
           renderOrderLines();
         }
         loadOrders();
@@ -3072,6 +3150,7 @@
       orderCustomerItems = [];
       orderCustomerName = '';
       orderLineOpenVariantPicker = null;
+      orderCustomerItemQuery = {};
       document.getElementById('ord-status-field').classList.add('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Save as Quote';
       document.getElementById('ord-cancel-edit-btn').classList.add('hidden');
