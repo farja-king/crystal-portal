@@ -69,7 +69,7 @@ export async function onRequest(context) {
     const rows = items.map((item) => {
       const baseLabel = item.source === "catalog"
         ? `${escapeHtml(item.supplier_code)} ${escapeHtml(item.title)}`
-        : escapeHtml(item.description || "Customer's own garment");
+        : (escapeHtml([item.description, item.title].filter(Boolean).join(" - ")) || "Customer's own garment");
       const breakdownLines = (item.breakdown && item.breakdown.length && !item.customer_item)
         ? item.breakdown.map((b) => `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(b.colour || "-")} / ${escapeHtml(b.size || "-")} × ${b.qty}</div>`).join("")
         : "";

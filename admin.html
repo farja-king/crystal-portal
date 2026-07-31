@@ -4448,9 +4448,15 @@
       title.textContent = `${docLabel}: ${escapeHtml(docNumber)}`;
 
       const itemsHtml = (o.items || []).map((item) => {
+        // A customer-supplied line can carry both a free-text garment
+        // description AND an attached catalog product/service (e.g. a
+        // "Velco patches" charge picked from the catalog on top of "the
+        // customer's own polo shirt") - show whichever of the two are
+        // actually filled in, not just description, or an attached
+        // product/service with no typed description silently vanishes.
         const baseLabel = item.source === 'catalog'
           ? `${escapeHtml(item.supplier_code || '')} ${escapeHtml(item.title || '')}`
-          : escapeHtml(item.description || "Customer's own garment");
+          : (escapeHtml([item.description, item.title].filter(Boolean).join(' - ')) || "Customer's own garment");
         // A customer's own saved item (see products.customer_id) has no
         // colour/size - the breakdown row only ever carries its qty, so
         // showing it here would just be a redundant "- / - × 1".
@@ -4559,7 +4565,7 @@
       const rows = o.items.map((item) => {
         const baseLabel = item.source === 'catalog'
           ? `${escapeHtml(item.supplier_code)} ${escapeHtml(item.title)}`
-          : escapeHtml(item.description || "Customer's own garment");
+          : (escapeHtml([item.description, item.title].filter(Boolean).join(' - ')) || "Customer's own garment");
         // Itemized colour/size/qty per unit - the catalog row itself is
         // often just a pricing tier ("All Colours" / "XS - XXL"), not what
         // was actually cut and packed. Skipped for a customer's own saved
