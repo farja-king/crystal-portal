@@ -1166,6 +1166,23 @@
         return;
       }
       renderCustomerCatalogItems();
+      syncOrderCustomerItemsIfActive();
+    }
+
+    // The quote builder keeps its own copy (orderCustomerItems) of whichever
+    // customer is currently selected there, fetched once when they're
+    // picked - it has no way to know the Custom Price List modal just
+    // changed that same customer's data underneath it (import, manual add,
+    // price edit, rename, delete). Without this, a quick-pick chip could
+    // keep showing stale info - or the wrong variation count, as happened
+    // with Kettering Buccleuch right after a re-import fixed it in the
+    // modal but not in an already-open quote - until the customer was
+    // re-selected or the page reloaded.
+    function syncOrderCustomerItemsIfActive() {
+      if (cvCatalogCustomerId && document.getElementById('ord-customer').value === cvCatalogCustomerId) {
+        orderCustomerItems = cvCatalogItems;
+        renderOrderLines();
+      }
     }
 
     // Takes a toAttrToken()-encoded title, not escapeAttr'd - see toAttrToken
@@ -1268,6 +1285,7 @@
         });
         const item = cvCatalogItems.find((p) => p.id === id);
         if (item) item.sell_price = price;
+        syncOrderCustomerItemsIfActive();
       } catch (e) {}
     }
 
@@ -1296,6 +1314,7 @@
         });
         const item = cvCatalogItems.find((p) => p.id === id);
         if (item) item[field] = value;
+        syncOrderCustomerItemsIfActive();
       } catch (e) {}
       cvEditingNameIds.delete(id);
       renderCustomerCatalogItems();
@@ -1308,6 +1327,7 @@
       });
       cvCatalogItems = cvCatalogItems.filter((p) => p.id !== id);
       renderCustomerCatalogItems();
+      syncOrderCustomerItemsIfActive();
     }
 
     // Square's "Items" export - one row per item/variation. A single product
