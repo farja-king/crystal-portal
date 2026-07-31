@@ -40,6 +40,7 @@ export async function onRequest(context) {
         city TEXT,
         county TEXT,
         postcode TEXT,
+        deleted_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
@@ -51,7 +52,7 @@ export async function onRequest(context) {
     // each attempt is swallowed individually.
     for (const col of [
       "square_customer_id TEXT", "lifetime_spend REAL DEFAULT 0", "transaction_count INTEGER DEFAULT 0", "last_visit TEXT",
-      "address_1 TEXT", "address_2 TEXT", "city TEXT", "county TEXT", "postcode TEXT",
+      "address_1 TEXT", "address_2 TEXT", "city TEXT", "county TEXT", "postcode TEXT", "deleted_at TEXT",
     ]) {
       try {
         await db.prepare(`ALTER TABLE customers ADD COLUMN ${col}`).run();
@@ -60,10 +61,17 @@ export async function onRequest(context) {
       }
     }
 
-    // GET: Fetch all customers for the Portal and Back Office
+    // GET: everyone by default; ?trash=1 flips to *only* the soft-deleted
+    // ones (see DELETE below) - a customer merged or deleted by mistake
+    // (e.g. picking the wrong side of a merge, or the Square-activity
+    // combining bug that prompted adding this trash in the first place)
+    // stays recoverable rather than being gone the moment Delete is clicked.
     if (request.method === "GET") {
+      const trash = new URL(request.url).searchParams.get("trash");
       const { results } = await db.prepare(
-        "SELECT * FROM customers ORDER BY name ASC"
+        trash
+          ? "SELECT * FROM customers WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+          : "SELECT * FROM customers WHERE deleted_at IS NULL ORDER BY name ASC"
       ).all();
       return new Response(JSON.stringify(results), { headers: corsHeaders });
     }
@@ -95,8 +103,11 @@ export async function onRequest(context) {
             address_2 = excluded.address_2,
             city = excluded.city,
             county = excluded.county,
-            postcode = excluded.postcode
+            postcode = excluded.postcode,
+            deleted_at = NULL
         `);
+        // A re-import matching a previously-deleted customer's id un-deletes
+        // them - if they're back in a fresh Square export, they're active.
         // type/discount_pct/notes are left off the DO UPDATE SET - those are
         // Martin's own edits (trade discount, notes), which a re-import of
         // the same Square data shouldn't ever overwrite.
@@ -149,14 +160,32 @@ export async function onRequest(context) {
       return new Response(JSON.stringify({ success: true, id }), { headers: corsHeaders });
     }
 
-    // PUT: Update an existing customer
+    // PUT: Update an existing customer. Fetches the existing row first and
+    // falls back to it field-by-field (data.field ?? existing.field) rather
+    // than blindly overwriting with "" - the ordinary Edit form never sends
+    // square_customer_id/lifetime_spend/transaction_count/last_visit at all
+    // (those are Square-only, not editable there), so without the fallback
+    // every plain edit would silently wipe a customer's Square activity.
+    // Merging two duplicate customers (see performMergeCustomers in
+    // admin.html) is the one caller that *does* set these explicitly, to
+    // combine the duplicate's activity into the record being kept before
+    // it's deleted.
     if (request.method === "PUT") {
       const data = await request.json();
+      const existing = await db.prepare("SELECT * FROM customers WHERE id = ?").bind(data.id).first();
+      if (!existing) return new Response(JSON.stringify({ error: "Customer not found" }), { status: 404, headers: corsHeaders });
+
+      // Restore from the trash - see DELETE below, and GET's ?trash=1.
+      if (data.restore) {
+        await db.prepare("UPDATE customers SET deleted_at = NULL WHERE id = ?").bind(data.id).run();
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+      }
 
       await db.prepare(`
         UPDATE customers
         SET name = ?, company = ?, email = ?, phone = ?, type = ?, discount_pct = ?, notes = ?,
-            address_1 = ?, address_2 = ?, city = ?, county = ?, postcode = ?
+            address_1 = ?, address_2 = ?, city = ?, county = ?, postcode = ?,
+            square_customer_id = ?, lifetime_spend = ?, transaction_count = ?, last_visit = ?
         WHERE id = ?
       `).bind(
         data.name || "Unnamed",
@@ -171,16 +200,28 @@ export async function onRequest(context) {
         data.city || "",
         data.county || "",
         data.postcode || "",
+        data.square_customer_id ?? existing.square_customer_id,
+        data.lifetime_spend ?? existing.lifetime_spend,
+        data.transaction_count ?? existing.transaction_count,
+        data.last_visit ?? existing.last_visit,
         data.id
       ).run();
 
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
 
-    // DELETE: Remove a customer
+    // DELETE: soft-deletes by default (sets deleted_at, so it drops out of
+    // the normal list and search but stays recoverable via ?trash=1 / the
+    // restore action above) - only actually removed from the database when
+    // permanent:true is explicitly sent (from the trash view's own "Delete
+    // forever", or the deliberate cleanup pass this whole thing exists for).
     if (request.method === "DELETE") {
-      const { id } = await request.json();
-      await db.prepare("DELETE FROM customers WHERE id = ?").bind(id).run();
+      const { id, permanent } = await request.json();
+      if (permanent) {
+        await db.prepare("DELETE FROM customers WHERE id = ?").bind(id).run();
+      } else {
+        await db.prepare("UPDATE customers SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      }
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
   } catch (err) {

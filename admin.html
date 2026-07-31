@@ -153,12 +153,44 @@
           <p class="text-slate-500 text-sm">Manage accounts, discounts, and contact details.</p>
         </div>
         <div class="flex items-center gap-2">
+          <button onclick="openCustomerTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            🗑️ Trash
+          </button>
           <button onclick="exportCustomersCsv()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             ⬇️ Export
           </button>
           <button onclick="loadCustomers()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🔄 Refresh Customers
           </button>
+        </div>
+      </div>
+
+      <!-- Trash - deleted (including merged-away) customers, recoverable
+           until someone explicitly empties them. See customers.js's
+           deleted_at column - DELETE soft-deletes by default. -->
+      <div id="customer-trash-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6">
+          <div class="flex justify-between items-start mb-4">
+            <div>
+              <h3 class="text-lg font-bold text-slate-900">Deleted Customers</h3>
+              <p class="text-sm text-slate-500">Restore a customer deleted by mistake - their quotes/invoices and Custom Price List items were never moved, only the customer record itself was removed.</p>
+            </div>
+            <button onclick="closeCustomerTrash()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
+          </div>
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th class="p-2">Name</th>
+                  <th class="p-2">Company</th>
+                  <th class="p-2">Contact</th>
+                  <th class="p-2">Deleted</th>
+                  <th class="p-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="customer-trash-body" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -1071,7 +1103,7 @@
       const ids = [...selectedCustomerIds];
       if (!ids.length) return;
       const names = ids.map((id) => (customersById[id] ? customersById[id].name : id)).join(', ');
-      if (!confirm(`Delete ${ids.length} customer(s)?\n\n${names}\n\nThis cannot be undone.`)) return;
+      if (!confirm(`Delete ${ids.length} customer(s)?\n\n${names}\n\nYou can restore them from Trash afterward if needed.`)) return;
 
       let failed = 0;
       for (const id of ids) {
@@ -1129,6 +1161,25 @@
       document.getElementById('cust-merge-modal').classList.add('hidden');
     }
 
+    function laterDate(a, b) {
+      if (!a) return b || '';
+      if (!b) return a || '';
+      const da = new Date(a), db = new Date(b);
+      if (!isNaN(da) && !isNaN(db)) return da > db ? a : b;
+      return a > b ? a : b; // unparseable - fall back to a plain string compare
+    }
+
+    // "Keep this one" picks which record survives, but that shouldn't mean
+    // the *other* one's contact details or Square history are just thrown
+    // away wherever the kept record happens to be missing them - so any
+    // blank field on the survivor is filled in from the loser, and their
+    // Square activity (spend/transaction count/last visit/the Square id
+    // that ties future re-imports to this record) is combined rather than
+    // one side's simply being discarded.
+    function fillIfBlank(primary, fallback) {
+      return (primary && String(primary).trim()) ? primary : (fallback || '');
+    }
+
     // Reassigns everything the loser owns onto the survivor, then deletes
     // the loser - orders.js and products.js's PUT handlers already support
     // changing customer_id on an existing row (and leave everything else
@@ -1138,7 +1189,7 @@
       const survivor = customersById[survivorId];
       const loser = customersById[loserId];
       if (!survivor || !loser) return;
-      if (!confirm(`Merge "${loser.name}" into "${survivor.name}"? All of "${loser.name}"'s quotes/invoices and price list items move to "${survivor.name}", then "${loser.name}" is deleted. This cannot be undone.`)) return;
+      if (!confirm(`Merge "${loser.name}" into "${survivor.name}"? All of "${loser.name}"'s quotes/invoices, price list items, contact details and Square activity move to "${survivor.name}", then "${loser.name}" is deleted (recoverable from Trash, but the moved quotes/items stay with "${survivor.name}").`)) return;
 
       const msg = document.getElementById('cust-merge-msg');
       msg.className = 'text-sm mb-3 text-slate-500';
@@ -1169,6 +1220,34 @@
           });
         }
 
+        msg.textContent = 'Combining contact details and Square activity…';
+        const mergedNotes = survivor.notes && loser.notes && survivor.notes.trim() !== loser.notes.trim()
+          ? survivor.notes + '\n\n[Merged from ' + loser.name + ']: ' + loser.notes
+          : fillIfBlank(survivor.notes, loser.notes);
+        const merged = {
+          id: survivorId,
+          name: survivor.name,
+          company: fillIfBlank(survivor.company, loser.company),
+          email: fillIfBlank(survivor.email, loser.email),
+          phone: fillIfBlank(survivor.phone, loser.phone),
+          type: survivor.type,
+          discount_pct: survivor.discount_pct,
+          notes: mergedNotes,
+          address_1: fillIfBlank(survivor.address_1, loser.address_1),
+          address_2: fillIfBlank(survivor.address_2, loser.address_2),
+          city: fillIfBlank(survivor.city, loser.city),
+          county: fillIfBlank(survivor.county, loser.county),
+          postcode: fillIfBlank(survivor.postcode, loser.postcode),
+          square_customer_id: fillIfBlank(survivor.square_customer_id, loser.square_customer_id),
+          lifetime_spend: round2((Number(survivor.lifetime_spend) || 0) + (Number(loser.lifetime_spend) || 0)),
+          transaction_count: (Number(survivor.transaction_count) || 0) + (Number(loser.transaction_count) || 0),
+          last_visit: laterDate(survivor.last_visit, loser.last_visit),
+        };
+        await fetch(API_CUSTOMERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged),
+        });
+        Object.assign(survivor, merged);
+
         msg.textContent = 'Deleting ' + loser.name + '…';
         await fetch(API_CUSTOMERS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: loserId }),
@@ -1180,7 +1259,7 @@
 
         closeMergeCustomersDialog();
         filterCustomers();
-        alert(`Merged. ${orders.length} quote(s)/invoice(s) and ${products.length} price list item(s) moved to "${survivor.name}".`);
+        alert(`Merged. ${orders.length} quote(s)/invoice(s) and ${products.length} price list item(s) moved to "${survivor.name}", contact details and Square activity combined.`);
       } catch (e) {
         msg.className = 'text-sm mb-3 text-red-600';
         msg.textContent = 'Merge failed partway through: ' + e.message + '. Check both records before retrying - some items may have already moved.';
@@ -1869,7 +1948,7 @@
     // everyone above the one just deleted to get back to where you were.
     async function deleteCustomerRow(id) {
       const c = customersById[id];
-      if (!confirm(`Delete customer "${c ? c.name : id}"? This cannot be undone.`)) return;
+      if (!confirm(`Delete customer "${c ? c.name : id}"? You can restore it from Trash afterward if needed.`)) return;
 
       try {
         await fetch(API_CUSTOMERS_URL, {
@@ -1888,6 +1967,68 @@
         if (!tbody.children.length) filterCustomers();
       } catch (err) {
         alert('Failed to delete customer: ' + err.message);
+      }
+    }
+
+    // Trash - deleted (including merged-away) customers stay recoverable
+    // here until explicitly purged. See customers.js's deleted_at column.
+    async function openCustomerTrash() {
+      const modal = document.getElementById('customer-trash-modal');
+      const tbody = document.getElementById('customer-trash-body');
+      tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      modal.classList.remove('hidden');
+
+      try {
+        const res = await fetch(API_CUSTOMERS_URL + '?trash=1', { cache: 'no-store' });
+        const trashed = res.ok ? await res.json() : [];
+        if (!trashed.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing in the trash.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = trashed.map((c) => `
+          <tr>
+            <td class="p-2 font-medium text-slate-900">${escapeHtml(c.name)}</td>
+            <td class="p-2 text-slate-600">${escapeHtml(c.company) || '-'}</td>
+            <td class="p-2 text-xs text-slate-500">${escapeHtml([c.email, c.phone].filter(Boolean).join(' · ')) || '-'}</td>
+            <td class="p-2 text-xs text-slate-500">${escapeHtml(ukDate(c.deleted_at))}</td>
+            <td class="p-2 text-right space-x-2 whitespace-nowrap">
+              <button type="button" onclick="restoreCustomerFromTrash('${escapeAttr(c.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">Restore</button>
+              <button type="button" onclick="permanentlyDeleteCustomer('${escapeAttr(c.id)}', '${escapeAttr(c.name)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-3 py-1 rounded text-xs font-semibold shadow-sm">Delete forever</button>
+            </td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-500 text-sm">Could not load the trash.</td></tr>';
+      }
+    }
+
+    function closeCustomerTrash() {
+      document.getElementById('customer-trash-modal').classList.add('hidden');
+    }
+
+    async function restoreCustomerFromTrash(id) {
+      try {
+        await fetch(API_CUSTOMERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, restore: true }),
+        });
+        openCustomerTrash();
+        loadCustomers();
+      } catch (e) {
+        alert('Could not restore: ' + e.message);
+      }
+    }
+
+    async function permanentlyDeleteCustomer(id, name) {
+      if (!confirm(`Permanently delete "${name}"? This cannot be undone - there is no further recovery after this.`)) return;
+      try {
+        await fetch(API_CUSTOMERS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, permanent: true }),
+        });
+        openCustomerTrash();
+      } catch (e) {
+        alert('Could not delete: ' + e.message);
       }
     }
 
@@ -2080,6 +2221,10 @@
 
     function money(n) {
       return n === null || n === undefined || n === '' ? '-' : '£' + Number(n).toFixed(2);
+    }
+
+    function round2(n) {
+      return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
     }
 
     // Groups a flat list of customer-catalog product rows by title (Square's
