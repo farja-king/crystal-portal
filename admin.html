@@ -666,8 +666,8 @@
           </div>
           <div class="text-2xl font-bold text-slate-900">Total: <span id="ord-total">£0.00</span></div>
           <div class="flex gap-2">
-            <button id="ord-cancel-edit-btn" onclick="cancelOrderEdit()" class="hidden bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
-              Cancel Edit
+            <button id="ord-cancel-edit-btn" onclick="cancelOrderEdit()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+              Cancel
             </button>
             <button id="ord-save-btn" onclick="saveOrder()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
               💾 Save as Quote
@@ -4188,7 +4188,7 @@
       document.getElementById('ord-status').value = o.status || 'draft';
       document.getElementById('ord-status-field').classList.remove('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Update ' + (o.doc_type === 'invoice' ? 'Invoice' : 'Quote');
-      document.getElementById('ord-cancel-edit-btn').classList.remove('hidden');
+      document.getElementById('ord-cancel-edit-btn').textContent = 'Cancel Edit';
       document.getElementById('ord-save-msg').textContent = '';
 
       renderOrderLines();
@@ -4220,7 +4220,7 @@
       orderLineAddFormOpen = new Set();
       document.getElementById('ord-status-field').classList.add('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Save as Quote';
-      document.getElementById('ord-cancel-edit-btn').classList.add('hidden');
+      document.getElementById('ord-cancel-edit-btn').textContent = 'Cancel';
       document.getElementById('ord-save-msg').textContent = '';
       renderOrderLines();
     }
