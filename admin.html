@@ -252,6 +252,28 @@
           <span class="block font-medium text-slate-700 mb-1">Notes</span>
           <textarea id="edit-notes" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 min-h-20"></textarea>
         </label>
+
+        <!-- Normally only ever set by a Square customer import or a merge
+             (see performMergeCustomers) - exposed here so a wrong or
+             missing figure (e.g. from a merge that happened before that
+             combined activity correctly) can be corrected by hand against
+             Square's own dashboard, which is the real source of truth. -->
+        <div class="grid gap-4 md:grid-cols-3 mt-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Lifetime spend (£)</span>
+            <input id="edit-lifetime-spend" type="number" step="0.01" min="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Transaction count</span>
+            <input id="edit-transaction-count" type="number" step="1" min="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Last visit</span>
+            <input id="edit-last-visit" type="date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <p class="text-xs text-slate-500 md:col-span-3">Square activity - normally set by importing a Square export or merging a duplicate. Only change this by hand to correct a figure against what Square itself shows.</p>
+        </div>
+
         <div class="mt-4 flex gap-3">
           <button onclick="saveCustomerEdit()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             Save Changes
@@ -1900,6 +1922,9 @@
       document.getElementById('edit-county').value = c.county || '';
       document.getElementById('edit-postcode').value = c.postcode || '';
       document.getElementById('edit-notes').value = c.notes || '';
+      document.getElementById('edit-lifetime-spend').value = c.lifetime_spend || 0;
+      document.getElementById('edit-transaction-count').value = c.transaction_count || 0;
+      document.getElementById('edit-last-visit').value = (c.last_visit || '').slice(0, 10);
       document.getElementById('customer-edit-form').classList.remove('hidden');
       document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
@@ -1931,6 +1956,9 @@
             county: document.getElementById('edit-county').value,
             postcode: document.getElementById('edit-postcode').value,
             notes: document.getElementById('edit-notes').value,
+            lifetime_spend: Number(document.getElementById('edit-lifetime-spend').value) || 0,
+            transaction_count: parseInt(document.getElementById('edit-transaction-count').value, 10) || 0,
+            last_visit: document.getElementById('edit-last-visit').value,
           })
         });
         closeCustomerEditForm();
