@@ -281,6 +281,9 @@
           <p class="text-slate-500 text-sm">Supplier cost prices, your sell price, and the profit between them.</p>
         </div>
         <div class="flex items-center gap-2">
+          <button onclick="toggleAddProductForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            + Add Product
+          </button>
           <button id="cat-sync-btn" onclick="syncPricesFromWebsite()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🌐 Sync Prices from Website
           </button>
@@ -290,6 +293,32 @@
         </div>
       </div>
       <p id="cat-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
+
+      <!-- Manual one-off product/service - everything else in this tab is a
+           bulk supplier import; this is for "I need to add just this one
+           thing" without building a CSV for it. Always goes into the shared
+           catalog (customer_id NULL), so it's searchable from any quote for
+           any customer, same as a supplier-imported product. -->
+      <div id="cat-add-product-form" class="hidden grid gap-2 md:grid-cols-4 mb-6 bg-slate-50 border border-slate-200 rounded-lg p-4">
+        <input id="cat-add-title" placeholder="Title / description *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
+        <input id="cat-add-code" placeholder="Code / SKU" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="cat-add-category" placeholder="Category" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="cat-add-colour" placeholder="Colour (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="cat-add-size" placeholder="Size (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <label class="text-sm">
+          <span class="block text-xs text-slate-500 mb-1">Cost price</span>
+          <input id="cat-add-cost" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        </label>
+        <label class="text-sm">
+          <span class="block text-xs text-slate-500 mb-1">Sell price</span>
+          <input id="cat-add-sell" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        </label>
+        <div class="flex gap-2 md:col-span-2">
+          <button type="button" onclick="saveNewCatalogProduct()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Save</button>
+          <button type="button" onclick="toggleAddProductForm()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Cancel</button>
+        </div>
+        <p id="cat-add-msg" class="text-xs text-red-600 md:col-span-4"></p>
+      </div>
 
       <!-- Three compact action boxes: import colours/sizes (PenCarrie CSV),
            import UNEEK (stub - not built yet), bulk pricing. -->
@@ -1908,6 +1937,62 @@
       } catch (e) {}
     }
 
+    function toggleAddProductForm() {
+      const panel = document.getElementById('cat-add-product-form');
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        ['cat-add-title', 'cat-add-code', 'cat-add-category', 'cat-add-colour', 'cat-add-size', 'cat-add-cost', 'cat-add-sell'].forEach((id) => {
+          document.getElementById(id).value = '';
+        });
+        document.getElementById('cat-add-msg').textContent = '';
+        document.getElementById('cat-add-title').focus();
+      }
+    }
+
+    // A manual one-off - unlike the CSV imports, there's no supplier price
+    // list backing it, so both cost and sell are whatever's typed here
+    // (both optional; profit only shows once both are set). customer_id is
+    // deliberately left unset - this is the shared catalog, not one
+    // customer's price list (see saveManualCatalogItem for that version).
+    async function saveNewCatalogProduct() {
+      const msg = document.getElementById('cat-add-msg');
+      const title = document.getElementById('cat-add-title').value.trim();
+      if (!title) { msg.textContent = 'Title is required.'; return; }
+
+      const cost = Number(document.getElementById('cat-add-cost').value) || 0;
+      const sellRaw = document.getElementById('cat-add-sell').value;
+      const sell = sellRaw === '' ? null : Number(sellRaw);
+
+      msg.className = 'text-xs text-slate-500 md:col-span-4';
+      msg.textContent = 'Saving…';
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            supplier: 'Manual',
+            supplier_code: document.getElementById('cat-add-code').value.trim(),
+            title,
+            colour: document.getElementById('cat-add-colour').value.trim(),
+            size: document.getElementById('cat-add-size').value.trim(),
+            category: document.getElementById('cat-add-category').value.trim(),
+            cost_price: cost,
+            sell_price: sell,
+            vat_rate: 0.2,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        toggleAddProductForm();
+        loadCatalog(0);
+        loadFacets();
+      } catch (e) {
+        msg.className = 'text-xs text-red-600 md:col-span-4';
+        msg.textContent = 'Could not save: ' + e.message;
+      }
+    }
+
     async function loadCatalog(offset) {
       catalogLoaded = true;
       catalogOffset = Math.max(0, offset || 0);
@@ -2553,6 +2638,11 @@
     // once the line's search box narrows things down. See
     // renderCustomerItemPicker / CUSTOMER_ITEM_CHIP_THRESHOLD.
     let orderCustomerItemQuery = {};
+    // Line indexes currently showing the inline "add new product/service"
+    // form - lets Martin create a brand-new item without leaving the quote,
+    // either tied to the selected customer's own price list or added to the
+    // shared Garment Catalog, then adds it straight onto that line.
+    let orderLineAddFormOpen = new Set();
 
     // Martin's fixed embroidery pricing rules - see PLACEMENT_LABELS for the
     // options this drives. Returns null (no default) for anything outside
@@ -2655,6 +2745,7 @@
       orderCustomerName = c ? c.name : '';
       orderLineOpenVariantPicker = null;
       orderCustomerItemQuery = {};
+      orderLineAddFormOpen = new Set();
       if (c) {
         try {
           const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(c.id) + '&limit=2000', { cache: 'no-store' });
@@ -2729,6 +2820,7 @@
       orderLines.splice(idx, 1);
       orderLineOpenVariantPicker = null;
       orderCustomerItemQuery = {};
+      orderLineAddFormOpen = new Set();
       renderOrderLines();
     }
 
@@ -2965,6 +3057,96 @@
       </div>`;
     }
 
+    function toggleOrderLineAddProduct(idx) {
+      if (orderLineAddFormOpen.has(idx)) orderLineAddFormOpen.delete(idx);
+      else orderLineAddFormOpen.add(idx);
+      renderOrderLines();
+      if (orderLineAddFormOpen.has(idx)) {
+        const input = document.getElementById('ord-add-title-' + idx);
+        if (input) input.focus();
+      }
+    }
+
+    // Collapsed to a plain link until clicked - always available regardless
+    // of whether a customer is selected, since "add to the shared Garment
+    // Catalog" needs no customer at all. When one *is* selected, a checkbox
+    // chooses between tying the new item to just that customer's price list
+    // (the common case - a one-off logo for a team not on file yet) or
+    // adding it to the shared catalog for any customer to use.
+    function renderOrderLineAddProduct(idx) {
+      if (!orderLineAddFormOpen.has(idx)) {
+        return `<button type="button" onclick="toggleOrderLineAddProduct(${idx})" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1.5">+ Add new product/service</button>`;
+      }
+      const hasCustomer = !!orderCustomerName;
+      return `<div class="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+        <div class="grid gap-2 md:grid-cols-2 mb-2">
+          <input id="ord-add-title-${idx}" placeholder="Title / description *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="ord-add-price-${idx}" type="number" step="0.01" min="0" placeholder="Price" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        </div>
+        ${hasCustomer ? `
+          <label class="flex items-center gap-2 text-xs text-slate-700 mb-2">
+            <input id="ord-add-scope-${idx}" type="checkbox" checked class="rounded border-slate-300" />
+            Save to ${escapeHtml(orderCustomerName)}'s price list only (untick to add to the shared Garment Catalog instead)
+          </label>` : `<p class="text-xs text-slate-500 mb-2">No customer selected - this goes into the shared Garment Catalog.</p>`}
+        <div class="flex gap-2">
+          <button type="button" onclick="saveOrderLineNewProduct(${idx})" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Save &amp; add to line</button>
+          <button type="button" onclick="toggleOrderLineAddProduct(${idx})" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold">Cancel</button>
+        </div>
+        <p id="ord-add-msg-${idx}" class="text-xs mt-1"></p>
+      </div>`;
+    }
+
+    async function saveOrderLineNewProduct(idx) {
+      const msg = document.getElementById('ord-add-msg-' + idx);
+      const title = document.getElementById('ord-add-title-' + idx).value.trim();
+      if (!title) { msg.className = 'text-xs text-red-600 mt-1'; msg.textContent = 'Title is required.'; return; }
+
+      const priceRaw = document.getElementById('ord-add-price-' + idx).value;
+      const price = priceRaw === '' ? null : Number(priceRaw);
+      const scopeCheckbox = document.getElementById('ord-add-scope-' + idx);
+      const customerId = document.getElementById('ord-customer').value;
+      const targetCustomerId = (scopeCheckbox && scopeCheckbox.checked && customerId) ? customerId : null;
+
+      msg.className = 'text-xs text-slate-500 mt-1';
+      msg.textContent = 'Saving…';
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            supplier: 'Manual',
+            title,
+            sell_price: price,
+            vat_rate: 0.2,
+            customer_id: targetCustomerId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        orderLineAddFormOpen.delete(idx);
+        Object.assign(orderLines[idx], {
+          product_id: data.id, supplier_code: '', title,
+          colour: '', size: '', unit_price: Number(price) || 0,
+          breakdown: [{ colour: '', size: '', qty: 1 }],
+          colourOptions: [], sizeOptions: [],
+          customer_item: !!targetCustomerId,
+        });
+
+        if (targetCustomerId) {
+          // Refetches this customer's saved items so the new one is also
+          // available as a quick-pick on any other line right away, and
+          // re-renders using the orderLines update above.
+          await refreshOrderCustomerItems();
+        } else {
+          renderOrderLines();
+        }
+      } catch (e) {
+        msg.className = 'text-xs text-red-600 mt-1';
+        msg.textContent = 'Could not save: ' + e.message;
+      }
+    }
+
     // Pulls available colours and sizes for this product code from the
     // available_colours and available_sizes fields (scraped from the website).
     // These are the primary source - they come directly from the website scraping.
@@ -3081,6 +3263,7 @@
                      <input id="ord-line-search-${idx}" oninput="searchOrderCatalog(${idx})" placeholder="Search catalog by code, title, colour…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
                      <div id="ord-line-results-${idx}" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-64 overflow-y-auto"></div>
                    </div>
+                   ${renderOrderLineAddProduct(idx)}
                  </div>`);
 
         // The catalog row picked above is often just a pricing tier ("All
@@ -3265,6 +3448,7 @@
           orderCustomerName = '';
           orderLineOpenVariantPicker = null;
           orderCustomerItemQuery = {};
+          orderLineAddFormOpen = new Set();
           renderOrderLines();
         }
         loadOrders();
@@ -3341,6 +3525,7 @@
       orderCustomerName = '';
       orderLineOpenVariantPicker = null;
       orderCustomerItemQuery = {};
+      orderLineAddFormOpen = new Set();
       document.getElementById('ord-status-field').classList.add('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Save as Quote';
       document.getElementById('ord-cancel-edit-btn').classList.add('hidden');
