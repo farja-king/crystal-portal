@@ -1656,7 +1656,12 @@
       }
     }
 
-    // Delete a customer from Cloudflare D1
+    // Delete a customer from Cloudflare D1. Removes just this one row from
+    // the DOM and the in-memory lists rather than reloading the whole
+    // directory - with a long list (a search result, or hundreds/thousands
+    // of customers), a full reload snapped the page back to the top and
+    // dropped whatever search filter was active, forcing a rescroll through
+    // everyone above the one just deleted to get back to where you were.
     async function deleteCustomerRow(id) {
       const c = customersById[id];
       if (!confirm(`Delete customer "${c ? c.name : id}"? This cannot be undone.`)) return;
@@ -1667,7 +1672,15 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id })
         });
-        loadCustomers();
+
+        delete customersById[id];
+        allCustomers = allCustomers.filter((cust) => cust.id !== id);
+
+        const tbody = document.getElementById('customers-table-body');
+        const btn = tbody.querySelector(`[data-action="delete-customer"][data-id="${CSS.escape(id)}"]`);
+        const row = btn ? btn.closest('tr') : null;
+        if (row) row.remove();
+        if (!tbody.children.length) filterCustomers();
       } catch (err) {
         alert('Failed to delete customer: ' + err.message);
       }
