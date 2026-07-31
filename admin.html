@@ -944,7 +944,7 @@
       tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">Fetching latest customers...</td></tr>';
 
       try {
-        const res = await fetch(API_CUSTOMERS_URL);
+        const res = await fetch(API_CUSTOMERS_URL, { cache: 'no-store' });
         const customers = await res.json();
 
         customersById = {};

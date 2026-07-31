@@ -7,6 +7,13 @@ export async function onRequest(context) {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",
+    // Without this, a GET to this same URL (always identical - no query
+    // params vary it) is fair game for the browser to serve straight from
+    // its HTTP cache instead of hitting the Worker - so a customer added or
+    // edited in one request could stay invisible to search/lookups in
+    // another that already has this URL cached (see the same fix in
+    // products.js, which hit the identical symptom for saved items).
+    "Cache-Control": "no-store",
   };
 
   if (request.method === "OPTIONS") {
