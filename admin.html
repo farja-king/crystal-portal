@@ -1131,6 +1131,7 @@
       cvCatalogCustomerId = null;
       cvCatalogItems = [];
       cvCatalogExpanded = new Set();
+      cvEditingNameIds = new Set();
     }
 
     // This customer's own price list (see the "Custom Price List" card in
@@ -1143,9 +1144,14 @@
     // - a Set (not just "last expanded") so several groups can be open at
     // once, and re-rendering after an inline edit doesn't collapse them.
     let cvCatalogExpanded = new Set();
+    // Product ids currently showing a rename input instead of plain text -
+    // for renaming a variation label (or a single-variant item's title)
+    // that came through blank/generic, e.g. "(unnamed variation)".
+    let cvEditingNameIds = new Set();
 
     async function loadCustomerCatalogItems(customerId) {
       cvCatalogCustomerId = customerId;
+      cvEditingNameIds = new Set();
       document.getElementById('cv-catalog-search').value = '';
       const tbody = document.getElementById('cv-catalog-body');
       tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
@@ -1203,9 +1209,30 @@
         return;
       }
 
+      const nameCell = (p, indent) => {
+        // Variation label for an indented row (see groupCatalogItemsByProduct),
+        // or the product's own title for a single-variant flat row - either
+        // way, the same rename control edits whichever field is showing.
+        const field = indent ? 'size' : 'title';
+        const label = indent ? p.size : p.title;
+        if (cvEditingNameIds.has(p.id)) {
+          return `<span class="inline-flex items-center gap-1">
+            <input id="cv-name-edit-${escapeAttr(p.id)}" value="${escapeAttr(label)}"
+                   onkeydown="if(event.key==='Enter'){saveCatalogItemName('${escapeAttr(p.id)}','${field}')} if(event.key==='Escape'){cancelEditCatalogItemName('${escapeAttr(p.id)}')}"
+                   class="rounded border border-indigo-300 px-2 py-1 text-sm w-40" />
+            <button type="button" onclick="saveCatalogItemName('${escapeAttr(p.id)}','${field}')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold">Save</button>
+            <button type="button" onclick="cancelEditCatalogItemName('${escapeAttr(p.id)}')" class="text-slate-400 hover:text-slate-600 text-xs">Cancel</button>
+          </span>`;
+        }
+        return `<span class="inline-flex items-center gap-2">
+          ${escapeHtml(label || '(unnamed variation)')}
+          <button type="button" onclick="startEditCatalogItemName('${escapeAttr(p.id)}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Edit</button>
+        </span>`;
+      };
+
       const variantRow = (p, indent) => `
         <tr>
-          <td class="p-2 text-slate-800 ${indent ? 'pl-6 text-slate-600' : ''}">${escapeHtml(indent ? (p.size || '(unnamed variation)') : p.title)}</td>
+          <td class="p-2 text-slate-800 ${indent ? 'pl-6 text-slate-600' : ''}">${nameCell(p, indent)}</td>
           <td class="p-2 text-slate-500">${escapeHtml(p.supplier_code)}</td>
           <td class="p-2 text-right">
             £<input type="number" step="0.01" min="0" value="${p.sell_price ?? ''}" onchange="updateCustomerCatalogItemPrice('${escapeAttr(p.id)}', this.value)" class="w-20 rounded border ${p.sell_price === null ? 'border-amber-400 bg-amber-50' : 'border-slate-300'} px-2 py-1 text-sm text-right" />
@@ -1242,6 +1269,36 @@
         const item = cvCatalogItems.find((p) => p.id === id);
         if (item) item.sell_price = price;
       } catch (e) {}
+    }
+
+    function startEditCatalogItemName(id) {
+      cvEditingNameIds.add(id);
+      renderCustomerCatalogItems();
+      const input = document.getElementById('cv-name-edit-' + id);
+      if (input) { input.focus(); input.select(); }
+    }
+
+    function cancelEditCatalogItemName(id) {
+      cvEditingNameIds.delete(id);
+      renderCustomerCatalogItems();
+    }
+
+    // field is 'size' for a variation label or 'title' for a single-variant
+    // item's own name (see nameCell in renderCustomerCatalogItems).
+    async function saveCatalogItemName(id, field) {
+      const input = document.getElementById('cv-name-edit-' + id);
+      if (!input) return;
+      const value = input.value.trim();
+      try {
+        await fetch(API_PRODUCTS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, [field]: value }),
+        });
+        const item = cvCatalogItems.find((p) => p.id === id);
+        if (item) item[field] = value;
+      } catch (e) {}
+      cvEditingNameIds.delete(id);
+      renderCustomerCatalogItems();
     }
 
     async function deleteCustomerCatalogItem(id) {
@@ -1335,6 +1392,19 @@
         }
 
         if (!productRows.length) throw new Error('No usable rows found - check this is the right file.');
+
+        // A blank/"Regular" variation only means "nothing to distinguish it
+        // by" when it's the product's *only* row - once siblings exist with
+        // real names ("PE", "Tag Line"), that same blank row is Square's
+        // base variation, which in practice is always the main/first logo.
+        // Left blank it would just show as "(unnamed variation)" next to
+        // clearly-labelled siblings, so it's backfilled here rather than
+        // making Martin rename the same thing by hand on every import.
+        const titleCounts = new Map();
+        for (const r of productRows) titleCounts.set(r.title, (titleCounts.get(r.title) || 0) + 1);
+        for (const r of productRows) {
+          if (!r.size && titleCounts.get(r.title) > 1) r.size = 'Main Logo';
+        }
 
         status.textContent = 'Parsed ' + productRows.length + ' item(s) across ' + productTitles.size + ' product(s). Uploading…';
         const res = await fetch(API_PRODUCTS_URL, {
