@@ -746,6 +746,21 @@
       return escapeHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    // For free-text values (product/team titles, etc.) passed as a
+    // single-quoted JS string argument inside an onclick="" attribute -
+    // escapeAttr doesn't work here because the browser HTML-decodes the
+    // attribute text (turning &#39; back into ') before treating it as JS
+    // source, re-breaking the string literal. encodeURIComponent doesn't
+    // work either - it deliberately leaves ' unescaped (it's in its
+    // "unreserved" set). Base64 has no quote/backslash characters at all,
+    // so it round-trips safely no matter what the text contains.
+    function toAttrToken(str) {
+      return btoa(unescape(encodeURIComponent(str)));
+    }
+    function fromAttrToken(token) {
+      return decodeURIComponent(escape(atob(token)));
+    }
+
     // Switch between Admin Tabs
     const ADMIN_TABS = ['quotes', 'customers', 'catalog', 'orders'];
     function switchTab(tab) {
@@ -1098,14 +1113,19 @@
       customerHistoryOrders = [];
       cvCatalogCustomerId = null;
       cvCatalogItems = [];
+      cvCatalogExpanded = new Set();
     }
 
     // This customer's own price list (see the "Custom Price List" card in
     // the view modal) - products.customer_id-tagged rows, kept separate
-    // from customerCatalogItems below (the quote builder's own copy of the
+    // from orderCustomerItems below (the quote builder's own copy of the
     // currently-selected order customer's items).
     let cvCatalogCustomerId = null;
     let cvCatalogItems = [];
+    // Product titles currently expanded to show their individual variations
+    // - a Set (not just "last expanded") so several groups can be open at
+    // once, and re-rendering after an inline edit doesn't collapse them.
+    let cvCatalogExpanded = new Set();
 
     async function loadCustomerCatalogItems(customerId) {
       cvCatalogCustomerId = customerId;
@@ -1124,24 +1144,54 @@
       renderCustomerCatalogItems();
     }
 
+    // Takes a toAttrToken()-encoded title, not escapeAttr'd - see toAttrToken
+    // for why (product/team names routinely contain apostrophes).
+    function toggleCatalogGroup(token) {
+      const title = fromAttrToken(token);
+      if (cvCatalogExpanded.has(title)) cvCatalogExpanded.delete(title);
+      else cvCatalogExpanded.add(title);
+      renderCustomerCatalogItems();
+    }
+
+    // One row per variant when a product has just one price (the common
+    // case - see groupCatalogItemsByProduct), otherwise a clickable header
+    // row ("Product Name  ·  4 variations  ·  £1.00 - £5.40") that expands
+    // into an indented row per variation - so a 434-row export (234 actual
+    // products) reads as ~234 scannable rows, not a wall of near-duplicates.
     function renderCustomerCatalogItems() {
       const tbody = document.getElementById('cv-catalog-body');
       if (!cvCatalogItems.length) {
         tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">No custom items imported yet.</td></tr>';
         return;
       }
-      tbody.innerHTML = cvCatalogItems.map((p) => `
+
+      const variantRow = (p, indent) => `
         <tr>
-          <td class="p-2 text-slate-800">${escapeHtml(p.title)}</td>
+          <td class="p-2 text-slate-800 ${indent ? 'pl-6 text-slate-600' : ''}">${escapeHtml(indent ? (p.size || '(unnamed variation)') : p.title)}</td>
           <td class="p-2 text-slate-500">${escapeHtml(p.supplier_code)}</td>
           <td class="p-2 text-right">
-            £<input type="number" step="0.01" min="0" value="${p.sell_price ?? ''}" onchange="updateCustomerCatalogItemPrice('${escapeAttr(p.id)}', this.value)" class="w-20 rounded border border-slate-300 px-2 py-1 text-sm text-right" />
+            £<input type="number" step="0.01" min="0" value="${p.sell_price ?? ''}" onchange="updateCustomerCatalogItemPrice('${escapeAttr(p.id)}', this.value)" class="w-20 rounded border ${p.sell_price === null ? 'border-amber-400 bg-amber-50' : 'border-slate-300'} px-2 py-1 text-sm text-right" />
           </td>
           <td class="p-2 text-right">
             <button type="button" onclick="deleteCustomerCatalogItem('${escapeAttr(p.id)}')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>
           </td>
-        </tr>
-      `).join('');
+        </tr>`;
+
+      const groups = groupCatalogItemsByProduct(cvCatalogItems);
+      tbody.innerHTML = groups.map((g) => {
+        if (g.variants.length === 1) return variantRow(g.variants[0], false);
+
+        const expanded = cvCatalogExpanded.has(g.title);
+        const header = `
+          <tr class="cursor-pointer hover:bg-slate-50" onclick="toggleCatalogGroup('${toAttrToken(g.title)}')">
+            <td class="p-2 font-medium text-slate-900">${expanded ? '▾' : '▸'} ${escapeHtml(g.title)}</td>
+            <td class="p-2 text-slate-500">${g.variants.length} variations</td>
+            <td class="p-2 text-right text-slate-600">${escapeHtml(catalogGroupPriceLabel(g.variants))}</td>
+            <td class="p-2"></td>
+          </tr>`;
+        const children = expanded ? g.variants.map((p) => variantRow(p, true)).join('') : '';
+        return header + children;
+      }).join('');
     }
 
     async function updateCustomerCatalogItemPrice(id, value) {
@@ -1165,14 +1215,23 @@
       renderCustomerCatalogItems();
     }
 
-    // Square's "Items" export - one row per item/variation, "Categories" is
-    // usually the customer's name/account (e.g. "Sloane Helicopters"), and
-    // "Price" is what's actually charged (no separate cost to track, unlike
-    // the supplier garment imports). id is derived from the Square Token
-    // (falling back to SKU/title) plus this customer, so re-importing the
-    // same export upserts rather than duplicates, and the sell_price
-    // protection in the products POST handler keeps any price Martin has
-    // since adjusted here from being overwritten by a re-import.
+    // Square's "Items" export - one row per item/variation. A single product
+    // (e.g. one school's badge) is usually several rows sharing the same
+    // "Item Name" but a different "Variation Name" per placement/combo
+    // ("Main Logo", "PE", "Main + Tag Line", each its own SKU and price) -
+    // that variation label is kept (in the "size" field - see
+    // groupCatalogItemsByProduct) so the grouped views can tell them apart,
+    // and dropped ("Regular"/blank means there's only ever one variation).
+    // "Categories" is usually the customer's name/account (e.g. "Sloane
+    // Helicopters"), and "Price" is what's actually charged (no separate
+    // cost to track, unlike the supplier garment imports) - a non-numeric
+    // price (Square allows "variable" for made-to-order pricing) still
+    // imports the item, just unpriced, rather than silently dropping it -
+    // Martin can fill it in from the price list once it's in. id is derived
+    // from the Square Token (falling back to SKU/title) plus this customer,
+    // so re-importing the same export upserts rather than duplicates, and
+    // the sell_price protection in the products POST handler keeps any price
+    // Martin has since adjusted here from being overwritten by a re-import.
     async function importCustomerCatalogCsv() {
       const input = document.getElementById('cv-catalog-csv-input');
       const status = document.getElementById('cv-catalog-csv-status');
@@ -1195,30 +1254,40 @@
         const priceIdx = header.indexOf('Price');
         if (nameIdx === -1 || priceIdx === -1) throw new Error('Missing "Item Name" or "Price" column - is this a Square item export?');
         const tokenIdx = header.indexOf('Token');
+        const variationIdx = header.indexOf('Variation Name');
         const skuIdx = header.indexOf('SKU');
         const categoryIdx = header.indexOf('Categories');
         const archivedIdx = header.indexOf('Archived');
 
         const productRows = [];
+        const productTitles = new Set();
         let skipped = 0;
+        let unpriced = 0;
         for (let i = 1; i < rows.length; i++) {
           const r = rows[i];
           if (!r.length || (r.length === 1 && !r[0].trim())) continue;
           const title = (r[nameIdx] || '').trim();
           if (!title) { skipped++; continue; }
           if (archivedIdx !== -1 && (r[archivedIdx] || '').trim().toUpperCase() === 'Y') { skipped++; continue; }
-          const price = Number(r[priceIdx]);
-          if (!isFinite(price)) { skipped++; continue; }
 
+          const priceRaw = (r[priceIdx] || '').trim();
+          const priceNum = Number(priceRaw);
+          const price = priceRaw !== '' && isFinite(priceNum) ? priceNum : null;
+          if (price === null) unpriced++;
+
+          const variationRaw = variationIdx !== -1 ? (r[variationIdx] || '').trim() : '';
+          const variation = variationRaw.toLowerCase() === 'regular' ? '' : variationRaw;
           const token = tokenIdx !== -1 ? (r[tokenIdx] || '').trim() : '';
           const sku = skuIdx !== -1 ? (r[skuIdx] || '').trim() : '';
           const category = categoryIdx !== -1 ? (r[categoryIdx] || '').trim() : '';
 
+          productTitles.add(title);
           productRows.push({
-            id: 'sq-' + slugify(token || sku || title) + '-' + slugify(cvCatalogCustomerId),
+            id: 'sq-' + slugify(token || sku || title + variation) + '-' + slugify(cvCatalogCustomerId),
             supplier: 'Square Import',
             supplier_code: sku,
             title,
+            size: variation,
             category,
             cost_price: 0,
             vat_rate: 0.2,
@@ -1229,14 +1298,16 @@
 
         if (!productRows.length) throw new Error('No usable rows found - check this is the right file.');
 
-        status.textContent = 'Parsed ' + productRows.length + ' item(s). Uploading…';
+        status.textContent = 'Parsed ' + productRows.length + ' item(s) across ' + productTitles.size + ' product(s). Uploading…';
         const res = await fetch(API_PRODUCTS_URL, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: productRows }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
 
-        status.textContent = 'Done: ' + data.imported + ' item(s) imported/updated' + (skipped ? ', ' + skipped + ' row(s) skipped.' : '.');
+        status.textContent = 'Done: ' + data.imported + ' item(s) across ' + productTitles.size + ' product(s) imported/updated' +
+          (unpriced ? ', ' + unpriced + ' with no price set (edit below to fill in)' : '') +
+          (skipped ? ', ' + skipped + ' row(s) skipped.' : '.');
         input.value = '';
         loadCustomerCatalogItems(cvCatalogCustomerId);
       } catch (e) {
@@ -1573,6 +1644,41 @@
 
     function money(n) {
       return n === null || n === undefined || n === '' ? '-' : '£' + Number(n).toFixed(2);
+    }
+
+    // Groups a flat list of customer-catalog product rows by title (Square's
+    // "Item Name") - a customer export has one row per *variation* (e.g. one
+    // school's badge priced separately per placement: "Main Logo", "PE",
+    // "Main + Tag Line"), so without this a 100+ line export would render as
+    // 100+ near-duplicate rows/chips instead of ~30 actual products. The
+    // variation label itself is stored in each row's "size" field (reused -
+    // there's no real garment size concept for these items). Sorted
+    // alphabetically by title, and within a group by variation, so re-renders
+    // (e.g. after an inline price edit) don't reshuffle the list.
+    function groupCatalogItemsByProduct(items) {
+      const map = new Map();
+      for (const p of items) {
+        const key = p.title || '';
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(p);
+      }
+      return [...map.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([title, variants]) => ({
+          title,
+          variants: variants.slice().sort((a, b) => (a.size || '').localeCompare(b.size || '')),
+        }));
+    }
+
+    // "£4.00" if every variant in the group is the same price, "£1.00 - £5.40"
+    // if they differ, "no price set" if none have one yet.
+    function catalogGroupPriceLabel(variants) {
+      const priced = variants.map((v) => v.sell_price).filter((v) => v !== null && v !== undefined);
+      if (!priced.length) return 'no price set';
+      const min = Math.min(...priced);
+      const max = Math.max(...priced);
+      const label = min === max ? money(min) : money(min) + ' - ' + money(max);
+      return priced.length < variants.length ? label + ' (' + (variants.length - priced.length) + ' unpriced)' : label;
     }
 
     // D1's CURRENT_TIMESTAMP comes back as "YYYY-MM-DD HH:MM:SS" - Martin
@@ -2246,6 +2352,12 @@
     // catalog line so their saved items don't need re-searching every quote.
     let orderCustomerItems = [];
     let orderCustomerName = '';
+    // Which line's variation picker is open, e.g. "3|BARTON SEAGRAVE" (line
+    // index + product title) - a product with several variations (see
+    // groupCatalogItemsByProduct) opens this instead of adding directly, so
+    // picking the wrong one isn't a "Change" click away. Only one open at a
+    // time, cleared whenever the lines re-render for any other reason.
+    let orderLineOpenVariantPicker = null;
 
     // Martin's fixed embroidery pricing rules - see PLACEMENT_LABELS for the
     // options this drives. Returns null (no default) for anything outside
@@ -2333,6 +2445,7 @@
 
       orderCustomerItems = [];
       orderCustomerName = c ? c.name : '';
+      orderLineOpenVariantPicker = null;
       if (c) {
         try {
           const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(c.id) + '&limit=200');
@@ -2398,12 +2511,14 @@
         breakdown: source === 'catalog' ? [{ colour: '', size: '', qty: 1 }] : [],
         colourOptions: [], sizeOptions: [],
         decorations: [],
+        customer_item: false,
       });
       renderOrderLines();
     }
 
     function removeOrderLine(idx) {
       orderLines.splice(idx, 1);
+      orderLineOpenVariantPicker = null;
       renderOrderLines();
     }
 
@@ -2526,18 +2641,32 @@
     }
 
     // Picking one of the selected customer's own saved items (see
-    // orderCustomerItems) - these are simple priced items (patches,
+    // orderCustomerItems) - these are simple priced items (patches, logos,
     // services) with no colour/size variants, so unlike selectOrderLineProduct
-    // there's no variant lookup to follow up with.
+    // there's no variant lookup to follow up with. The variation name (if
+    // any - see groupCatalogItemsByProduct) is folded into the displayed
+    // title so it's clear on the quote which one was picked, e.g.
+    // "BARTON SEAGRAVE - Main + Tag Line".
     function selectOrderLineCustomerItem(idx, id) {
       const p = orderCustomerItems.find((x) => x.id === id);
       if (!p) return;
       Object.assign(orderLines[idx], {
-        product_id: p.id, supplier_code: p.supplier_code, title: p.title,
-        colour: p.colour || '', size: p.size || '', unit_price: Number(p.sell_price) || 0,
+        product_id: p.id, supplier_code: p.supplier_code,
+        title: p.size ? (p.title + ' - ' + p.size) : p.title,
+        colour: '', size: '', unit_price: Number(p.sell_price) || 0,
         breakdown: [{ colour: '', size: '', qty: 1 }],
         colourOptions: [], sizeOptions: [],
+        customer_item: true,
       });
+      orderLineOpenVariantPicker = null;
+      renderOrderLines();
+    }
+
+    // token is toAttrToken()-encoded, not escapeAttr'd - see toAttrToken.
+    function toggleOrderLineVariantPicker(idx, token) {
+      const title = fromAttrToken(token);
+      const key = idx + '|' + title;
+      orderLineOpenVariantPicker = orderLineOpenVariantPicker === key ? null : key;
       renderOrderLines();
     }
 
@@ -2591,7 +2720,8 @@
     }
 
     function clearOrderLineProduct(idx) {
-      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1 }], colourOptions: [], sizeOptions: [] });
+      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1 }], colourOptions: [], sizeOptions: [], customer_item: false });
+      orderLineOpenVariantPicker = null;
       renderOrderLines();
     }
 
@@ -2641,7 +2771,9 @@
           ? `<input value="${escapeAttr(line.description)}" oninput="updateOrderLineDescription(${idx}, this.value)" placeholder="e.g. Customer's own polo shirt" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />`
           : (line.product_id
               ? `<div class="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 gap-2">
-                   <span class="text-sm flex-1"><span class="font-semibold">${escapeHtml(line.supplier_code)}</span> ${escapeHtml(line.title)} - ${escapeHtml(line.colour)} / ${escapeHtml(line.size)}</span>
+                   <span class="text-sm flex-1">${line.customer_item
+                     ? `<span class="font-semibold">${escapeHtml(line.title)}</span>${line.supplier_code ? ' <span class="text-slate-500">(' + escapeHtml(line.supplier_code) + ')</span>' : ''}`
+                     : `<span class="font-semibold">${escapeHtml(line.supplier_code)}</span> ${escapeHtml(line.title)} - ${escapeHtml(line.colour)} / ${escapeHtml(line.size)}`}</span>
                    <span class="flex items-center gap-1 text-sm text-slate-600 shrink-0">
                      £<input type="number" step="0.01" min="0" value="${line.unit_price || ''}" onchange="updateOrderLineUnitPrice(${idx}, this.value)" placeholder="0.00" title="Only applies to this quote - does not change the catalog price" class="w-20 rounded border ${line.unit_price ? 'border-slate-300' : 'border-amber-400 bg-amber-50'} px-2 py-1 text-sm text-right" /> each
                    </span>
@@ -2652,11 +2784,30 @@
                      <div class="mb-2">
                        <p class="text-xs font-medium text-slate-500 mb-1">${escapeHtml(orderCustomerName)}'s saved items</p>
                        <div class="flex flex-wrap gap-1.5">
-                         ${orderCustomerItems.map((p) => `
-                           <button type="button" onclick="selectOrderLineCustomerItem(${idx}, '${escapeAttr(p.id)}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-full px-3 py-1">
-                             ${escapeHtml(p.title)}${p.sell_price !== null ? ' · ' + money(p.sell_price) : ''}
-                           </button>
-                         `).join('')}
+                         ${groupCatalogItemsByProduct(orderCustomerItems).map((g) => {
+                           if (g.variants.length === 1) {
+                             const p = g.variants[0];
+                             return `<button type="button" onclick="selectOrderLineCustomerItem(${idx}, '${escapeAttr(p.id)}')" class="text-xs bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-full px-3 py-1">
+                               ${escapeHtml(p.title)} · ${escapeHtml(money(p.sell_price))}
+                             </button>`;
+                           }
+                           const pickerKey = idx + '|' + g.title;
+                           const isOpen = orderLineOpenVariantPicker === pickerKey;
+                           return `<span class="relative inline-block">
+                             <button type="button" onclick="toggleOrderLineVariantPicker(${idx}, '${toAttrToken(g.title)}')" class="text-xs ${isOpen ? 'bg-indigo-100' : 'bg-indigo-50 hover:bg-indigo-100'} border border-indigo-200 text-indigo-800 rounded-full px-3 py-1">
+                               ${escapeHtml(g.title)} <span class="text-indigo-500">(${g.variants.length})</span>
+                             </button>
+                             ${isOpen ? `
+                               <div class="absolute z-20 left-0 top-full mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                                 ${g.variants.map((p) => `
+                                   <button type="button" onclick="selectOrderLineCustomerItem(${idx}, '${escapeAttr(p.id)}')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm border-b border-slate-100 last:border-0">
+                                     ${escapeHtml(p.size || '(unnamed variation)')}
+                                     <span class="float-right text-slate-500">${escapeHtml(money(p.sell_price))}</span>
+                                   </button>
+                                 `).join('')}
+                               </div>` : ''}
+                           </span>`;
+                         }).join('')}
                        </div>
                      </div>` : ''}
                    <div class="relative">
@@ -2668,7 +2819,13 @@
         // The catalog row picked above is often just a pricing tier ("All
         // Colours" / "XS - XXL"), not one physical garment, so once it's
         // selected the actual colour/size/qty per unit gets itemized here.
-        const breakdownBlock = (!isCustomerSupplied && line.product_id) ? `
+        // A customer's own saved item (line.customer_item) has no colour/size
+        // concept at all - just a qty, so it skips this grid entirely.
+        const breakdownBlock = (!isCustomerSupplied && line.product_id && line.customer_item) ? `
+          <div class="mt-2 flex items-center gap-2">
+            <span class="text-xs text-slate-500 font-medium">Qty</span>
+            <input type="number" min="1" value="${line.breakdown[0] ? line.breakdown[0].qty : 1}" oninput="updateBreakdownQtyLive(${idx}, 0, this.value)" class="w-20 rounded border border-slate-300 px-2 py-1 text-sm" />
+          </div>` : (!isCustomerSupplied && line.product_id) ? `
           <div class="mt-2 space-y-1.5">
             <div class="flex items-center gap-2 text-xs text-slate-500 font-medium px-1">
               <span class="w-32">Colour</span><span class="w-[120px]">Size</span><span class="w-16">Qty</span><span class="w-5"></span>
@@ -2803,7 +2960,7 @@
         items: orderLines.map((l) => ({
           source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
           title: l.title, colour: l.colour, size: l.size, description: l.description,
-          qty: l.qty, unit_price: l.unit_price,
+          qty: l.qty, unit_price: l.unit_price, customer_item: !!l.customer_item,
           breakdown: l.breakdown ? l.breakdown.map((b) => ({ colour: b.colour, size: b.size, qty: b.qty })) : [],
           decorations: l.decorations.map((d) => ({ method: d.method, placement: d.placement, price: d.price, qty: d.qty, notes: d.notes })),
         })),
@@ -2839,6 +2996,7 @@
           document.getElementById('ord-discount-flat').value = 0;
           orderCustomerItems = [];
           orderCustomerName = '';
+          orderLineOpenVariantPicker = null;
           renderOrderLines();
         }
         loadOrders();
@@ -2872,6 +3030,7 @@
         decorations: (item.decorations || []).map((d) => ({
           method: d.method, placement: d.placement, price: d.price, qty: d.qty || 1, notes: d.notes || '',
         })),
+        customer_item: !!item.customer_item,
       }));
 
       const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
@@ -2912,6 +3071,7 @@
       document.getElementById('ord-notes').value = '';
       orderCustomerItems = [];
       orderCustomerName = '';
+      orderLineOpenVariantPicker = null;
       document.getElementById('ord-status-field').classList.add('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Save as Quote';
       document.getElementById('ord-cancel-edit-btn').classList.add('hidden');
@@ -3002,7 +3162,10 @@
         const baseLabel = item.source === 'catalog'
           ? `${escapeHtml(item.supplier_code || '')} ${escapeHtml(item.title || '')}`
           : escapeHtml(item.description || "Customer's own garment");
-        const breakdownLines = (item.breakdown && item.breakdown.length)
+        // A customer's own saved item (see products.customer_id) has no
+        // colour/size - the breakdown row only ever carries its qty, so
+        // showing it here would just be a redundant "- / - × 1".
+        const breakdownLines = (item.breakdown && item.breakdown.length && !item.customer_item)
           ? item.breakdown.map((b) => `<div class="text-xs text-slate-500">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}</div>`).join('')
           : '';
         const decLines = item.decorations.map((d) => {
@@ -3110,8 +3273,9 @@
           : escapeHtml(item.description || "Customer's own garment");
         // Itemized colour/size/qty per unit - the catalog row itself is
         // often just a pricing tier ("All Colours" / "XS - XXL"), not what
-        // was actually cut and packed.
-        const breakdownLines = (item.breakdown && item.breakdown.length)
+        // was actually cut and packed. Skipped for a customer's own saved
+        // item (no colour/size concept - see admin.html's other breakdownLines).
+        const breakdownLines = (item.breakdown && item.breakdown.length && !item.customer_item)
           ? item.breakdown.map((b) => `<div class="dec">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}</div>`).join('')
           : '';
         const decLines = item.decorations.map((d) => {

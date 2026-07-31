@@ -73,6 +73,12 @@ export async function onRequest(context) {
         breakdown,
         decorations,
         line_total: lineTotal,
+        // Marks a line picked from a customer's own saved price list (see
+        // products.customer_id) rather than the shared garment catalog -
+        // carried through so re-opening this quote in the builder renders
+        // the simple qty-only line it started as, not a garment colour/size
+        // grid that was never meaningful for it.
+        customer_item: !!item.customer_item,
       };
     });
 
