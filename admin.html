@@ -395,11 +395,19 @@
         <input id="cat-add-size" placeholder="Size (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         <label class="text-sm">
           <span class="block text-xs text-slate-500 mb-1">Cost price</span>
-          <input id="cat-add-cost" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="cat-add-cost" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('cat-add-cost', 'cat-add-sell', 'cat-add-vat', 'cat-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        </label>
+        <label class="text-sm">
+          <span class="block text-xs text-slate-500 mb-1">VAT (20%, not reclaimable)</span>
+          <div id="cat-add-vat" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-500 text-sm">£0.00</div>
         </label>
         <label class="text-sm">
           <span class="block text-xs text-slate-500 mb-1">Sell price</span>
-          <input id="cat-add-sell" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="cat-add-sell" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('cat-add-cost', 'cat-add-sell', 'cat-add-vat', 'cat-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        </label>
+        <label class="text-sm">
+          <span class="block text-xs text-slate-500 mb-1">Profit</span>
+          <div id="cat-add-profit" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400 text-sm font-semibold">-</div>
         </label>
         <div class="flex gap-2 md:col-span-2">
           <button type="button" onclick="saveNewCatalogProduct()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Save</button>
@@ -540,10 +548,11 @@
               <th class="p-3 text-right">Sale Price</th>
               <th class="p-3 text-right">Profit</th>
               <th class="p-3 text-right">Margin</th>
+              <th class="p-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody id="catalog-table-body" class="divide-y divide-slate-100 text-sm">
-            <tr><td colspan="9" class="p-8 text-center text-slate-400">Loading catalog…</td></tr>
+            <tr><td colspan="10" class="p-8 text-center text-slate-400">Loading catalog…</td></tr>
           </tbody>
         </table>
       </div>
@@ -765,11 +774,19 @@
           <input id="cv-add-item-size" placeholder="Size (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
           <label class="text-sm">
             <span class="block text-xs text-slate-500 mb-1">Cost price</span>
-            <input id="cv-add-item-cost" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+            <input id="cv-add-item-cost" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('cv-add-item-cost', 'cv-add-item-price', 'cv-add-item-vat', 'cv-add-item-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          </label>
+          <label class="text-sm">
+            <span class="block text-xs text-slate-500 mb-1">VAT (20%, not reclaimable)</span>
+            <div id="cv-add-item-vat" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-500 text-sm">£0.00</div>
           </label>
           <label class="text-sm">
             <span class="block text-xs text-slate-500 mb-1">Sell price</span>
-            <input id="cv-add-item-price" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+            <input id="cv-add-item-price" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('cv-add-item-cost', 'cv-add-item-price', 'cv-add-item-vat', 'cv-add-item-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          </label>
+          <label class="text-sm">
+            <span class="block text-xs text-slate-500 mb-1">Profit</span>
+            <div id="cv-add-item-profit" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400 text-sm font-semibold">-</div>
           </label>
           <div class="flex gap-2 md:col-span-2">
             <button type="button" onclick="saveManualCatalogItem()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Save</button>
@@ -1805,6 +1822,9 @@
         ['cv-add-item-title', 'cv-add-item-sku', 'cv-add-item-category', 'cv-add-item-colour', 'cv-add-item-size', 'cv-add-item-cost', 'cv-add-item-price'].forEach((id) => {
           document.getElementById(id).value = '';
         });
+        document.getElementById('cv-add-item-vat').textContent = '£0.00';
+        document.getElementById('cv-add-item-profit').textContent = '-';
+        document.getElementById('cv-add-item-profit').classList.remove('text-red-600', 'text-emerald-600');
         document.getElementById('cv-add-item-msg').textContent = '';
         document.getElementById('cv-add-item-title').focus();
       }
@@ -2224,6 +2244,9 @@
     // Codes the user has expanded, so re-renders (e.g. after saving a price)
     // don't snap a group shut while they're still working in it.
     let expandedCatalogGroups = new Set();
+    // Product rows currently showing their inline edit inputs (Code/Title/
+    // Colour/Size/Cost) instead of plain text - see renderCatalogGroups.
+    let catalogEditingIds = new Set();
 
     function styleCatalogViewButtons() {
       document.querySelectorAll('.cat-view-btn').forEach((btn) => {
@@ -2264,6 +2287,29 @@
 
     function round2(n) {
       return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+    }
+
+    // Live VAT/profit preview on an "add product" form as cost/sell are
+    // typed - same formula as the catalog table itself (VAT = cost x 20%,
+    // not reclaimable since not VAT-registered; profit = sell - (cost + VAT)).
+    // Shared by the Garment Catalog, Custom Price List, and quote-line
+    // add-product forms - see cat-add-cost/cv-add-item-cost/ord-add-cost-N.
+    function recalcAddFormVat(costId, sellId, vatElId, profitElId) {
+      const cost = Number(document.getElementById(costId).value) || 0;
+      const vat = cost * 0.2;
+      document.getElementById(vatElId).textContent = money(vat);
+
+      const sellRaw = document.getElementById(sellId).value;
+      const profitEl = document.getElementById(profitElId);
+      if (sellRaw === '') {
+        profitEl.textContent = '-';
+        profitEl.classList.remove('text-red-600', 'text-emerald-600');
+        return;
+      }
+      const profit = Number(sellRaw) - (cost + vat);
+      profitEl.textContent = money(profit);
+      profitEl.classList.toggle('text-red-600', profit < 0);
+      profitEl.classList.toggle('text-emerald-600', profit >= 0);
     }
 
     // Groups a flat list of customer-catalog product rows by title (Square's
@@ -2346,6 +2392,9 @@
         ['cat-add-title', 'cat-add-code', 'cat-add-category', 'cat-add-colour', 'cat-add-size', 'cat-add-cost', 'cat-add-sell'].forEach((id) => {
           document.getElementById(id).value = '';
         });
+        document.getElementById('cat-add-vat').textContent = '£0.00';
+        document.getElementById('cat-add-profit').textContent = '-';
+        document.getElementById('cat-add-profit').classList.remove('text-red-600', 'text-emerald-600');
         document.getElementById('cat-add-msg').textContent = '';
         document.getElementById('cat-add-title').focus();
       }
@@ -2712,12 +2761,14 @@
     // variant rows nested underneath (hidden unless that code is in
     // expandedCatalogGroups) - keeps 6k+ rows from turning into a giant
     // scroll of near-duplicate colour/size lines for the same garment.
+    let lastCatalogGroups = [];
     function renderCatalogGroups(groups) {
+      lastCatalogGroups = groups;
       const tbody = document.getElementById('catalog-table-body');
       document.getElementById('cat-stat-matching').textContent = catalogVariantTotal.toLocaleString();
 
       if (!groups.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">No products match these filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-slate-400">No products match these filters.</td></tr>';
       } else {
         tbody.innerHTML = groups.map((g) => {
           const variants = g.variants || [];
@@ -2733,7 +2784,7 @@
                 ${g.brand ? '<span class="text-xs text-slate-400 ml-2">' + escapeHtml(g.brand) + '</span>' : ''}
               </td>
               <td class="p-3 text-right text-xs text-slate-500" colspan="2">${variants.length} variant${variants.length === 1 ? '' : 's'}</td>
-              <td class="p-3 text-right text-xs text-slate-500" colspan="3">${pricedCount} priced</td>
+              <td class="p-3 text-right text-xs text-slate-500" colspan="4">${pricedCount} priced</td>
             </tr>`;
 
           const detailRows = variants.map((p) => {
@@ -2747,6 +2798,24 @@
             const profitClass = profit === null ? 'text-slate-400' : (profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold');
             const sur = p.surcharge_category
               ? ' <span class="text-xs text-slate-400">(' + escapeHtml(p.surcharge_category) + ')</span>' : '';
+
+            if (catalogEditingIds.has(p.id)) {
+              return '<tr class="bg-indigo-50/40 ' + (isOpen ? '' : 'hidden') + '" data-group-row="' + escapeAttr(g.supplier_code) + '">' +
+                '<td class="p-2"><input id="cat-edit-code-' + escapeAttr(p.id) + '" value="' + escapeAttr(p.supplier_code) + '" class="w-24 rounded border border-slate-300 px-2 py-1 text-xs" /></td>' +
+                '<td class="p-2"><input id="cat-edit-title-' + escapeAttr(p.id) + '" value="' + escapeAttr(p.title) + '" class="w-full rounded border border-slate-300 px-2 py-1 text-sm" /></td>' +
+                '<td class="p-2"><input id="cat-edit-colour-' + escapeAttr(p.id) + '" value="' + escapeAttr(p.colour) + '" class="w-20 rounded border border-slate-300 px-2 py-1 text-xs" /></td>' +
+                '<td class="p-2"><input id="cat-edit-size-' + escapeAttr(p.id) + '" value="' + escapeAttr(p.size) + '" class="w-16 rounded border border-slate-300 px-2 py-1 text-xs" /></td>' +
+                '<td class="p-2"><input id="cat-edit-cost-' + escapeAttr(p.id) + '" type="number" step="0.01" min="0" value="' + cost + '" class="w-20 text-right rounded border border-slate-300 px-2 py-1" /></td>' +
+                '<td class="p-2 text-right text-xs text-slate-400">auto</td>' +
+                '<td class="p-2 text-right"><input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" data-sell-id="' + escapeAttr(p.id) + '" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
+                '<td class="p-2 text-right text-xs text-slate-400">auto</td>' +
+                '<td class="p-2 text-right text-xs text-slate-400">auto</td>' +
+                '<td class="p-2 text-right whitespace-nowrap">' +
+                  '<button type="button" onclick="saveCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold mr-2">Save</button>' +
+                  '<button type="button" onclick="cancelCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-slate-400 hover:text-slate-600 text-xs">Cancel</button>' +
+                '</td>' +
+              '</tr>';
+            }
 
             return '<tr class="hover:bg-slate-50 ' + (isOpen ? '' : 'hidden') + '" data-group-row="' + escapeAttr(g.supplier_code) + '">' +
               '<td class="p-3 font-mono text-xs text-slate-700">' + escapeHtml(p.supplier_code) +
@@ -2763,6 +2832,10 @@
                 'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
               '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '-' : money(profit)) + '</td>' +
               '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
+              '<td class="p-3 text-right whitespace-nowrap">' +
+                '<button type="button" onclick="startCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">Edit</button>' +
+                '<button type="button" onclick="deleteCatalogProduct(\'' + escapeAttr(p.id) + '\')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>' +
+              '</td>' +
             '</tr>';
           }).join('');
 
@@ -2832,6 +2905,55 @@
         alert('Could not save that sell price: ' + e.message);
       } finally {
         input.disabled = false;
+      }
+    }
+
+    function startCatalogRowEdit(id) {
+      catalogEditingIds.add(id);
+      renderCatalogGroups(lastCatalogGroups);
+    }
+
+    function cancelCatalogRowEdit(id) {
+      catalogEditingIds.delete(id);
+      renderCatalogGroups(lastCatalogGroups);
+    }
+
+    async function saveCatalogRowEdit(id) {
+      const code = document.getElementById('cat-edit-code-' + id).value.trim();
+      const title = document.getElementById('cat-edit-title-' + id).value.trim();
+      const colour = document.getElementById('cat-edit-colour-' + id).value.trim();
+      const size = document.getElementById('cat-edit-size-' + id).value.trim();
+      const cost = Number(document.getElementById('cat-edit-cost-' + id).value) || 0;
+      const sellInput = document.querySelector('[data-sell-id="' + id + '"]');
+      const sellRaw = sellInput ? sellInput.value.trim() : '';
+
+      try {
+        await fetch(API_PRODUCTS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id, supplier_code: code, title, colour, size, cost_price: cost,
+            sell_price: sellRaw === '' ? '' : Number(sellRaw),
+          }),
+        });
+        catalogEditingIds.delete(id);
+        await loadCatalog(catalogOffset);
+        loadFacets();
+      } catch (e) {
+        alert('Could not save changes: ' + e.message);
+      }
+    }
+
+    async function deleteCatalogProduct(id) {
+      const ok = await confirmModal('Delete this product from the catalog? This cannot be undone.');
+      if (!ok) return;
+      try {
+        await fetch(API_PRODUCTS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+        });
+        await loadCatalog(catalogOffset);
+        loadFacets();
+      } catch (e) {
+        alert('Could not delete: ' + e.message);
       }
     }
 
@@ -3546,11 +3668,19 @@
           <input id="ord-add-size-${idx}" placeholder="Size (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
           <label class="text-sm">
             <span class="block text-xs text-slate-500 mb-1">Cost price</span>
-            <input id="ord-add-cost-${idx}" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+            <input id="ord-add-cost-${idx}" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('ord-add-cost-${idx}', 'ord-add-price-${idx}', 'ord-add-vat-${idx}', 'ord-add-profit-${idx}')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          </label>
+          <label class="text-sm">
+            <span class="block text-xs text-slate-500 mb-1">VAT (20%, not reclaimable)</span>
+            <div id="ord-add-vat-${idx}" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-500 text-sm">£0.00</div>
           </label>
           <label class="text-sm">
             <span class="block text-xs text-slate-500 mb-1">Sell price</span>
-            <input id="ord-add-price-${idx}" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+            <input id="ord-add-price-${idx}" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('ord-add-cost-${idx}', 'ord-add-price-${idx}', 'ord-add-vat-${idx}', 'ord-add-profit-${idx}')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          </label>
+          <label class="text-sm">
+            <span class="block text-xs text-slate-500 mb-1">Profit</span>
+            <div id="ord-add-profit-${idx}" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400 text-sm font-semibold">-</div>
           </label>
         </div>
         ${hasCustomer ? `
@@ -3725,26 +3855,34 @@
       container.innerHTML = orderLines.map((line, idx) => {
         const isCustomerSupplied = line.source === 'customer_supplied';
 
+        // The actual product/service picker (search the shared catalog,
+        // this customer's own saved items, or create a new one) - used both
+        // as the primary "what garment is this line" picker for a catalog
+        // line, and as an optional add-on on a customer-supplied line (e.g.
+        // attaching a "Design setup" service that lives in the catalog but
+        // isn't itself a garment we supply). See productBlock below.
+        const productPickerBlock = line.product_id
+          ? `<div class="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 gap-2">
+               <span class="text-sm flex-1">${line.customer_item
+                 ? `<span class="font-semibold">${escapeHtml(line.title)}</span>${line.supplier_code ? ' <span class="text-slate-500">(' + escapeHtml(line.supplier_code) + ')</span>' : ''}`
+                 : `<span class="font-semibold">${escapeHtml(line.supplier_code)}</span> ${escapeHtml(line.title)}${(line.colour || line.size) ? ' - ' + [line.colour, line.size].filter(Boolean).join(' / ') : ''}`}</span>
+               <span class="flex items-center gap-1 text-sm text-slate-600 shrink-0">
+                 £<input type="number" step="0.01" min="0" value="${line.unit_price || ''}" onchange="updateOrderLineUnitPrice(${idx}, this.value)" placeholder="0.00" title="Only applies to this quote - does not change the catalog price" class="w-20 rounded border ${line.unit_price ? 'border-slate-300' : 'border-amber-400 bg-amber-50'} px-2 py-1 text-sm text-right" /> each
+               </span>
+               <button type="button" onclick="clearOrderLineProduct(${idx})" class="text-xs text-indigo-700 hover:underline">Change</button>
+             </div>`
+          : `<div>
+               ${orderCustomerItems.length ? renderCustomerItemPicker(idx) : ''}
+               <div class="relative">
+                 <input id="ord-line-search-${idx}" oninput="searchOrderCatalog(${idx})" placeholder="Search catalog by code, title, colour…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+                 <div id="ord-line-results-${idx}" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-64 overflow-y-auto"></div>
+               </div>
+               ${renderOrderLineAddProduct(idx)}
+             </div>`;
+
         const productBlock = isCustomerSupplied
           ? `<input value="${escapeAttr(line.description)}" oninput="updateOrderLineDescription(${idx}, this.value)" placeholder="e.g. Customer's own polo shirt" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />`
-          : (line.product_id
-              ? `<div class="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 gap-2">
-                   <span class="text-sm flex-1">${line.customer_item
-                     ? `<span class="font-semibold">${escapeHtml(line.title)}</span>${line.supplier_code ? ' <span class="text-slate-500">(' + escapeHtml(line.supplier_code) + ')</span>' : ''}`
-                     : `<span class="font-semibold">${escapeHtml(line.supplier_code)}</span> ${escapeHtml(line.title)} - ${escapeHtml(line.colour)} / ${escapeHtml(line.size)}`}</span>
-                   <span class="flex items-center gap-1 text-sm text-slate-600 shrink-0">
-                     £<input type="number" step="0.01" min="0" value="${line.unit_price || ''}" onchange="updateOrderLineUnitPrice(${idx}, this.value)" placeholder="0.00" title="Only applies to this quote - does not change the catalog price" class="w-20 rounded border ${line.unit_price ? 'border-slate-300' : 'border-amber-400 bg-amber-50'} px-2 py-1 text-sm text-right" /> each
-                   </span>
-                   <button type="button" onclick="clearOrderLineProduct(${idx})" class="text-xs text-indigo-700 hover:underline">Change</button>
-                 </div>`
-              : `<div>
-                   ${orderCustomerItems.length ? renderCustomerItemPicker(idx) : ''}
-                   <div class="relative">
-                     <input id="ord-line-search-${idx}" oninput="searchOrderCatalog(${idx})" placeholder="Search catalog by code, title, colour…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-                     <div id="ord-line-results-${idx}" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-64 overflow-y-auto"></div>
-                   </div>
-                   ${renderOrderLineAddProduct(idx)}
-                 </div>`);
+          : productPickerBlock;
 
         // The catalog row picked above is often just a pricing tier ("All
         // Colours" / "XS - XXL"), not one physical garment, so once it's
@@ -3820,6 +3958,10 @@
                  <span class="block text-xs text-slate-500 mb-1">Qty</span>
                  <input type="number" min="1" value="${line.qty}" oninput="updateOrderLineQty(${idx}, this.value)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
                </label>
+             </div>
+             <div class="mt-2">
+               <span class="block text-xs text-slate-500 mb-1">Product/service from the catalog (optional - e.g. a design setup fee)</span>
+               ${productPickerBlock}
              </div>`
           : `${productBlock}${breakdownBlock}`;
 
