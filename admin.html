@@ -4400,6 +4400,7 @@
           actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold">View</button>`);
           actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
           actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
+          actions.push(`<button id="email-order-btn-${o.id}" onclick="emailOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Email</button>`);
           actions.push(`<button onclick="deleteOrder('${o.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold">Delete</button>`);
 
           return `
@@ -4408,7 +4409,7 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}</td>
+              <td class="p-4">${statusBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
@@ -4612,6 +4613,36 @@
         </body></html>
       `);
       win.document.close();
+    }
+
+    // Sends the quote/invoice to the customer's email on file via Resend -
+    // see functions/api/send-email.js. Confirms the address first since
+    // this is a real outgoing message, not a local edit.
+    async function emailOrder(id) {
+      const o = ordersById[id];
+      if (!o) return;
+      const docLabel = o.doc_type === 'invoice' ? 'invoice' : 'quote';
+      const defaultTo = o.customer_email || '';
+      const to = prompt(`Send this ${docLabel} to which email address?`, defaultTo);
+      if (to === null) return; // cancelled
+      if (!to.trim()) { alert('An email address is required.'); return; }
+
+      const btn = document.getElementById('email-order-btn-' + id);
+      const originalText = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+      try {
+        const res = await fetch('/api/send-email', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: id, to: to.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        await loadOrders();
+      } catch (e) {
+        alert('Could not send email: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }
     }
 
     renderOrderLines();
