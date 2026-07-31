@@ -183,7 +183,18 @@ export async function onRequest(context) {
       if (p.get("active")) where.push("active = 1");
 
       const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-      const limit = Math.min(Math.max(parseInt(p.get("limit") || "50", 10) || 50, 1), 500);
+      // A customer_id-scoped request means "everything on this customer's
+      // price list", not a paginated browse of the shared catalog - capping
+      // it at the general 500 max silently truncated Karl Sports (434 rows)
+      // down to whatever ?limit the caller happened to send (200 from the
+      // quote builder), and since results are sorted by supplier_code text
+      // rather than grouped by product, a multi-variation product's rows
+      // are scattered across the full set - some past the cutoff, some not
+      // - so it looked like "only some of this product's variations exist"
+      // rather than what it actually was: a chunk of the list never sent.
+      const limit = customerId
+        ? Math.max(parseInt(p.get("limit") || "0", 10) || 0, 2000)
+        : Math.min(Math.max(parseInt(p.get("limit") || "50", 10) || 50, 1), 500);
       const offset = Math.max(parseInt(p.get("offset") || "0", 10) || 0, 0);
 
       // Size needs a garment-aware sort (XS..8XL, not alphabetical - see

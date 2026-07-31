@@ -1162,7 +1162,7 @@
       const tbody = document.getElementById('cv-catalog-body');
       tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
       try {
-        const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(customerId) + '&limit=500', { cache: 'no-store' });
+        const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(customerId) + '&limit=2000', { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         cvCatalogItems = data.results || [];
@@ -2657,7 +2657,7 @@
       orderCustomerItemQuery = {};
       if (c) {
         try {
-          const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(c.id) + '&limit=200', { cache: 'no-store' });
+          const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(c.id) + '&limit=2000', { cache: 'no-store' });
           const data = await res.json();
           orderCustomerItems = data.results || [];
         } catch (e) {}
