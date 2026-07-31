@@ -153,6 +153,9 @@
           <p class="text-slate-500 text-sm">Manage accounts, discounts, and contact details.</p>
         </div>
         <div class="flex items-center gap-2">
+          <button onclick="openAddCustomerForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            + Add Customer
+          </button>
           <button onclick="openCustomerTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🗑️ Trash
           </button>
@@ -196,7 +199,11 @@
 
       <!-- Edit Customer Form (hidden until Edit is clicked) -->
       <div id="customer-edit-form" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-        <h3 class="text-lg font-bold text-slate-900 mb-4">Edit Customer</h3>
+        <h3 id="customer-edit-form-title" class="text-lg font-bold text-slate-900 mb-4">Edit Customer</h3>
+        <!-- Shown instead of saving when name/company/email/phone looks like
+             it might already match someone on file - only relevant when
+             adding a new customer, see findPotentialDuplicateCustomers(). -->
+        <div id="cust-edit-dupe-warning" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4"></div>
         <div class="grid gap-4 md:grid-cols-2">
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Name</span>
@@ -1008,6 +1015,7 @@
     // without re-embedding untrusted values into onclick attributes
     let customersById = {};
     let editingCustomerId = null;
+    let addingNewCustomer = false;
 
     // Full list from the last load - filterCustomers() re-renders a subset
     // of this rather than re-fetching, so search stays instant.
@@ -1940,7 +1948,10 @@
     function openCustomerEditForm(id) {
       const c = customersById[id];
       if (!c) return;
+      addingNewCustomer = false;
       editingCustomerId = id;
+      document.getElementById('customer-edit-form-title').textContent = 'Edit Customer';
+      document.getElementById('cust-edit-dupe-warning').classList.add('hidden');
       document.getElementById('edit-name').value = c.name || '';
       document.getElementById('edit-company').value = c.company || '';
       document.getElementById('edit-email').value = c.email || '';
@@ -1960,37 +1971,96 @@
       document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
+    // Same form as Edit, just blank and posting a new record - see
+    // saveCustomerEdit's addingNewCustomer branch. Runs the same
+    // name/company/email/phone duplicate check as the quote builder's
+    // inline "+ New" customer panel (findPotentialDuplicateCustomers).
+    function openAddCustomerForm() {
+      addingNewCustomer = true;
+      editingCustomerId = null;
+      document.getElementById('customer-edit-form-title').textContent = 'Add Customer';
+      document.getElementById('cust-edit-dupe-warning').classList.add('hidden');
+      ['edit-name', 'edit-company', 'edit-email', 'edit-phone', 'edit-address1', 'edit-address2', 'edit-city', 'edit-county', 'edit-postcode', 'edit-notes'].forEach((id) => {
+        document.getElementById(id).value = '';
+      });
+      document.getElementById('edit-type').value = 'Retail';
+      document.getElementById('edit-discount').value = 0;
+      document.getElementById('edit-lifetime-spend').value = 0;
+      document.getElementById('edit-transaction-count').value = 0;
+      document.getElementById('edit-last-visit').value = '';
+      document.getElementById('customer-edit-form').classList.remove('hidden');
+      document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById('edit-name').focus();
+    }
+
     function closeCustomerEditForm() {
       editingCustomerId = null;
+      addingNewCustomer = false;
       document.getElementById('customer-edit-form').classList.add('hidden');
     }
 
-    // Save edited customer fields back to Cloudflare D1
-    async function saveCustomerEdit() {
-      if (!editingCustomerId) return;
+    function renderCustomerEditDupeWarning(matches) {
+      const el = document.getElementById('cust-edit-dupe-warning');
+      el.classList.remove('hidden');
+      el.innerHTML = `
+        <p class="text-xs font-semibold text-amber-800 mb-2">This might already be on file:</p>
+        <div class="space-y-2 mb-2">
+          ${matches.map((c) => `
+            <div class="flex items-center justify-between gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+              <span class="text-xs text-slate-700">
+                <span class="font-semibold">${escapeHtml(c.name)}</span>${c.company ? ' - ' + escapeHtml(c.company) : ''}
+                <br><span class="text-slate-500">${escapeHtml([c.email, c.phone].filter(Boolean).join(' · ') || 'No contact details')}</span>
+              </span>
+              <button type="button" onclick="openCustomerEditForm('${escapeAttr(c.id)}')" class="shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded text-xs font-semibold">Edit this one instead</button>
+            </div>
+          `).join('')}
+        </div>
+        <button type="button" onclick="saveCustomerEdit(true)" class="text-xs text-amber-800 underline hover:no-underline">This is a different customer - add as new anyway</button>
+      `;
+    }
+
+    // Save edited/new customer fields back to Cloudflare D1
+    async function saveCustomerEdit(forceCreate) {
+      if (!editingCustomerId && !addingNewCustomer) return;
+
+      const name = document.getElementById('edit-name').value.trim();
+      const company = document.getElementById('edit-company').value.trim();
+      const email = document.getElementById('edit-email').value.trim();
+      const phone = document.getElementById('edit-phone').value.trim();
+
+      if (addingNewCustomer) {
+        if (!name) { alert('Name is required.'); return; }
+        if (!forceCreate) {
+          const matches = findPotentialDuplicateCustomers({ name, company, email, phone });
+          if (matches.length) { renderCustomerEditDupeWarning(matches); return; }
+        }
+      }
+      document.getElementById('cust-edit-dupe-warning').classList.add('hidden');
+
+      const payload = {
+        id: addingNewCustomer ? crypto.randomUUID() : editingCustomerId,
+        name,
+        company,
+        email,
+        phone,
+        type: document.getElementById('edit-type').value,
+        discount_pct: Number(document.getElementById('edit-discount').value) || 0,
+        address_1: document.getElementById('edit-address1').value,
+        address_2: document.getElementById('edit-address2').value,
+        city: document.getElementById('edit-city').value,
+        county: document.getElementById('edit-county').value,
+        postcode: document.getElementById('edit-postcode').value,
+        notes: document.getElementById('edit-notes').value,
+        lifetime_spend: Number(document.getElementById('edit-lifetime-spend').value) || 0,
+        transaction_count: parseInt(document.getElementById('edit-transaction-count').value, 10) || 0,
+        last_visit: document.getElementById('edit-last-visit').value,
+      };
 
       try {
         await fetch(API_CUSTOMERS_URL, {
-          method: 'PUT',
+          method: addingNewCustomer ? 'POST' : 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: editingCustomerId,
-            name: document.getElementById('edit-name').value,
-            company: document.getElementById('edit-company').value,
-            email: document.getElementById('edit-email').value,
-            phone: document.getElementById('edit-phone').value,
-            type: document.getElementById('edit-type').value,
-            discount_pct: Number(document.getElementById('edit-discount').value) || 0,
-            address_1: document.getElementById('edit-address1').value,
-            address_2: document.getElementById('edit-address2').value,
-            city: document.getElementById('edit-city').value,
-            county: document.getElementById('edit-county').value,
-            postcode: document.getElementById('edit-postcode').value,
-            notes: document.getElementById('edit-notes').value,
-            lifetime_spend: Number(document.getElementById('edit-lifetime-spend').value) || 0,
-            transaction_count: parseInt(document.getElementById('edit-transaction-count').value, 10) || 0,
-            last_visit: document.getElementById('edit-last-visit').value,
-          })
+          body: JSON.stringify(payload),
         });
         closeCustomerEditForm();
         loadCustomers();
