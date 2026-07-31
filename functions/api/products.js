@@ -243,13 +243,18 @@ export async function onRequest(context) {
             category, cost_price, surcharge_category, vat_rate, sell_price, profit, active, customer_id, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
+            supplier = excluded.supplier,
+            supplier_code = excluded.supplier_code,
             supplier_ref = excluded.supplier_ref,
             brand = excluded.brand,
             title = excluded.title,
+            colour = excluded.colour,
+            size = excluded.size,
             category = excluded.category,
             cost_price = excluded.cost_price,
             surcharge_category = excluded.surcharge_category,
             vat_rate = excluded.vat_rate,
+            active = excluded.active,
             sell_price = CASE WHEN products.sell_price IS NULL THEN excluded.sell_price ELSE products.sell_price END,
             profit = CASE WHEN products.sell_price IS NULL
                           THEN CASE WHEN excluded.sell_price IS NULL THEN NULL ELSE ROUND(excluded.sell_price - excluded.cost_price, 2) END
@@ -281,8 +286,19 @@ export async function onRequest(context) {
           );
         });
 
-        await db.batch(batch);
-        return json({ success: true, imported: batch.length });
+        // D1 batches can silently misbehave (or hit undocumented size limits)
+        // when handed hundreds of statements at once - a 400+ row customer
+        // export (see products.customer_id) was losing rows this way with no
+        // error surfaced. Chunking keeps every batch call comfortably small;
+        // if one chunk does fail, everything before it is already committed
+        // and the whole import is safe to just re-run (upsert by id).
+        const CHUNK_SIZE = 50;
+        let imported = 0;
+        for (let i = 0; i < batch.length; i += CHUNK_SIZE) {
+          await db.batch(batch.slice(i, i + CHUNK_SIZE));
+          imported += Math.min(CHUNK_SIZE, batch.length - i);
+        }
+        return json({ success: true, imported });
       }
 
       const id = data.id || crypto.randomUUID();

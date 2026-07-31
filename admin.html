@@ -2772,9 +2772,14 @@
       renderOrderLines();
     }
 
+    // Updates only the results area below the search box, not the whole
+    // line (which is what renderOrderLines() would do) - replacing the
+    // <input> itself on every keystroke was killing its focus, forcing a
+    // re-click before every single character.
     function filterOrderLineCustomerItems(idx, value) {
       orderCustomerItemQuery[idx] = value;
-      renderOrderLines();
+      const el = document.getElementById('ord-cust-item-results-' + idx);
+      if (el) el.innerHTML = customerItemResultsHtml(idx);
     }
 
     // A single chip for one product ("PENNANT FC · £3.00") or, for a
@@ -2813,7 +2818,10 @@
     const CUSTOMER_ITEM_CHIP_THRESHOLD = 10;
     const CUSTOMER_ITEM_MAX_SHOWN = 25;
 
-    function renderCustomerItemPicker(idx) {
+    // Just the matched chips/hint, not the search box - kept separate so
+    // filterOrderLineCustomerItems can update this on every keystroke
+    // without ever touching (and so re-creating) the input element itself.
+    function customerItemResultsHtml(idx) {
       const useSearch = orderCustomerItems.length > CUSTOMER_ITEM_CHIP_THRESHOLD;
       const query = (orderCustomerItemQuery[idx] || '').trim().toLowerCase();
       const matched = query
@@ -2823,26 +2831,28 @@
       const shown = groups.slice(0, CUSTOMER_ITEM_MAX_SHOWN);
       const hiddenCount = groups.length - shown.length;
 
-      const searchBox = useSearch
-        ? `<input value="${escapeAttr(orderCustomerItemQuery[idx] || '')}" oninput="filterOrderLineCustomerItems(${idx}, this.value)" placeholder="Search ${escapeAttr(orderCustomerName)}'s ${orderCustomerItems.length} saved items…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm mb-1.5" />`
-        : '';
-
-      let body;
       if (useSearch && !query) {
-        body = `<p class="text-xs text-slate-400 italic">Type to search - ${orderCustomerItems.length} items on file.</p>`;
-      } else if (!groups.length) {
-        body = `<p class="text-xs text-slate-400 italic">No matches.</p>`;
-      } else {
-        body = `<div class="flex flex-wrap items-center gap-1.5">
-          ${shown.map((g) => renderCustomerItemChip(idx, g)).join('')}
-          ${hiddenCount ? `<span class="text-xs text-slate-400">+${hiddenCount} more - refine your search</span>` : ''}
-        </div>`;
+        return `<p class="text-xs text-slate-400 italic">Type to search - ${orderCustomerItems.length} items on file.</p>`;
       }
+      if (!groups.length) {
+        return `<p class="text-xs text-slate-400 italic">No matches.</p>`;
+      }
+      return `<div class="flex flex-wrap items-center gap-1.5">
+        ${shown.map((g) => renderCustomerItemChip(idx, g)).join('')}
+        ${hiddenCount ? `<span class="text-xs text-slate-400">+${hiddenCount} more - refine your search</span>` : ''}
+      </div>`;
+    }
+
+    function renderCustomerItemPicker(idx) {
+      const useSearch = orderCustomerItems.length > CUSTOMER_ITEM_CHIP_THRESHOLD;
+      const searchBox = useSearch
+        ? `<input id="ord-cust-item-search-${idx}" value="${escapeAttr(orderCustomerItemQuery[idx] || '')}" oninput="filterOrderLineCustomerItems(${idx}, this.value)" placeholder="Search ${escapeAttr(orderCustomerName)}'s ${orderCustomerItems.length} saved items…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm mb-1.5" />`
+        : '';
 
       return `<div class="mb-2">
         <p class="text-xs font-medium text-slate-500 mb-1">${escapeHtml(orderCustomerName)}'s saved items</p>
         ${searchBox}
-        ${body}
+        <div id="ord-cust-item-results-${idx}">${customerItemResultsHtml(idx)}</div>
       </div>`;
     }
 
