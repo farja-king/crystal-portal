@@ -250,10 +250,44 @@
           <p id="cust-csv-status" class="text-xs mt-2 hidden"></p>
         </div>
       </div>
+      <!-- Bulk actions for cleaning up duplicate customer records - tick two
+           and Merge folds one into the other (their orders/quotes and any
+           Custom Price List items get reassigned to whichever is kept, then
+           the duplicate is deleted); tick any number and Delete just removes
+           them, same as the per-row Delete button. -->
+      <div id="cust-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+        <span id="cust-bulk-count" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="openMergeCustomersDialog()" id="cust-bulk-merge-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+          Merge (pick exactly 2)
+        </button>
+        <button type="button" onclick="bulkDeleteCustomers()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected
+        </button>
+        <button type="button" onclick="clearCustomerSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
+      </div>
+
+      <!-- Merge dialog - only ever shown for exactly two selected customers. -->
+      <div id="cust-merge-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6">
+          <h3 class="text-lg font-bold text-slate-900 mb-1">Merge duplicate customers</h3>
+          <p class="text-sm text-slate-500 mb-4">Pick which record to keep. All of the other one's quotes/invoices and any Custom Price List items move onto the one you keep, then the other one is deleted.</p>
+          <div id="cust-merge-options" class="grid gap-3 md:grid-cols-2 mb-4"></div>
+          <p id="cust-merge-msg" class="text-sm mb-3"></p>
+          <div class="flex gap-2">
+            <button type="button" onclick="closeMergeCustomersDialog()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+              <th class="p-4 w-8"><input type="checkbox" id="cust-select-all" onchange="toggleSelectAllCustomers(this.checked)" class="rounded border-slate-300" /></th>
               <th class="p-4">Name</th>
               <th class="p-4">Company</th>
               <th class="p-4">Type</th>
@@ -266,7 +300,7 @@
           </thead>
           <tbody id="customers-table-body" class="divide-y divide-slate-100 text-sm">
             <tr>
-              <td colspan="8" class="p-8 text-center text-slate-400">Loading customers from database...</td>
+              <td colspan="9" class="p-8 text-center text-slate-400">Loading customers from database...</td>
             </tr>
           </tbody>
         </table>
@@ -533,6 +567,10 @@
             <button type="button" onclick="toggleNewCustomerPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold">✕</button>
           </div>
           <p id="ord-nc-msg" class="text-xs text-red-600 md:col-span-5"></p>
+          <!-- Shown instead of saving when name/company/email/phone looks
+               like it might already match someone on file - see
+               findPotentialDuplicateCustomers(). -->
+          <div id="ord-nc-dupe-warning" class="hidden md:col-span-5 bg-amber-50 border border-amber-200 rounded-lg p-3"></div>
         </div>
 
         <div id="ord-lines" class="space-y-4 mb-4"></div>
@@ -894,11 +932,16 @@
     // Full list from the last load - filterCustomers() re-renders a subset
     // of this rather than re-fetching, so search stays instant.
     let allCustomers = [];
+    // Ticked rows for bulk delete / merge - survives a re-render (e.g. a
+    // search keystroke) since renderCustomersTable checks it when drawing
+    // each row's checkbox, but is cleared on a fresh load since the ids
+    // it references may no longer exist.
+    let selectedCustomerIds = new Set();
 
     // Fetch All Customers from Cloudflare D1
     async function loadCustomers() {
       const tbody = document.getElementById('customers-table-body');
-      tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">Fetching latest customers...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">Fetching latest customers...</td></tr>';
 
       try {
         const res = await fetch(API_CUSTOMERS_URL);
@@ -909,9 +952,10 @@
         renderOrderCustomerPicker();
 
         allCustomers = customers || [];
+        selectedCustomerIds = new Set();
         renderCustomersTable(allCustomers);
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
       }
     }
 
@@ -937,7 +981,8 @@
       const tbody = document.getElementById('customers-table-body');
 
       if (!customers || customers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">No customers found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">No customers found.</td></tr>';
+        updateCustomerBulkBar();
         return;
       }
 
@@ -952,6 +997,7 @@
 
           return `
           <tr class="hover:bg-slate-50 transition">
+            <td class="p-4"><input type="checkbox" class="cust-select-checkbox rounded border-slate-300" data-id="${escapeAttr(c.id)}" ${selectedCustomerIds.has(c.id) ? 'checked' : ''} onchange="toggleCustomerSelect('${escapeAttr(c.id)}', this.checked)" /></td>
             <td class="p-4 font-semibold text-slate-900">${escapeHtml(c.name)}</td>
             <td class="p-4 text-slate-600">${escapeHtml(c.company) || '-'}</td>
             <td class="p-4">
@@ -980,6 +1026,165 @@
           </tr>
         `;
       }).join('');
+      updateCustomerBulkBar();
+    }
+
+    function toggleCustomerSelect(id, checked) {
+      if (checked) selectedCustomerIds.add(id);
+      else selectedCustomerIds.delete(id);
+      updateCustomerBulkBar();
+    }
+
+    function toggleSelectAllCustomers(checked) {
+      document.querySelectorAll('#customers-table-body .cust-select-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) selectedCustomerIds.add(cb.dataset.id);
+        else selectedCustomerIds.delete(cb.dataset.id);
+      });
+      updateCustomerBulkBar();
+    }
+
+    function clearCustomerSelection() {
+      selectedCustomerIds = new Set();
+      filterCustomers();
+    }
+
+    // Shows/hides the bulk-action bar and keeps its count and the Merge
+    // button's enabled state (merging only ever makes sense for exactly two
+    // records - any other count is ambiguous about which one wins) in sync
+    // with the checkboxes.
+    function updateCustomerBulkBar() {
+      const bar = document.getElementById('cust-bulk-bar');
+      const count = selectedCustomerIds.size;
+      bar.classList.toggle('hidden', count === 0);
+      if (count === 0) return;
+      document.getElementById('cust-bulk-count').textContent = count + ' selected';
+      const mergeBtn = document.getElementById('cust-bulk-merge-btn');
+      mergeBtn.disabled = count !== 2;
+      mergeBtn.textContent = count === 2 ? 'Merge these two' : 'Merge (pick exactly 2)';
+    }
+
+    // Bulk delete - same one-DELETE-per-row approach as deleteCustomerRow,
+    // just looped, so a bad row doesn't block the rest and the surviving
+    // ones are reported.
+    async function bulkDeleteCustomers() {
+      const ids = [...selectedCustomerIds];
+      if (!ids.length) return;
+      const names = ids.map((id) => (customersById[id] ? customersById[id].name : id)).join(', ');
+      if (!confirm(`Delete ${ids.length} customer(s)?\n\n${names}\n\nThis cannot be undone.`)) return;
+
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          await fetch(API_CUSTOMERS_URL, {
+            method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+          });
+          delete customersById[id];
+          allCustomers = allCustomers.filter((c) => c.id !== id);
+          selectedCustomerIds.delete(id);
+        } catch (e) {
+          failed++;
+        }
+      }
+      filterCustomers();
+      if (failed) alert(failed + ' customer(s) could not be deleted.');
+    }
+
+    // Shows both selected customers side by side so Martin can pick which
+    // one to keep by whatever tells them apart best (address, activity,
+    // notes) - there's no automatic "better" record, e.g. a Square-linked
+    // one isn't necessarily more current than one he's edited by hand.
+    function openMergeCustomersDialog() {
+      if (selectedCustomerIds.size !== 2) return;
+      const [idA, idB] = [...selectedCustomerIds];
+      const a = customersById[idA];
+      const b = customersById[idB];
+      if (!a || !b) return;
+
+      const card = (keep, other) => {
+        const contact = [keep.email, keep.phone].filter(Boolean).join(' · ') || 'No contact details';
+        const address = [keep.address_1, keep.address_2, keep.city, keep.county, keep.postcode].filter(Boolean).join(', ') || 'No address';
+        const activity = keep.square_customer_id
+          ? money(keep.lifetime_spend) + ' across ' + (keep.transaction_count || 0) + ' Square transaction(s)'
+          : 'No Square activity on file';
+        return `
+          <div class="border border-slate-200 rounded-lg p-4">
+            <p class="font-bold text-slate-900">${escapeHtml(keep.name)}</p>
+            <p class="text-xs text-slate-500 mb-2">${escapeHtml(keep.company || '')}</p>
+            <p class="text-xs text-slate-700 mb-1">${escapeHtml(contact)}</p>
+            <p class="text-xs text-slate-500 mb-1">${escapeHtml(address)}</p>
+            <p class="text-xs text-slate-500 mb-3">${escapeHtml(activity)}</p>
+            <button type="button" onclick="performMergeCustomers('${escapeAttr(keep.id)}', '${escapeAttr(other.id)}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              Keep this one
+            </button>
+          </div>`;
+      };
+
+      document.getElementById('cust-merge-options').innerHTML = card(a, b) + card(b, a);
+      document.getElementById('cust-merge-msg').textContent = '';
+      document.getElementById('cust-merge-modal').classList.remove('hidden');
+    }
+
+    function closeMergeCustomersDialog() {
+      document.getElementById('cust-merge-modal').classList.add('hidden');
+    }
+
+    // Reassigns everything the loser owns onto the survivor, then deletes
+    // the loser - orders.js and products.js's PUT handlers already support
+    // changing customer_id on an existing row (and leave everything else
+    // about that row untouched), so this is just that, looped over each of
+    // the loser's rows, no new backend endpoints needed.
+    async function performMergeCustomers(survivorId, loserId) {
+      const survivor = customersById[survivorId];
+      const loser = customersById[loserId];
+      if (!survivor || !loser) return;
+      if (!confirm(`Merge "${loser.name}" into "${survivor.name}"? All of "${loser.name}"'s quotes/invoices and price list items move to "${survivor.name}", then "${loser.name}" is deleted. This cannot be undone.`)) return;
+
+      const msg = document.getElementById('cust-merge-msg');
+      msg.className = 'text-sm mb-3 text-slate-500';
+
+      try {
+        msg.textContent = 'Finding ' + loser.name + '’s quotes and invoices…';
+        const ordersRes = await fetch(API_ORDERS_URL + '?customer_id=' + encodeURIComponent(loserId));
+        const orders = ordersRes.ok ? await ordersRes.json() : [];
+
+        for (let i = 0; i < orders.length; i++) {
+          msg.textContent = `Moving quotes/invoices (${i + 1}/${orders.length})…`;
+          await fetch(API_ORDERS_URL, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: orders[i].id, customer_id: survivorId, customer_name: survivor.name, customer_email: survivor.email || '' }),
+          });
+        }
+
+        msg.textContent = 'Finding ' + loser.name + '’s Custom Price List items…';
+        const productsRes = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(loserId) + '&limit=2000', { cache: 'no-store' });
+        const productsData = productsRes.ok ? await productsRes.json() : { results: [] };
+        const products = productsData.results || [];
+
+        for (let i = 0; i < products.length; i++) {
+          msg.textContent = `Moving Custom Price List items (${i + 1}/${products.length})…`;
+          await fetch(API_PRODUCTS_URL, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: products[i].id, customer_id: survivorId }),
+          });
+        }
+
+        msg.textContent = 'Deleting ' + loser.name + '…';
+        await fetch(API_CUSTOMERS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: loserId }),
+        });
+
+        delete customersById[loserId];
+        allCustomers = allCustomers.filter((c) => c.id !== loserId);
+        selectedCustomerIds = new Set();
+
+        closeMergeCustomersDialog();
+        filterCustomers();
+        alert(`Merged. ${orders.length} quote(s)/invoice(s) and ${products.length} price list item(s) moved to "${survivor.name}".`);
+      } catch (e) {
+        msg.className = 'text-sm mb-3 text-red-600';
+        msg.textContent = 'Merge failed partway through: ' + e.message + '. Check both records before retrying - some items may have already moved.';
+      }
     }
 
     // Square's customer export CSV. Column mapping: First Name + Last Name
@@ -2777,20 +2982,77 @@
       } else {
         ['ord-nc-name', 'ord-nc-company', 'ord-nc-email', 'ord-nc-phone'].forEach((id) => { document.getElementById(id).value = ''; });
         document.getElementById('ord-nc-msg').textContent = '';
+        document.getElementById('ord-nc-dupe-warning').classList.add('hidden');
       }
     }
 
-    async function saveNewCustomerFromOrder() {
+    // Exact email match, phone match by digits only (so formatting - spaces,
+    // dashes, leading 0 vs +44 - doesn't hide a real match), or an exact
+    // name/company match - deliberately not fuzzy beyond that, so it flags
+    // real repeats without false-positiving on every "John Smith".
+    function findPotentialDuplicateCustomers({ name, company, email, phone }) {
+      const normName = (name || '').trim().toLowerCase();
+      const normCompany = (company || '').trim().toLowerCase();
+      const normEmail = (email || '').trim().toLowerCase();
+      const digits = (phone || '').replace(/\D/g, '');
+
+      return Object.values(customersById).filter((c) => {
+        if (normEmail && (c.email || '').trim().toLowerCase() === normEmail) return true;
+        if (digits.length >= 6 && (c.phone || '').replace(/\D/g, '').includes(digits)) return true;
+        if (normName && (c.name || '').trim().toLowerCase() === normName) return true;
+        if (normCompany && normCompany.length > 2 && (c.company || '').trim().toLowerCase() === normCompany) return true;
+        return false;
+      });
+    }
+
+    function renderDuplicateCustomerWarning(matches) {
+      const el = document.getElementById('ord-nc-dupe-warning');
+      el.classList.remove('hidden');
+      el.innerHTML = `
+        <p class="text-xs font-semibold text-amber-800 mb-2">This might already be on file:</p>
+        <div class="space-y-2 mb-2">
+          ${matches.map((c) => `
+            <div class="flex items-center justify-between gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+              <span class="text-xs text-slate-700">
+                <span class="font-semibold">${escapeHtml(c.name)}</span>${c.company ? ' - ' + escapeHtml(c.company) : ''}
+                <br><span class="text-slate-500">${escapeHtml([c.email, c.phone].filter(Boolean).join(' · ') || 'No contact details')}</span>
+              </span>
+              <button type="button" onclick="useDuplicateCustomerInstead('${escapeAttr(c.id)}')" class="shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded text-xs font-semibold">Use this one</button>
+            </div>
+          `).join('')}
+        </div>
+        <button type="button" onclick="saveNewCustomerFromOrder(true)" class="text-xs text-amber-800 underline hover:no-underline">This is a different customer - add as new anyway</button>
+      `;
+    }
+
+    function useDuplicateCustomerInstead(id) {
+      document.getElementById('ord-customer').value = id;
+      renderOrderCustomerPicker();
+      onOrderCustomerChange();
+      toggleNewCustomerPanel();
+    }
+
+    async function saveNewCustomerFromOrder(forceCreate) {
       const msg = document.getElementById('ord-nc-msg');
       const name = document.getElementById('ord-nc-name').value.trim();
       if (!name) { msg.textContent = 'Name is required.'; return; }
 
+      const company = document.getElementById('ord-nc-company').value.trim();
+      const email = document.getElementById('ord-nc-email').value.trim();
+      const phone = document.getElementById('ord-nc-phone').value.trim();
+
+      if (!forceCreate) {
+        const matches = findPotentialDuplicateCustomers({ name, company, email, phone });
+        if (matches.length) { renderDuplicateCustomerWarning(matches); return; }
+      }
+      document.getElementById('ord-nc-dupe-warning').classList.add('hidden');
+
       const payload = {
         id: crypto.randomUUID(),
         name,
-        company: document.getElementById('ord-nc-company').value.trim(),
-        email: document.getElementById('ord-nc-email').value.trim(),
-        phone: document.getElementById('ord-nc-phone').value.trim(),
+        company,
+        email,
+        phone,
         type: 'Retail',
         discount_pct: 0,
         notes: '',
