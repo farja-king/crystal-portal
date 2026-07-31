@@ -10,6 +10,13 @@ export async function onRequest(context) {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Content-Type": "application/json",
+    // Without this, a GET to the same URL (e.g. ?customer_id=X, always
+    // identical between one visit and the next) is fair game for the
+    // browser to serve straight from its HTTP cache instead of hitting the
+    // Worker - so an import/edit made in one tab could stay invisible in
+    // another that already has that same URL cached, no matter how many
+    // times the code re-fetches it.
+    "Cache-Control": "no-store",
   };
 
   if (request.method === "OPTIONS") {

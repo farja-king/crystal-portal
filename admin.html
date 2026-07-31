@@ -790,6 +790,12 @@
       // The catalog is big, so it's only fetched once the tab is actually opened
       if (tab === 'catalog' && !catalogLoaded) loadCatalog(0);
       if (tab === 'orders' && !ordersLoaded) { loadOrders(); renderOrderCustomerPicker(); }
+      // A customer's saved items can change from a completely separate visit
+      // (Custom Price List import/edit) with this tab just sitting open in
+      // another one - refetch on every visit, not just on first load, so
+      // what's shown always matches the server rather than whatever was
+      // cached whenever the customer was originally selected.
+      if (tab === 'orders' && document.getElementById('ord-customer').value) refreshOrderCustomerItems();
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
@@ -1156,7 +1162,7 @@
       const tbody = document.getElementById('cv-catalog-body');
       tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
       try {
-        const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(customerId) + '&limit=500');
+        const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(customerId) + '&limit=500', { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         cvCatalogItems = data.results || [];
@@ -1874,7 +1880,7 @@
 
     async function loadFacets() {
       try {
-        const res = await fetch(API_PRODUCTS_URL + '?facets=1');
+        const res = await fetch(API_PRODUCTS_URL + '?facets=1', { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
 
@@ -1921,7 +1927,7 @@
       params.set('offset', catalogOffset);
 
       try {
-        const res = await fetch(API_PRODUCTS_URL + '?' + params.toString());
+        const res = await fetch(API_PRODUCTS_URL + '?' + params.toString(), { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         catalogTotal = data.total || 0;
@@ -2631,14 +2637,27 @@
       const c = customersById[document.getElementById('ord-customer').value];
       document.getElementById('ord-discount').value = c ? (c.discount_pct || 0) : 0;
       renderOrderTotals();
+      await refreshOrderCustomerItems();
+    }
 
+    // Fetches the currently-selected order customer's saved items fresh from
+    // the server - factored out of onOrderCustomerChange so it can also run
+    // whenever the Quotes & Invoices tab is (re)opened (see switchTab), not
+    // just on an explicit customer pick. syncOrderCustomerItemsIfActive only
+    // catches changes made *through the Custom Price List modal* while this
+    // tab happens to already be open with the same customer selected - it
+    // does nothing for a quote left open in one tab while the price list is
+    // fixed up in a completely separate visit/session. This is the backstop:
+    // simply coming back to this tab always shows what's on the server now.
+    async function refreshOrderCustomerItems() {
+      const c = customersById[document.getElementById('ord-customer').value];
       orderCustomerItems = [];
       orderCustomerName = c ? c.name : '';
       orderLineOpenVariantPicker = null;
       orderCustomerItemQuery = {};
       if (c) {
         try {
-          const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(c.id) + '&limit=200');
+          const res = await fetch(API_PRODUCTS_URL + '?customer_id=' + encodeURIComponent(c.id) + '&limit=200', { cache: 'no-store' });
           const data = await res.json();
           orderCustomerItems = data.results || [];
         } catch (e) {}
@@ -2792,7 +2811,7 @@
       if (!q) { resultsEl.innerHTML = ''; return; }
       orderSearchTimer = setTimeout(async () => {
         try {
-          const res = await fetch(API_PRODUCTS_URL + '?q=' + encodeURIComponent(q) + '&limit=12');
+          const res = await fetch(API_PRODUCTS_URL + '?q=' + encodeURIComponent(q) + '&limit=12', { cache: 'no-store' });
           const data = await res.json();
           // The line can be removed (or the whole list re-rendered) while this
           // fetch is in flight - bail out rather than write into stale state/DOM.
@@ -2952,7 +2971,7 @@
     // Falls back to catalog variants only if scraper hasn't populated them yet.
     async function loadOrderLineVariantOptions(idx, code) {
       try {
-        const res = await fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(code) + '&limit=200');
+        const res = await fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(code) + '&limit=200', { cache: 'no-store' });
         const data = await res.json();
         // Bail if the line moved on (removed, or a different product picked) while this was in flight.
         if (!orderLines[idx] || orderLines[idx].supplier_code !== code) return;
