@@ -817,6 +817,36 @@
         </div>
       </div>
 
+      <!-- Backup copies of this customer's embroidery design files (DST,
+           EMB, PDF proofs, whatever's on hand) - stored in R2 via
+           functions/api/design-files.js, independent of Hatch, so a
+           corrupted Hatch database doesn't mean losing a customer's designs.
+           Deliberately separate from Order History and the price list. -->
+      <div class="border-t border-slate-200 pt-4 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="font-bold text-slate-900">Design Files</h4>
+          <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer">
+            + Upload file(s)
+            <input id="cv-design-file-input" type="file" multiple class="hidden" onchange="uploadCustomerDesignFiles()" />
+          </label>
+        </div>
+        <p class="text-xs text-slate-500 mb-2">DST, EMB, PDF proofs, or anything else worth keeping a backup of for this customer - stored independently of Hatch.</p>
+        <p id="cv-design-files-status" class="text-xs mb-2 hidden"></p>
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+              <tr>
+                <th class="p-2">File</th>
+                <th class="p-2">Uploaded</th>
+                <th class="p-2 text-right">Size</th>
+                <th class="p-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="cv-design-files-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
       <h4 class="font-bold text-slate-900 mb-3">Order History</h4>
 
       <div class="flex flex-wrap items-end gap-3 mb-3">
@@ -1487,6 +1517,7 @@
       document.getElementById('customer-view-modal').classList.remove('hidden');
 
       loadCustomerCatalogItems(id);
+      loadCustomerDesignFiles(id);
 
       try {
         const res = await fetch(API_ORDERS_URL + '?customer_id=' + encodeURIComponent(id));
@@ -1507,6 +1538,8 @@
       cvCatalogItems = [];
       cvCatalogExpanded = new Set();
       cvEditingNameIds = new Set();
+      cvDesignFilesCustomerId = null;
+      cvDesignFiles = [];
     }
 
     // This customer's own price list (see the "Custom Price List" card in
@@ -1542,6 +1575,96 @@
       }
       renderCustomerCatalogItems();
       syncOrderCustomerItemsIfActive();
+    }
+
+    // Backup copies of a customer's embroidery design files (DST/EMB/PDF/
+    // etc) - see the "Design Files" card in the customer view modal and
+    // functions/api/design-files.js. Independent of both the price list and
+    // order history above.
+    const API_DESIGN_FILES_URL = '/api/design-files';
+    let cvDesignFilesCustomerId = null;
+    let cvDesignFiles = [];
+
+    function formatFileSize(bytes) {
+      const n = Number(bytes) || 0;
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    async function loadCustomerDesignFiles(customerId) {
+      cvDesignFilesCustomerId = customerId;
+      const tbody = document.getElementById('cv-design-files-body');
+      tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      try {
+        const res = await fetch(API_DESIGN_FILES_URL + '?customer_id=' + encodeURIComponent(customerId), { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        cvDesignFiles = await res.json();
+      } catch (e) {
+        cvDesignFiles = [];
+        tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-red-500 text-sm">Could not load design files.</td></tr>';
+        return;
+      }
+      renderCustomerDesignFiles();
+    }
+
+    function renderCustomerDesignFiles() {
+      const tbody = document.getElementById('cv-design-files-body');
+      if (!cvDesignFiles.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">No design files uploaded yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = cvDesignFiles.map((f) => `
+        <tr>
+          <td class="p-2 text-slate-800">${escapeHtml(f.filename)}</td>
+          <td class="p-2 text-slate-500 text-xs">${escapeHtml(ukDate(f.uploaded_at))}</td>
+          <td class="p-2 text-right text-slate-600 text-xs">${formatFileSize(f.size_bytes)}</td>
+          <td class="p-2 text-right whitespace-nowrap">
+            <a href="${API_DESIGN_FILES_URL}?download=${encodeURIComponent(f.id)}" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">Download</a>
+            <button type="button" onclick="deleteCustomerDesignFile('${escapeAttr(f.id)}')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>
+          </td>
+        </tr>`).join('');
+    }
+
+    async function uploadCustomerDesignFiles() {
+      const input = document.getElementById('cv-design-file-input');
+      const status = document.getElementById('cv-design-files-status');
+      const files = input.files;
+      if (!files || !files.length || !cvDesignFilesCustomerId) return;
+
+      status.classList.remove('hidden');
+      status.className = 'text-xs mb-2 text-slate-500';
+      status.textContent = 'Uploading ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '…';
+
+      const form = new FormData();
+      form.append('customer_id', cvDesignFilesCustomerId);
+      for (const file of files) form.append('file', file);
+
+      try {
+        const res = await fetch(API_DESIGN_FILES_URL, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        status.className = 'text-xs mb-2 text-emerald-600';
+        status.textContent = 'Uploaded ' + data.saved.length + ' file' + (data.saved.length === 1 ? '' : 's') + '.';
+        input.value = '';
+        await loadCustomerDesignFiles(cvDesignFilesCustomerId);
+      } catch (e) {
+        status.className = 'text-xs mb-2 text-red-600';
+        status.textContent = 'Upload failed: ' + e.message;
+      }
+    }
+
+    async function deleteCustomerDesignFile(id) {
+      if (!confirm('Delete this design file? This cannot be undone.')) return;
+      try {
+        await fetch(API_DESIGN_FILES_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+        });
+        cvDesignFiles = cvDesignFiles.filter((f) => f.id !== id);
+        renderCustomerDesignFiles();
+      } catch (e) {
+        alert('Could not delete: ' + e.message);
+      }
     }
 
     // The quote builder keeps its own copy (orderCustomerItems) of whichever
