@@ -43,11 +43,20 @@ export async function onRequest(context) {
         is_read INTEGER DEFAULT 0,
         raw_r2_key TEXT,
         deleted_at TEXT,
-        received_at TEXT DEFAULT CURRENT_TIMESTAMP
+        received_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        saved_to_customer INTEGER DEFAULT 0
       )
     `).run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_customer ON inbox_emails (customer_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_received ON inbox_emails (received_at)").run();
+    // The table already existed on live D1 before saved_to_customer was
+    // added to the CREATE TABLE above - same "already exists" tolerance as
+    // every other API here.
+    try {
+      await db.prepare("ALTER TABLE inbox_emails ADD COLUMN saved_to_customer INTEGER DEFAULT 0").run();
+    } catch {
+      // already exists
+    }
 
     const url = new URL(request.url);
 
@@ -77,12 +86,18 @@ export async function onRequest(context) {
         return json(row);
       }
 
+      // ?customer_id=X is specifically "this customer's saved record" (the
+      // Customer View's Email Conversation card) - only emails explicitly
+      // marked saved_to_customer, not every auto-matched one, so a
+      // customer's record doesn't fill up with every single message that
+      // happened to come from their address. The main Inbox tab (no
+      // customer_id param) always shows everything regardless of that flag.
       const customerId = url.searchParams.get("customer_id");
       const where = ["deleted_at IS NULL"];
       const binds = [];
-      if (customerId) { where.push("customer_id = ?"); binds.push(customerId); }
+      if (customerId) { where.push("customer_id = ?", "saved_to_customer = 1"); binds.push(customerId); }
       const { results } = await db.prepare(
-        `SELECT id, direction, from_address, from_name, to_address, subject, customer_id, is_read, received_at,
+        `SELECT id, direction, from_address, from_name, to_address, subject, customer_id, is_read, received_at, saved_to_customer,
                 substr(body_text, 1, 160) AS preview
          FROM inbox_emails WHERE ${where.join(" AND ")} ORDER BY received_at DESC LIMIT 300`
       ).bind(...binds).all();
@@ -94,6 +109,15 @@ export async function onRequest(context) {
       if (!data.id) return json({ error: "id is required" }, 400);
       if (data.is_read !== undefined) {
         await db.prepare("UPDATE inbox_emails SET is_read = ? WHERE id = ?").bind(data.is_read ? 1 : 0, data.id).run();
+      }
+      // "Add to customer account" - explicitly saves this one email into a
+      // customer's record (see the ?customer_id filter above). Also sets
+      // customer_id itself, since an email from someone not auto-matched at
+      // receive time (a brand-new enquiry that's since become a customer,
+      // or a matching miss) can be attached by hand here too.
+      if (data.saved_to_customer !== undefined) {
+        await db.prepare("UPDATE inbox_emails SET saved_to_customer = ?, customer_id = COALESCE(?, customer_id) WHERE id = ?")
+          .bind(data.saved_to_customer ? 1 : 0, data.customer_id || null, data.id).run();
       }
       return json({ success: true });
     }
@@ -133,11 +157,15 @@ export async function onRequest(context) {
         return json({ error: "Resend rejected the email: " + errBody }, 502);
       }
 
+      // A reply/compose explicitly tied to a customer (via the customer
+      // picker or replying to an already-saved email) is itself a
+      // deliberate action worth keeping on their record - unlike inbound
+      // mail, which only gets auto-matched, not auto-saved.
       const id = crypto.randomUUID();
       await db.prepare(`
-        INSERT INTO inbox_emails (id, direction, from_address, to_address, subject, body_text, customer_id, is_read)
-        VALUES (?, 'outbound', ?, ?, ?, ?, ?, 1)
-      `).bind(id, fromAddress, to, subject, bodyText, data.customer_id || null).run();
+        INSERT INTO inbox_emails (id, direction, from_address, to_address, subject, body_text, customer_id, is_read, saved_to_customer)
+        VALUES (?, 'outbound', ?, ?, ?, ?, ?, 1, ?)
+      `).bind(id, fromAddress, to, subject, bodyText, data.customer_id || null, data.customer_id ? 1 : 0).run();
 
       return json({ success: true, id });
     }

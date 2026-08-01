@@ -728,7 +728,7 @@
           <button onclick="toggleInboxCompose()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + Compose
           </button>
-          <button onclick="loadInbox()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+          <button id="inbox-refresh-btn" onclick="loadInbox()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
         </div>
@@ -890,6 +890,19 @@
             </thead>
             <tbody id="cv-design-files-body" class="divide-y divide-slate-100"></tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Emails explicitly saved to this customer's record from the
+           built-in Inbox - see "+ Add to Customer" there. Deliberately not
+           every email that's ever matched their address, just what was
+           worth keeping (see functions/api/inbox.js's saved_to_customer
+           filter), so this doesn't turn into a wall of routine mail. -->
+      <div class="border-t border-slate-200 pt-4 mb-4">
+        <h4 class="font-bold text-slate-900 mb-2">Email Conversation</h4>
+        <p class="text-xs text-slate-500 mb-2">Emails saved from the Inbox tab (not every message - only what was marked worth keeping, e.g. a design proof approval).</p>
+        <div id="cv-inbox-emails" class="border border-slate-200 rounded-lg divide-y divide-slate-100">
+          <p class="p-3 text-center text-slate-400 text-sm">Loading…</p>
         </div>
       </div>
 
@@ -1568,6 +1581,7 @@
 
       loadCustomerCatalogItems(id);
       loadCustomerDesignFiles(id);
+      loadCustomerInboxEmails(id);
 
       try {
         const res = await fetch(API_ORDERS_URL + '?customer_id=' + encodeURIComponent(id));
@@ -1590,6 +1604,8 @@
       cvEditingNameIds = new Set();
       cvDesignFilesCustomerId = null;
       cvDesignFiles = [];
+      cvInboxEmails = [];
+      cvInboxExpandedId = null;
     }
 
     // This customer's own price list (see the "Custom Price List" card in
@@ -1734,6 +1750,81 @@
       } catch (e) {
         alert('Could not delete: ' + e.message);
       }
+    }
+
+    // This customer's saved Inbox emails - see "+ Add to Customer" in the
+    // Inbox tab (functions/api/inbox.js only returns saved_to_customer=1
+    // rows for a ?customer_id= query, by design).
+    let cvInboxEmails = [];
+    let cvInboxExpandedId = null;
+
+    async function loadCustomerInboxEmails(customerId) {
+      const el = document.getElementById('cv-inbox-emails');
+      try {
+        const res = await fetch('/api/inbox?customer_id=' + encodeURIComponent(customerId), { cache: 'no-store' });
+        cvInboxEmails = await res.json();
+      } catch (e) {
+        cvInboxEmails = [];
+        if (el) el.innerHTML = '<p class="p-3 text-center text-red-500 text-sm">Could not load saved emails.</p>';
+        return;
+      }
+      renderCustomerInboxEmails();
+    }
+
+    function renderCustomerInboxEmails() {
+      const el = document.getElementById('cv-inbox-emails');
+      if (!el) return;
+      if (!cvInboxEmails.length) {
+        el.innerHTML = '<p class="p-3 text-center text-slate-400 text-sm">No emails saved to this customer yet.</p>';
+        return;
+      }
+      el.innerHTML = cvInboxEmails.map((e) => {
+        const isOutbound = e.direction === 'outbound';
+        const who = isOutbound ? 'To: ' + (e.to_address || '') : (e.from_name || e.from_address || 'Unknown sender');
+        const expanded = cvInboxExpandedId === e.id;
+        return `
+          <div class="p-3">
+            <button type="button" onclick="toggleCvInboxEmail('${escapeAttr(e.id)}')" class="w-full text-left">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-sm font-medium text-slate-800 truncate">${escapeHtml(e.subject || '(no subject)')}</span>
+                <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDate(e.received_at))}</span>
+              </div>
+              <div class="text-xs text-slate-500 truncate">${escapeHtml(who)}</div>
+            </button>
+            ${expanded ? `
+              <div class="mt-2 pt-2 border-t border-slate-100 text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml(e.body_text || '(No readable content)')}</div>
+              <button type="button" onclick="removeInboxEmailFromCustomerRecord('${escapeAttr(e.id)}')" class="mt-2 text-xs text-rose-500 hover:text-rose-700 font-medium">Remove from this customer's record</button>
+            ` : ''}
+          </div>`;
+      }).join('');
+    }
+
+    function toggleCvInboxEmail(id) {
+      cvInboxExpandedId = cvInboxExpandedId === id ? null : id;
+      // Expanding needs the full body_text, which the ?customer_id= list
+      // query truncates to a preview - fetch the full row on first expand.
+      const cached = cvInboxEmails.find((e) => e.id === id);
+      if (cvInboxExpandedId === id && cached && cached.body_text === undefined) {
+        fetch('/api/inbox?id=' + encodeURIComponent(id), { cache: 'no-store' })
+          .then((r) => r.json())
+          .then((full) => {
+            Object.assign(cached, full);
+            renderCustomerInboxEmails();
+          })
+          .catch(() => renderCustomerInboxEmails());
+      } else {
+        renderCustomerInboxEmails();
+      }
+    }
+
+    async function removeInboxEmailFromCustomerRecord(id) {
+      if (!confirm("Remove this email from the customer's record? It'll stay in the main Inbox, just unlinked from here.")) return;
+      await fetch('/api/inbox', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, saved_to_customer: false }),
+      });
+      cvInboxEmails = cvInboxEmails.filter((e) => e.id !== id);
+      cvInboxExpandedId = null;
+      renderCustomerInboxEmails();
     }
 
     // The quote builder keeps its own copy (orderCustomerItems) of whichever
@@ -4741,11 +4832,19 @@
     const API_INBOX_URL = '/api/inbox';
     let inboxById = {};
     let viewingInboxEmailId = null;
+    let currentInboxEmail = null; // full detail of whichever email viewInboxEmail last loaded
     let inboxComposeReplyTo = null; // customer_id to tag a reply with, if replying to a matched customer
 
     // Runs on a timer regardless of which tab is active, so the unread
-    // badge in the nav updates even if you're not looking at the Inbox tab.
+    // badge in the nav updates even if you're not looking at the Inbox tab -
+    // that also means the button/list flash on every silent background poll,
+    // not just a manual click, which is deliberate (same visual confirms
+    // "yes, this is doing something" either way).
     async function loadInbox() {
+      const btn = document.getElementById('inbox-refresh-btn');
+      const list = document.getElementById('inbox-list');
+      if (btn) { btn.disabled = true; btn.textContent = '🔄 Refreshing…'; }
+      if (list) list.classList.add('opacity-40', 'transition-opacity');
       try {
         const res = await fetch(API_INBOX_URL, { cache: 'no-store' });
         const rows = await res.json();
@@ -4754,8 +4853,10 @@
         renderInboxList(rows || []);
         updateInboxUnreadBadge(rows || []);
       } catch (e) {
-        const list = document.getElementById('inbox-list');
         if (list) list.innerHTML = '<p class="p-4 text-center text-red-500 text-sm">Could not load inbox.</p>';
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh'; }
+        if (list) list.classList.remove('opacity-40');
       }
     }
 
@@ -4797,7 +4898,17 @@
         const e = await res.json();
         if (!res.ok) throw new Error(e.error || 'HTTP ' + res.status);
 
+        currentInboxEmail = e;
         const customer = e.customer_id ? customersById[e.customer_id] : null;
+        // Already matched to a customer by sender address -> one click
+        // saves it, no need to search. Unmatched (e.g. a brand-new
+        // enquiry, or the sender's address doesn't match anyone on file) ->
+        // opens a picker to attach it to a customer by hand.
+        const saveBtn = e.saved_to_customer
+          ? `<button type="button" onclick="unsaveInboxEmailFromCustomer('${escapeAttr(e.id)}')" class="text-xs bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg font-semibold">✓ Saved to ${escapeHtml(customer ? customer.name : 'customer')}</button>`
+          : customer
+            ? `<button type="button" onclick="saveInboxEmailToCustomer('${escapeAttr(e.id)}', '${escapeAttr(customer.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">+ Save to ${escapeHtml(customer.name)}</button>`
+            : `<button type="button" onclick="toggleInboxCustomerPicker('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">+ Add to Customer</button>`;
         detail.innerHTML = `
           <div class="flex items-start justify-between gap-2 mb-3 pb-3 border-b border-slate-200">
             <div>
@@ -4806,12 +4917,14 @@
               ${customer ? `<p class="text-xs text-indigo-600 mt-0.5">Matched customer: ${escapeHtml(customer.name)}</p>` : ''}
               <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(ukDate(e.received_at))}</p>
             </div>
-            <div class="flex gap-2 shrink-0">
+            <div class="flex flex-wrap gap-2 shrink-0 justify-end">
               ${e.direction === 'inbound' ? `<button type="button" onclick="replyToInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Reply</button>` : ''}
+              ${saveBtn}
               ${e.raw_r2_key ? `<a href="${API_INBOX_URL}?raw=${encodeURIComponent(e.id)}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Download original</a>` : ''}
               <button type="button" onclick="deleteInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg font-semibold">Delete</button>
             </div>
           </div>
+          <div id="inbox-customer-picker" class="hidden mb-3 bg-slate-50 border border-slate-200 rounded-lg p-3"></div>
           <div class="text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml(e.body_text || '(No readable content)')}</div>
         `;
 
@@ -4825,6 +4938,67 @@
       } catch (e2) {
         detail.innerHTML = '<p class="text-sm text-red-500">Could not load this email.</p>';
       }
+    }
+
+    // Explicitly attaches one email to a customer's permanent record (see
+    // the "Email Conversation" card in the customer view) - deliberately
+    // opt-in per email rather than every auto-matched message, so a
+    // customer's record only fills up with what's actually worth keeping
+    // (e.g. a design proof approval), not routine back-and-forth.
+    async function saveInboxEmailToCustomer(id, customerId) {
+      await fetch(API_INBOX_URL, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, saved_to_customer: true, customer_id: customerId }),
+      });
+      viewInboxEmail(id);
+    }
+
+    async function unsaveInboxEmailFromCustomer(id) {
+      await fetch(API_INBOX_URL, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, saved_to_customer: false }),
+      });
+      viewInboxEmail(id);
+    }
+
+    // Shown only when an email's sender didn't auto-match a customer (a
+    // brand-new enquiry, or the address simply doesn't match anyone on
+    // file yet) - lets it be attached by hand instead.
+    function toggleInboxCustomerPicker(id) {
+      const panel = document.getElementById('inbox-customer-picker');
+      if (!panel) return;
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        panel.innerHTML = `
+          <input id="inbox-cust-picker-search" type="text" autocomplete="off" placeholder="Search customers by name, company, email or phone…"
+                 oninput="searchInboxCustomerPicker('${escapeAttr(id)}', this.value)"
+                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <div id="inbox-cust-picker-results" class="mt-2 max-h-48 overflow-y-auto"></div>`;
+        document.getElementById('inbox-cust-picker-search').focus();
+      }
+    }
+
+    function searchInboxCustomerPicker(id, raw) {
+      const resultsEl = document.getElementById('inbox-cust-picker-results');
+      if (!resultsEl) return;
+      const query = raw.trim().toLowerCase();
+      if (!query) { resultsEl.innerHTML = ''; return; }
+
+      const digits = query.replace(/\D/g, '');
+      const matches = Object.values(customersById).filter((c) => {
+        return (c.name || '').toLowerCase().includes(query)
+          || (c.company || '').toLowerCase().includes(query)
+          || (c.email || '').toLowerCase().includes(query)
+          || (digits.length >= 3 && (c.phone || '').replace(/\D/g, '').includes(digits));
+      }).slice(0, 15);
+
+      resultsEl.innerHTML = matches.length
+        ? matches.map((c) => `
+            <button type="button" onclick="saveInboxEmailToCustomer('${escapeAttr(id)}', '${escapeAttr(c.id)}')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm border-b border-slate-100 last:border-0">
+              <span class="font-semibold">${escapeHtml(c.name)}</span>${c.company ? ' - ' + escapeHtml(c.company) : ''}
+              <span class="block text-xs text-slate-500">${escapeHtml([c.email, c.phone].filter(Boolean).join(' · '))}</span>
+            </button>`).join('')
+        : '<p class="px-3 py-2 text-sm text-slate-400">No matches.</p>';
     }
 
     async function deleteInboxEmail(id) {
