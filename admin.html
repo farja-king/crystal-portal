@@ -297,7 +297,10 @@
 
       <!-- Customers Table -->
       <div class="grid gap-4 sm:grid-cols-2 items-start mb-6">
-        <input id="cust-search" type="text" placeholder="Search by name, company, email or phone…" oninput="filterCustomers()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <div class="relative">
+          <input id="cust-search" type="text" placeholder="Search by name, company, email or phone…" oninput="filterCustomers()" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+          <button type="button" onclick="clearCustomerSearch()" id="cust-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+        </div>
 
         <!-- Import from Square's customer export CSV - see importCustomersCsv().
              Re-importing an updated export updates existing customers (matched
@@ -1152,6 +1155,7 @@
     // dashes, leading 0 vs +44) doesn't stop a match.
     function filterCustomers() {
       const raw = document.getElementById('cust-search').value.trim().toLowerCase();
+      document.getElementById('cust-search-clear').classList.toggle('hidden', !raw);
       if (!raw) { renderCustomersTable(allCustomers); return; }
 
       const digits = raw.replace(/\D/g, '');
@@ -1163,6 +1167,13 @@
         return nameMatch || companyMatch || emailMatch || phoneMatch;
       });
       renderCustomersTable(filtered);
+    }
+
+    function clearCustomerSearch() {
+      const input = document.getElementById('cust-search');
+      input.value = '';
+      filterCustomers();
+      input.focus();
     }
 
     function renderCustomersTable(customers) {
