@@ -24,6 +24,13 @@
 //   Text var      NTFY_TOPIC     -> a private, hard-to-guess topic name,
 //                                   e.g. "crystalportal-mail-7f2a9c"
 //   Text var      NTFY_TITLE     -> optional, defaults to "New email" below
+//   Secret        NTFY_ACCESS_TOKEN -> a ntfy.sh account access token (free
+//                                   account, no paid plan needed). Strongly
+//                                   recommended - anonymous publishing shares
+//                                   a rate limit across everyone hitting
+//                                   ntfy.sh from Cloudflare's IPs and gets
+//                                   exhausted fast (see the 429 handling
+//                                   below for what that looks like).
 
 export default {
   async email(message, env, ctx) {
@@ -101,12 +108,21 @@ export default {
             // .trim() strips a stray trailing space/newline (very easy to
             // paste in by accident when setting the variable in Cloudflare)
             // - that alone is enough to 404 against ntfy.sh's router.
+            // NTFY_ACCESS_TOKEN is optional but strongly recommended -
+            // anonymous publishing shares a rate limit across every unrelated
+            // request hitting ntfy.sh from Cloudflare's IP ranges, which
+            // exhausts fast. An access token (free ntfy.sh account, no paid
+            // plan needed) ties usage to this account instead.
+            const headers = {
+              "Title": asciiSafe(env.NTFY_TITLE || "New email - Crystal Portal"),
+              "Priority": "default",
+            };
+            if (env.NTFY_ACCESS_TOKEN) {
+              headers["Authorization"] = `Bearer ${env.NTFY_ACCESS_TOKEN.trim()}`;
+            }
             const res = await fetch(`https://ntfy.sh/${encodeURIComponent(ntfyTopic)}`, {
               method: "POST",
-              headers: {
-                "Title": asciiSafe(env.NTFY_TITLE || "New email - Crystal Portal"),
-                "Priority": "default",
-              },
+              headers,
               body: `From: ${fromName || fromAddress}\nSubject: ${subject}`,
             });
             const bodyText = await res.text();
