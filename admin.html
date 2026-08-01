@@ -2071,8 +2071,11 @@
           const statusClass = isInvoice
             ? (o.paid_status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700')
             : 'bg-slate-100 text-slate-700';
+          const emailedNote = o.email_sent_at
+            ? '<span class="block text-xs text-slate-400 mt-0.5">Emailed ' + (o.email_sent_count > 1 ? o.email_sent_count + '&times; &middot; last ' : '') + escapeHtml(ukDate(o.email_sent_at)) + '</span>'
+            : '';
           return '<tr class="hover:bg-slate-50">' +
-            '<td class="p-2 font-semibold text-slate-900">' + escapeHtml(number) + '</td>' +
+            '<td class="p-2 font-semibold text-slate-900">' + escapeHtml(number) + emailedNote + '</td>' +
             '<td class="p-2 text-slate-600">' + escapeHtml(ukDate(o.created_at)) + '</td>' +
             '<td class="p-2 text-right font-medium text-slate-900">' + money(o.total) + '</td>' +
             '<td class="p-2"><span class="px-2 py-0.5 text-xs font-semibold rounded-full ' + statusClass + '">' + escapeHtml(statusLabel) + '</span></td>' +
@@ -4409,7 +4412,7 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}</td>
+              <td class="p-4">${statusBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
@@ -4511,7 +4514,12 @@
           <p class="text-xs text-slate-500 font-medium mb-1">Notes</p>
           <p class="text-slate-700 text-sm">${escapeHtml(o.notes)}</p>
         </div>` : ''}
+        <div class="py-4">
+          <p class="text-xs text-slate-500 font-medium mb-2">Communication History <span class="font-normal text-slate-400">(internal only - never shown to the customer)</span></p>
+          <div id="order-comm-history">Loading…</div>
+        </div>
       `;
+      loadOrderCommHistory(id);
 
       actions.innerHTML = `
         <button onclick="editOrderInBuilder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
@@ -4526,6 +4534,29 @@
       panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    // The full send history for this quote/invoice - every "Emailed again"
+    // shows here with its own timestamp, not just the most recent send (see
+    // email_log in functions/api/send-email.js). Internal record only.
+    async function loadOrderCommHistory(id) {
+      const el = document.getElementById('order-comm-history');
+      if (!el) return;
+      try {
+        const res = await fetch('/api/send-email?order_id=' + encodeURIComponent(id), { cache: 'no-store' });
+        const log = await res.json();
+        if (!el.isConnected) return; // panel closed/re-rendered while this was in flight
+        if (!Array.isArray(log) || !log.length) {
+          el.innerHTML = '<p class="text-sm text-slate-400">No emails sent yet.</p>';
+          return;
+        }
+        el.innerHTML = log.map((e) => `
+          <div class="text-sm text-slate-700 border-b border-slate-100 last:border-0 py-1.5">
+            Emailed to <span class="font-medium">${escapeHtml(e.sent_to)}</span>
+            <span class="text-slate-400">- ${escapeHtml(ukDate(e.sent_at))} ${escapeHtml(new Date(e.sent_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}</span>
+          </div>`).join('');
+      } catch (e) {
+        if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load communication history.</p>';
+      }
+    }
 
     async function convertOrderToInvoice(id) {
       if (!confirm('Convert this quote to an invoice? It will get its own invoice number.')) return;
@@ -4645,6 +4676,7 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
         await loadOrders();
+        if (viewingOrderId === id) loadOrderCommHistory(id);
       } catch (e) {
         alert('Could not send email: ' + e.message);
         if (btn) { btn.disabled = false; btn.textContent = originalText; }
