@@ -1793,7 +1793,11 @@
             </button>
             ${expanded ? `
               <div class="mt-2 pt-2 border-t border-slate-100 text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml(e.body_text || '(No readable content)')}</div>
-              <button type="button" onclick="removeInboxEmailFromCustomerRecord('${escapeAttr(e.id)}')" class="mt-2 text-xs text-rose-500 hover:text-rose-700 font-medium">Remove from this customer's record</button>
+              <div class="mt-2 flex flex-wrap gap-3">
+                <button type="button" onclick="viewCvInboxEmailInInbox('${escapeAttr(e.id)}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">View in Inbox</button>
+                <button type="button" onclick="removeInboxEmailFromCustomerRecord('${escapeAttr(e.id)}')" class="text-xs text-slate-500 hover:text-slate-700 font-medium">Remove from this customer's record</button>
+                <button type="button" onclick="deleteCvInboxEmail('${escapeAttr(e.id)}')" class="text-xs text-rose-500 hover:text-rose-700 font-medium">Delete permanently</button>
+              </div>
             ` : ''}
           </div>`;
       }).join('');
@@ -1825,6 +1829,27 @@
       cvInboxEmails = cvInboxEmails.filter((e) => e.id !== id);
       cvInboxExpandedId = null;
       renderCustomerInboxEmails();
+    }
+
+    // Actually deletes the email (same as the Delete button in the main
+    // Inbox tab) rather than just unlinking it from this customer - it's
+    // gone from the portal entirely, not just this record.
+    async function deleteCvInboxEmail(id) {
+      if (!confirm('Delete this email? This only removes it from the portal - your real mailbox is untouched.')) return;
+      await fetch('/api/inbox', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+      });
+      cvInboxEmails = cvInboxEmails.filter((e) => e.id !== id);
+      cvInboxExpandedId = null;
+      renderCustomerInboxEmails();
+    }
+
+    // Jumps to the full Inbox tab view of this email (Reply, download the
+    // original .eml, etc. - none of which this compact card supports).
+    function viewCvInboxEmailInInbox(id) {
+      closeCustomerViewModal();
+      switchTab('inbox');
+      viewInboxEmail(id);
     }
 
     // The quote builder keeps its own copy (orderCustomerItems) of whichever
