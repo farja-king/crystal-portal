@@ -115,6 +115,17 @@ export default {
           thread_id TEXT
         )
       `).run();
+      // CREATE TABLE IF NOT EXISTS is a no-op against a table that already
+      // existed before these columns were added to it - same fallback as
+      // functions/api/inbox.js, needed here too since either side could be
+      // the first to ever touch the table on a fresh deploy.
+      for (const col of ["saved_to_customer INTEGER DEFAULT 0", "message_id TEXT", "in_reply_to TEXT", "thread_id TEXT"]) {
+        try {
+          await env.DB.prepare(`ALTER TABLE inbox_emails ADD COLUMN ${col}`).run();
+        } catch (e) {
+          // already exists
+        }
+      }
 
       await env.DB.prepare(`
         INSERT INTO inbox_emails (id, direction, from_address, from_name, to_address, subject, body_text, customer_id, raw_r2_key, message_id, in_reply_to, thread_id)

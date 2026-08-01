@@ -52,10 +52,10 @@ export async function onRequest(context) {
     `).run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_customer ON inbox_emails (customer_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_received ON inbox_emails (received_at)").run();
-    await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_thread ON inbox_emails (thread_id)").run();
     // The table already existed on live D1 before these were added to the
     // CREATE TABLE above - same "already exists" tolerance as every other
-    // API here.
+    // API here. Must run before the thread_id index below, or that index
+    // creation fails outright on a table that doesn't have the column yet.
     for (const col of ["saved_to_customer INTEGER DEFAULT 0", "message_id TEXT", "in_reply_to TEXT", "thread_id TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE inbox_emails ADD COLUMN ${col}`).run();
@@ -63,6 +63,7 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_thread ON inbox_emails (thread_id)").run();
 
     const url = new URL(request.url);
 
