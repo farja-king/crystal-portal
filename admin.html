@@ -29,6 +29,10 @@
           <button id="tab-orders" onclick="switchTab('orders')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Quotes & Invoices
           </button>
+          <button id="tab-inbox" onclick="switchTab('inbox')" class="relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            Inbox
+            <span id="inbox-unread-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
+          </button>
         </div>
         <button id="logout-btn" onclick="logout()" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
           Sign out
@@ -713,6 +717,48 @@
       </div>
     </section>
 
+    <!-- INBOX TAB -->
+    <section id="section-inbox" class="hidden">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Inbox</h2>
+          <p class="text-slate-500 text-sm">Mail sent to hello@embroidery.click - a copy lands here automatically. Sending, reading and deleting here don't touch your real mailbox.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="toggleInboxCompose()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            + Compose
+          </button>
+          <button onclick="loadInbox()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+
+      <div id="inbox-compose-form" class="hidden grid gap-2 mb-6 bg-slate-50 border border-slate-200 rounded-lg p-4">
+        <input id="inbox-compose-to" placeholder="To - email address *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="inbox-compose-subject" placeholder="Subject *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <textarea id="inbox-compose-body" rows="6" placeholder="Message…" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm"></textarea>
+        <div class="flex gap-2">
+          <button type="button" onclick="sendInboxCompose()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Send</button>
+          <button type="button" onclick="toggleInboxCompose()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Cancel</button>
+        </div>
+        <p id="inbox-compose-msg" class="text-xs text-red-600"></p>
+      </div>
+
+      <div class="grid gap-4 md:grid-cols-5">
+        <div class="md:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div id="inbox-list" class="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto text-sm">
+            <p class="p-4 text-center text-slate-400">Loading…</p>
+          </div>
+        </div>
+        <div class="md:col-span-3 bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <div id="inbox-detail">
+            <p class="text-slate-400 text-sm">Select an email to read it.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- Reusable Yes/No confirm overlay - see confirmModal() - replaces the
@@ -963,13 +1009,16 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['quotes', 'customers', 'catalog', 'orders'];
+    const ADMIN_TABS = ['quotes', 'customers', 'catalog', 'orders', 'inbox'];
     function switchTab(tab) {
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
-      const idle = 'px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
+      const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
       ADMIN_TABS.forEach((name) => {
         document.getElementById('section-' + name).classList.toggle('hidden', tab !== name);
-        document.getElementById('tab-' + name).className = tab === name ? active : idle;
+        const isInbox = name === 'inbox';
+        document.getElementById('tab-' + name).className = tab === name
+          ? (isInbox ? active + ' relative' : active)
+          : idle;
       });
       // The catalog is big, so it's only fetched once the tab is actually opened
       if (tab === 'catalog' && !catalogLoaded) loadCatalog(0);
@@ -980,6 +1029,7 @@
       // what's shown always matches the server rather than whatever was
       // cached whenever the customer was originally selected.
       if (tab === 'orders' && document.getElementById('ord-customer').value) refreshOrderCustomerItems();
+      if (tab === 'inbox') loadInbox();
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
@@ -4684,6 +4734,161 @@
       }
     }
 
+    // ============================== Inbox (built-in email client) ==============================
+    // Mail lands here via a separate Cloudflare Email Worker (see
+    // email-worker/worker.js) writing into the same D1 database - this file
+    // only ever reads/manages what's already there, via functions/api/inbox.js.
+    const API_INBOX_URL = '/api/inbox';
+    let inboxById = {};
+    let viewingInboxEmailId = null;
+    let inboxComposeReplyTo = null; // customer_id to tag a reply with, if replying to a matched customer
+
+    // Runs on a timer regardless of which tab is active, so the unread
+    // badge in the nav updates even if you're not looking at the Inbox tab.
+    async function loadInbox() {
+      try {
+        const res = await fetch(API_INBOX_URL, { cache: 'no-store' });
+        const rows = await res.json();
+        inboxById = {};
+        (rows || []).forEach((e) => { inboxById[e.id] = e; });
+        renderInboxList(rows || []);
+        updateInboxUnreadBadge(rows || []);
+      } catch (e) {
+        const list = document.getElementById('inbox-list');
+        if (list) list.innerHTML = '<p class="p-4 text-center text-red-500 text-sm">Could not load inbox.</p>';
+      }
+    }
+
+    function updateInboxUnreadBadge(rows) {
+      const badge = document.getElementById('inbox-unread-badge');
+      if (!badge) return;
+      const unread = rows.filter((e) => !e.is_read).length;
+      badge.textContent = unread > 99 ? '99+' : String(unread);
+      badge.classList.toggle('hidden', unread === 0);
+    }
+
+    function renderInboxList(rows) {
+      const list = document.getElementById('inbox-list');
+      if (!rows.length) {
+        list.innerHTML = '<p class="p-4 text-center text-slate-400 text-sm">No emails yet.</p>';
+        return;
+      }
+      list.innerHTML = rows.map((e) => {
+        const isOutbound = e.direction === 'outbound';
+        const who = isOutbound ? ('To: ' + (e.to_address || '')) : (e.from_name || e.from_address || 'Unknown sender');
+        const unreadDot = !e.is_read && !isOutbound ? '<span class="inline-block w-2 h-2 bg-indigo-600 rounded-full mr-1.5"></span>' : '';
+        return `<button type="button" onclick="viewInboxEmail('${escapeAttr(e.id)}')" class="w-full text-left px-4 py-3 hover:bg-slate-50 ${viewingInboxEmailId === e.id ? 'bg-indigo-50' : ''}">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm ${e.is_read || isOutbound ? 'text-slate-700' : 'font-semibold text-slate-900'} truncate">${unreadDot}${escapeHtml(who)}</span>
+            <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDate(e.received_at))}</span>
+          </div>
+          <div class="text-sm ${e.is_read || isOutbound ? 'text-slate-500' : 'text-slate-800 font-medium'} truncate">${escapeHtml(e.subject || '(no subject)')}</div>
+          <div class="text-xs text-slate-400 truncate">${escapeHtml(e.preview || '')}</div>
+        </button>`;
+      }).join('');
+    }
+
+    async function viewInboxEmail(id) {
+      viewingInboxEmailId = id;
+      const detail = document.getElementById('inbox-detail');
+      detail.innerHTML = '<p class="text-slate-400 text-sm">Loading…</p>';
+      try {
+        const res = await fetch(API_INBOX_URL + '?id=' + encodeURIComponent(id), { cache: 'no-store' });
+        const e = await res.json();
+        if (!res.ok) throw new Error(e.error || 'HTTP ' + res.status);
+
+        const customer = e.customer_id ? customersById[e.customer_id] : null;
+        detail.innerHTML = `
+          <div class="flex items-start justify-between gap-2 mb-3 pb-3 border-b border-slate-200">
+            <div>
+              <p class="font-bold text-slate-900">${escapeHtml(e.subject || '(no subject)')}</p>
+              <p class="text-sm text-slate-600 mt-1">${e.direction === 'outbound' ? 'To' : 'From'}: ${escapeHtml(e.direction === 'outbound' ? e.to_address : (e.from_name ? e.from_name + ' <' + e.from_address + '>' : e.from_address))}</p>
+              ${customer ? `<p class="text-xs text-indigo-600 mt-0.5">Matched customer: ${escapeHtml(customer.name)}</p>` : ''}
+              <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(ukDate(e.received_at))}</p>
+            </div>
+            <div class="flex gap-2 shrink-0">
+              ${e.direction === 'inbound' ? `<button type="button" onclick="replyToInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Reply</button>` : ''}
+              ${e.raw_r2_key ? `<a href="${API_INBOX_URL}?raw=${encodeURIComponent(e.id)}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Download original</a>` : ''}
+              <button type="button" onclick="deleteInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg font-semibold">Delete</button>
+            </div>
+          </div>
+          <div class="text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml(e.body_text || '(No readable content)')}</div>
+        `;
+
+        if (!e.is_read && e.direction === 'inbound') {
+          await fetch(API_INBOX_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, is_read: true }) });
+          if (inboxById[id]) inboxById[id].is_read = 1;
+          loadInbox();
+        } else {
+          renderInboxList(Object.values(inboxById));
+        }
+      } catch (e2) {
+        detail.innerHTML = '<p class="text-sm text-red-500">Could not load this email.</p>';
+      }
+    }
+
+    async function deleteInboxEmail(id) {
+      if (!confirm('Delete this email? This only removes it from the portal - your real mailbox is untouched.')) return;
+      await fetch(API_INBOX_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+      if (viewingInboxEmailId === id) {
+        viewingInboxEmailId = null;
+        document.getElementById('inbox-detail').innerHTML = '<p class="text-slate-400 text-sm">Select an email to read it.</p>';
+      }
+      loadInbox();
+    }
+
+    function toggleInboxCompose() {
+      const panel = document.getElementById('inbox-compose-form');
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        document.getElementById('inbox-compose-msg').textContent = '';
+        document.getElementById('inbox-compose-to').focus();
+      } else {
+        inboxComposeReplyTo = null;
+      }
+    }
+
+    function replyToInboxEmail(id) {
+      const e = inboxById[id];
+      if (!e) return;
+      inboxComposeReplyTo = e.customer_id || null;
+      document.getElementById('inbox-compose-form').classList.remove('hidden');
+      document.getElementById('inbox-compose-to').value = e.from_address || '';
+      document.getElementById('inbox-compose-subject').value = /^re:/i.test(e.subject || '') ? e.subject : ('Re: ' + (e.subject || ''));
+      document.getElementById('inbox-compose-body').value = '';
+      document.getElementById('inbox-compose-msg').textContent = '';
+      document.getElementById('inbox-compose-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById('inbox-compose-body').focus();
+    }
+
+    async function sendInboxCompose() {
+      const msg = document.getElementById('inbox-compose-msg');
+      const to = document.getElementById('inbox-compose-to').value.trim();
+      const subject = document.getElementById('inbox-compose-subject').value.trim();
+      const body = document.getElementById('inbox-compose-body').value;
+      if (!to) { msg.textContent = 'A recipient email address is required.'; return; }
+      if (!subject) { msg.textContent = 'A subject is required.'; return; }
+
+      msg.className = 'text-xs text-slate-500';
+      msg.textContent = 'Sending…';
+      try {
+        const res = await fetch(API_INBOX_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, subject, body, customer_id: inboxComposeReplyTo }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        document.getElementById('inbox-compose-to').value = '';
+        document.getElementById('inbox-compose-subject').value = '';
+        document.getElementById('inbox-compose-body').value = '';
+        toggleInboxCompose();
+        loadInbox();
+      } catch (e) {
+        msg.className = 'text-xs text-red-600';
+        msg.textContent = 'Could not send: ' + e.message;
+      }
+    }
+
     renderOrderLines();
 
     // Initial Load
@@ -4691,6 +4896,8 @@
     loadCustomers();
     loadFacets();
     refreshAuthState();
+    loadInbox();
+    setInterval(loadInbox, 60000); // keeps the unread badge current even off the Inbox tab
   </script>
 </body>
 </html>
