@@ -1033,15 +1033,22 @@
           ? (isInbox ? active + ' relative' : active)
           : idle;
       });
-      // The catalog is big, so it's only fetched once the tab is actually opened
-      if (tab === 'catalog' && !catalogLoaded) loadCatalog(0);
-      if (tab === 'orders' && !ordersLoaded) { loadOrders(); renderOrderCustomerPicker(); }
-      // A customer's saved items can change from a completely separate visit
-      // (Custom Price List import/edit) with this tab just sitting open in
-      // another one - refetch on every visit, not just on first load, so
-      // what's shown always matches the server rather than whatever was
-      // cached whenever the customer was originally selected.
-      if (tab === 'orders' && document.getElementById('ord-customer').value) refreshOrderCustomerItems();
+      // Every tab refetches its own data on every switch into it, not just
+      // the first time - a second browser tab/session, or just time passing,
+      // can leave whatever was cached from the last visit stale, and
+      // clicking a nav tab is a much more natural "yes, check for changes"
+      // moment than remembering to hit each tab's own Refresh button.
+      if (tab === 'quotes') loadQuotes();
+      if (tab === 'customers') loadCustomers();
+      if (tab === 'catalog') loadCatalog(0);
+      if (tab === 'orders') {
+        loadOrders();
+        renderOrderCustomerPicker();
+        // A customer's saved items can change from a completely separate
+        // visit (Custom Price List import/edit) with this tab just sitting
+        // open in another one - refetch here too, not just on first load.
+        if (document.getElementById('ord-customer').value) refreshOrderCustomerItems();
+      }
       if (tab === 'inbox') loadInbox();
     }
 
@@ -1842,6 +1849,16 @@
       cvInboxEmails = cvInboxEmails.filter((e) => e.id !== id);
       cvInboxExpandedId = null;
       renderCustomerInboxEmails();
+      // The main Inbox tab's detail panel (and its own list) has no idea
+      // this just got deleted from here - clear it out if it happened to be
+      // showing the same email, same as deleting it there directly would.
+      delete inboxById[id];
+      if (viewingInboxEmailId === id) {
+        viewingInboxEmailId = null;
+        const detail = document.getElementById('inbox-detail');
+        if (detail) detail.innerHTML = '<p class="text-slate-400 text-sm">Select an email to read it.</p>';
+      }
+      renderInboxList(Object.values(inboxById));
     }
 
     // Jumps to the full Inbox tab view of this email (Reply, download the
