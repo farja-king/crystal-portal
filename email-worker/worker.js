@@ -15,22 +15,23 @@
 //   3. Matches the sender's address against the customers table, if any
 //   4. Inserts a row into inbox_emails (same table functions/api/inbox.js
 //      reads from - both need the same D1 database bound to them)
-//   5. Pushes a notification via ntfy.sh so a new email doesn't sit unseen
+//   5. Emails a notification via Resend so a new email doesn't sit unseen -
+//      relies on your phone's own Mail app pushing that notification,
+//      rather than a separate push service (see git history for the
+//      ntfy.sh attempt this replaced - its free anonymous tier is rate
+//      limited across everyone hitting it from Cloudflare's IPs, not
+//      practical to rely on without a paid plan)
 //
 // Bindings this Worker needs (Settings -> Variables and Bindings, on the
 // Worker itself - separate from the Pages project's bindings):
 //   D1 database   DB             -> crystal-portal-db (same one Pages uses)
 //   R2 bucket     DESIGN_FILES   -> crystal-portal-customer-designs (same one)
-//   Text var      NTFY_TOPIC     -> a private, hard-to-guess topic name,
-//                                   e.g. "crystalportal-mail-7f2a9c"
-//   Text var      NTFY_TITLE     -> optional, defaults to "New email" below
-//   Secret        NTFY_ACCESS_TOKEN -> a ntfy.sh account access token (free
-//                                   account, no paid plan needed). Strongly
-//                                   recommended - anonymous publishing shares
-//                                   a rate limit across everyone hitting
-//                                   ntfy.sh from Cloudflare's IPs and gets
-//                                   exhausted fast (see the 429 handling
-//                                   below for what that looks like).
+//   Secret        RESEND_API_KEY -> same Resend API key as the Pages project
+//   Text var      RESEND_FROM_EMAIL -> e.g. "Crystal Portal <hello@embroidery.click>"
+//   Text var      NOTIFY_EMAIL_TO -> the personal address to notify, e.g.
+//                                    martinlyon@icloud.com or martinlyon70@gmail.com
+//                                    - whichever has push notifications on
+//                                    your phone already
 
 export default {
   async email(message, env, ctx) {
@@ -97,38 +98,34 @@ export default {
       `).bind(id, fromAddress, fromName, toAddress, subject, bodyText.slice(0, 20000), customerId, r2Key).run();
     }
 
-    // ---- 6. Push notification - doesn't block the email having been saved
-    // (that already happened above), but logs the response either way so a
-    // rejection is visible in Observability Logs instead of failing silently.
-    const ntfyTopic = (env.NTFY_TOPIC || "").trim();
-    if (ntfyTopic) {
+    // ---- 6. Notification - a plain email via Resend (same service already
+    // sending quotes/invoices) rather than a push service, since a phone's
+    // Mail app already pushes new-mail notifications natively. Sidesteps
+    // ntfy.sh's anonymous rate limit entirely (see git history on this file
+    // if that's ever worth revisiting) by reusing infrastructure that's
+    // already proven reliable. Doesn't block the email having been saved
+    // (that already happened above); logs the response either way.
+    if (env.RESEND_API_KEY && env.NOTIFY_EMAIL_TO) {
       ctx.waitUntil(
         (async () => {
           try {
-            // .trim() strips a stray trailing space/newline (very easy to
-            // paste in by accident when setting the variable in Cloudflare)
-            // - that alone is enough to 404 against ntfy.sh's router.
-            // NTFY_ACCESS_TOKEN is optional but strongly recommended -
-            // anonymous publishing shares a rate limit across every unrelated
-            // request hitting ntfy.sh from Cloudflare's IP ranges, which
-            // exhausts fast. An access token (free ntfy.sh account, no paid
-            // plan needed) ties usage to this account instead.
-            const headers = {
-              "Title": asciiSafe(env.NTFY_TITLE || "New email - Crystal Portal"),
-              "Priority": "default",
-            };
-            if (env.NTFY_ACCESS_TOKEN) {
-              headers["Authorization"] = `Bearer ${env.NTFY_ACCESS_TOKEN.trim()}`;
-            }
-            const res = await fetch(`https://ntfy.sh/${encodeURIComponent(ntfyTopic)}`, {
+            const res = await fetch("https://api.resend.com/emails", {
               method: "POST",
-              headers,
-              body: `From: ${fromName || fromAddress}\nSubject: ${subject}`,
+              headers: {
+                "Authorization": `Bearer ${env.RESEND_API_KEY.trim()}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                from: env.RESEND_FROM_EMAIL || "Crystal Portal <onboarding@resend.dev>",
+                to: [env.NOTIFY_EMAIL_TO.trim()],
+                subject: `New email: ${subject}`,
+                html: `<p>New message in the portal Inbox, from <strong>${fromName || fromAddress}</strong>:</p><p>${subject}</p>`,
+              }),
             });
             const bodyText = await res.text();
-            console.log(`ntfy.sh response: ${res.status} ${res.statusText} - ${bodyText}`);
+            console.log(`Notification email response: ${res.status} ${res.statusText} - ${bodyText}`);
           } catch (e) {
-            console.log(`ntfy.sh request failed: ${e.message}`);
+            console.log(`Notification email failed: ${e.message}`);
           }
         })()
       );
