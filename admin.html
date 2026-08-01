@@ -17,10 +17,10 @@
       </div>
       <div class="flex items-center gap-3">
         <div class="flex space-x-2 bg-slate-800 p-1 rounded-lg">
-          <button id="tab-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+          <button id="tab-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition">
             📊 Dashboard
           </button>
-          <button id="tab-quotes" onclick="switchTab('quotes')" class="px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition">
+          <button id="tab-quotes" onclick="switchTab('quotes')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Quotes & Orders
           </button>
           <button id="tab-customers" onclick="switchTab('customers')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
@@ -60,7 +60,7 @@
   <main class="max-w-7xl mx-auto px-6 py-8">
 
     <!-- DASHBOARD TAB -->
-    <section id="section-dashboard" class="hidden">
+    <section id="section-dashboard">
       <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Dashboard</h2>
@@ -99,7 +99,7 @@
     </section>
 
     <!-- QUOTES TAB -->
-    <section id="section-quotes">
+    <section id="section-quotes" class="hidden">
       <div class="flex justify-between items-center mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Quotes & Order Pipeline</h2>
@@ -5439,6 +5439,7 @@
     renderOrderLines();
 
     // Initial Load
+    loadDashboard(); // the landing tab, so it needs its data immediately, not just on first click
     loadQuotes();
     loadCustomers();
     loadFacets();
