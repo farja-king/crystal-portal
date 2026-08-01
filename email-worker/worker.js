@@ -45,7 +45,7 @@ export default {
 
     // ---- 3. Best-effort body extraction - see extractPlainText for the
     // actual multipart/encoding handling.
-    const rawText = new TextDecoder("utf-8", { fatal: false }).decode(rawBuf);
+    const rawText = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(rawBuf);
     const bodyText = extractPlainText(rawText, message.headers.get("content-type") || "text/plain");
 
     // ---- 4. Match to an existing customer by email, if any - brand new
@@ -149,7 +149,7 @@ function decodeBase64(str) {
     const binary = atob(str.replace(/\s+/g, ""));
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(bytes);
   } catch (e) {
     return str;
   }
