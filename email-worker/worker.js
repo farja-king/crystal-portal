@@ -93,11 +93,15 @@ export default {
     // ---- 6. Push notification - doesn't block the email having been saved
     // (that already happened above), but logs the response either way so a
     // rejection is visible in Observability Logs instead of failing silently.
-    if (env.NTFY_TOPIC) {
+    const ntfyTopic = (env.NTFY_TOPIC || "").trim();
+    if (ntfyTopic) {
       ctx.waitUntil(
         (async () => {
           try {
-            const res = await fetch(`https://ntfy.sh/${env.NTFY_TOPIC}`, {
+            // .trim() strips a stray trailing space/newline (very easy to
+            // paste in by accident when setting the variable in Cloudflare)
+            // - that alone is enough to 404 against ntfy.sh's router.
+            const res = await fetch(`https://ntfy.sh/${encodeURIComponent(ntfyTopic)}`, {
               method: "POST",
               headers: {
                 "Title": asciiSafe(env.NTFY_TITLE || "New email - Crystal Portal"),
