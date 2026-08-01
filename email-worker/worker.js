@@ -91,6 +91,30 @@ export default {
         // inbox_emails table not created yet - falls back to starting its own thread
       }
     }
+    // Fallback: the header match found nothing (no In-Reply-To at all, or
+    // it didn't match anything on file - some providers don't let a sender
+    // override Message-ID, so what we stored on our own outbound copy may
+    // not be what was actually delivered). Match by same correspondent +
+    // normalized subject instead - less precise than a real Message-ID,
+    // but far more resilient than relying on that round-tripping cleanly
+    // through every mail provider.
+    if (env.DB && threadId === id) {
+      try {
+        const { results: candidates } = await env.DB.prepare(`
+          SELECT id, thread_id, subject FROM inbox_emails
+          WHERE deleted_at IS NULL AND (from_address = ?1 OR to_address = ?1)
+          ORDER BY received_at DESC LIMIT 20
+        `).bind(fromAddress).all();
+        const normalizeSubject = (s) => (s || "").replace(/^\s*(re|fwd?)\s*:\s*/gi, "").trim().toLowerCase();
+        const target = normalizeSubject(subject);
+        if (target) {
+          const match = candidates.find((c) => normalizeSubject(c.subject) === target);
+          if (match) threadId = match.thread_id || match.id;
+        }
+      } catch (e) {
+        // no candidates / table issue - falls back to starting its own thread
+      }
+    }
 
     // ---- 5. Write the row. Same lazy CREATE TABLE as functions/api/inbox.js
     // - whichever of the two runs first is the one that actually creates it.

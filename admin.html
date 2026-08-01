@@ -5097,7 +5097,7 @@
               <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(ukDate(e.received_at))}</p>
             </div>
             <div class="flex flex-wrap gap-2 shrink-0 justify-end">
-              ${e.direction === 'inbound' ? `<button type="button" onclick="replyToInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Reply</button>` : ''}
+              <button type="button" onclick="replyToInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Reply</button>
               ${saveBtn}
               ${e.raw_r2_key ? `<a href="${API_INBOX_URL}?raw=${encodeURIComponent(e.id)}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Download original</a>` : ''}
               <button type="button" onclick="deleteInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg font-semibold">Delete</button>
@@ -5204,13 +5204,17 @@
       }
     }
 
+    // Works from either an inbound message (reply to whoever sent it) or
+    // one of your own outbound ones (reply to whoever you sent it to) - a
+    // follow-up on your own sent message shouldn't have to wait for them
+    // to reply first.
     function replyToInboxEmail(id) {
       const e = inboxById[id];
       if (!e) return;
       inboxComposeReplyTo = e.customer_id || null;
       inboxComposeInReplyToId = id;
       document.getElementById('inbox-compose-form').classList.remove('hidden');
-      document.getElementById('inbox-compose-to').value = e.from_address || '';
+      document.getElementById('inbox-compose-to').value = (e.direction === 'outbound' ? e.to_address : e.from_address) || '';
       document.getElementById('inbox-compose-subject').value = /^re:/i.test(e.subject || '') ? e.subject : ('Re: ' + (e.subject || ''));
       document.getElementById('inbox-compose-body').value = '';
       document.getElementById('inbox-compose-msg').textContent = '';

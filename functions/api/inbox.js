@@ -64,6 +64,15 @@ export async function onRequest(context) {
       }
     }
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_thread ON inbox_emails (thread_id)").run();
+    // Every message from before thread_id existed has it NULL, not "equal
+    // to its own id" - the frontend's grouping already falls back to
+    // treating a NULL thread_id as a singleton thread keyed by the
+    // message's own id, but a ?thread_id= lookup for that id would find
+    // nothing (the stored value is genuinely NULL, not that id), making
+    // the message effectively unclickable/undeletable. Backfilling once
+    // makes the actual column match what the frontend already assumes.
+    // Idempotent and a no-op once every row has a thread_id.
+    await db.prepare("UPDATE inbox_emails SET thread_id = id WHERE thread_id IS NULL").run();
 
     const url = new URL(request.url);
 
