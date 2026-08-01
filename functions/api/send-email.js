@@ -29,6 +29,11 @@ export async function onRequest(context) {
     return json({ error: "Email isn't set up yet - the RESEND_API_KEY secret is missing from this Pages project." }, 500);
   }
   const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
+  // The from address lives on a send-only subdomain (verified in Resend
+  // separately from the main domain, to keep sending reputation isolated
+  // from real inbound mail) - a customer hitting Reply needs to land
+  // somewhere that's actually read, not that subdomain.
+  const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
 
   const METHOD_LABELS = { embroidery: "Embroidery", dtf: "DTF", sublimation: "Sublimation", other: "Other" };
   const PLACEMENT_LABELS = { left_chest: "Left chest", sleeve: "Sleeve", back: "Back", other: "Other" };
@@ -128,6 +133,7 @@ export async function onRequest(context) {
       body: JSON.stringify({
         from: fromAddress,
         to: [to],
+        reply_to: replyToAddress,
         subject: `${docLabel} ${docNumber} from Crystal Custom Embroidery`,
         html,
       }),
