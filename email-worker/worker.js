@@ -90,18 +90,27 @@ export default {
       `).bind(id, fromAddress, fromName, toAddress, subject, bodyText.slice(0, 20000), customerId, r2Key).run();
     }
 
-    // ---- 6. Push notification - fire and forget, a failure here shouldn't
-    // stop the email from having been saved.
+    // ---- 6. Push notification - doesn't block the email having been saved
+    // (that already happened above), but logs the response either way so a
+    // rejection is visible in Observability Logs instead of failing silently.
     if (env.NTFY_TOPIC) {
       ctx.waitUntil(
-        fetch(`https://ntfy.sh/${env.NTFY_TOPIC}`, {
-          method: "POST",
-          headers: {
-            "Title": asciiSafe(env.NTFY_TITLE || "New email - Crystal Portal"),
-            "Priority": "default",
-          },
-          body: `From: ${fromName || fromAddress}\nSubject: ${subject}`,
-        }).catch(() => {})
+        (async () => {
+          try {
+            const res = await fetch(`https://ntfy.sh/${env.NTFY_TOPIC}`, {
+              method: "POST",
+              headers: {
+                "Title": asciiSafe(env.NTFY_TITLE || "New email - Crystal Portal"),
+                "Priority": "default",
+              },
+              body: `From: ${fromName || fromAddress}\nSubject: ${subject}`,
+            });
+            const bodyText = await res.text();
+            console.log(`ntfy.sh response: ${res.status} ${res.statusText} - ${bodyText}`);
+          } catch (e) {
+            console.log(`ntfy.sh request failed: ${e.message}`);
+          }
+        })()
       );
     }
   },
