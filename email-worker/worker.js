@@ -72,6 +72,26 @@ export default {
       }
     }
 
+    // ---- 4b. Conversation threading. This email's own Message-ID gets
+    // stored so a *reply to it* (sent from functions/api/inbox.js) can
+    // reference it via In-Reply-To. Going the other direction: if THIS
+    // email is itself a reply (In-Reply-To/References points at a message
+    // we already have), it joins that message's thread_id instead of
+    // starting a new one.
+    const messageId = message.headers.get("message-id") || null;
+    const inReplyTo = message.headers.get("in-reply-to")
+      || (message.headers.get("references") || "").trim().split(/\s+/).filter(Boolean).pop()
+      || null;
+    let threadId = id;
+    if (env.DB && inReplyTo) {
+      try {
+        const parent = await env.DB.prepare("SELECT id, thread_id FROM inbox_emails WHERE message_id = ?").bind(inReplyTo).first();
+        if (parent) threadId = parent.thread_id || parent.id;
+      } catch (e) {
+        // inbox_emails table not created yet - falls back to starting its own thread
+      }
+    }
+
     // ---- 5. Write the row. Same lazy CREATE TABLE as functions/api/inbox.js
     // - whichever of the two runs first is the one that actually creates it.
     if (env.DB) {
@@ -88,14 +108,18 @@ export default {
           is_read INTEGER DEFAULT 0,
           raw_r2_key TEXT,
           deleted_at TEXT,
-          received_at TEXT DEFAULT CURRENT_TIMESTAMP
+          received_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          saved_to_customer INTEGER DEFAULT 0,
+          message_id TEXT,
+          in_reply_to TEXT,
+          thread_id TEXT
         )
       `).run();
 
       await env.DB.prepare(`
-        INSERT INTO inbox_emails (id, direction, from_address, from_name, to_address, subject, body_text, customer_id, raw_r2_key)
-        VALUES (?, 'inbound', ?, ?, ?, ?, ?, ?, ?)
-      `).bind(id, fromAddress, fromName, toAddress, subject, bodyText.slice(0, 20000), customerId, r2Key).run();
+        INSERT INTO inbox_emails (id, direction, from_address, from_name, to_address, subject, body_text, customer_id, raw_r2_key, message_id, in_reply_to, thread_id)
+        VALUES (?, 'inbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(id, fromAddress, fromName, toAddress, subject, bodyText.slice(0, 20000), customerId, r2Key, messageId, inReplyTo, threadId).run();
     }
 
     // ---- 6. Notification - a plain email via Resend (same service already

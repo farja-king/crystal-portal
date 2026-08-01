@@ -44,18 +44,24 @@ export async function onRequest(context) {
         raw_r2_key TEXT,
         deleted_at TEXT,
         received_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        saved_to_customer INTEGER DEFAULT 0
+        saved_to_customer INTEGER DEFAULT 0,
+        message_id TEXT,
+        in_reply_to TEXT,
+        thread_id TEXT
       )
     `).run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_customer ON inbox_emails (customer_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_received ON inbox_emails (received_at)").run();
-    // The table already existed on live D1 before saved_to_customer was
-    // added to the CREATE TABLE above - same "already exists" tolerance as
-    // every other API here.
-    try {
-      await db.prepare("ALTER TABLE inbox_emails ADD COLUMN saved_to_customer INTEGER DEFAULT 0").run();
-    } catch {
-      // already exists
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_inbox_thread ON inbox_emails (thread_id)").run();
+    // The table already existed on live D1 before these were added to the
+    // CREATE TABLE above - same "already exists" tolerance as every other
+    // API here.
+    for (const col of ["saved_to_customer INTEGER DEFAULT 0", "message_id TEXT", "in_reply_to TEXT", "thread_id TEXT"]) {
+      try {
+        await db.prepare(`ALTER TABLE inbox_emails ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
     }
 
     const url = new URL(request.url);
@@ -86,6 +92,17 @@ export async function onRequest(context) {
         return json(row);
       }
 
+      // ?thread_id=X - every message in one conversation, full body_text,
+      // oldest first (see the Inbox tab's threaded view). Not filtered by
+      // saved_to_customer - that flag only governs what shows on a
+      // *customer's* record, not what's part of a thread.
+      if (url.searchParams.get("thread_id")) {
+        const { results } = await db.prepare(
+          "SELECT * FROM inbox_emails WHERE deleted_at IS NULL AND thread_id = ? ORDER BY received_at ASC"
+        ).bind(url.searchParams.get("thread_id")).all();
+        return json(results);
+      }
+
       // ?customer_id=X is specifically "this customer's saved record" (the
       // Customer View's Email Conversation card) - only emails explicitly
       // marked saved_to_customer, not every auto-matched one, so a
@@ -97,7 +114,7 @@ export async function onRequest(context) {
       const binds = [];
       if (customerId) { where.push("customer_id = ?", "saved_to_customer = 1"); binds.push(customerId); }
       const { results } = await db.prepare(
-        `SELECT id, direction, from_address, from_name, to_address, subject, customer_id, is_read, received_at, saved_to_customer,
+        `SELECT id, direction, from_address, from_name, to_address, subject, customer_id, is_read, received_at, saved_to_customer, thread_id,
                 substr(body_text, 1, 160) AS preview
          FROM inbox_emails WHERE ${where.join(" AND ")} ORDER BY received_at DESC LIMIT 300`
       ).bind(...binds).all();
@@ -147,10 +164,37 @@ export async function onRequest(context) {
       const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
       const html = `<div style="font-family:Arial,sans-serif;color:#0f172a;white-space:pre-wrap;">${escapeHtml(bodyText)}</div>`;
 
+      // Real conversation threading: if this is a reply, look up the parent
+      // message's own Message-ID and thread_id so this reply (a) sets
+      // proper In-Reply-To/References headers on the outgoing email - the
+      // standard mechanism every email client uses to thread a
+      // conversation, including the customer's own inbox - and (b) joins
+      // the same thread_id here, so it groups with the rest of the
+      // conversation in the Inbox tab. We generate our own Message-ID
+      // explicitly (rather than trusting whatever Resend assigns) so we
+      // know for certain what a future reply's In-Reply-To will reference.
+      const id = crypto.randomUUID();
+      const messageId = `<${id}@embroidery.click>`;
+      let threadId = id;
+      let parentMessageId = null;
+      if (data.in_reply_to_id) {
+        const parent = await db.prepare("SELECT id, message_id, thread_id FROM inbox_emails WHERE id = ?").bind(data.in_reply_to_id).first();
+        if (parent) {
+          threadId = parent.thread_id || parent.id;
+          parentMessageId = parent.message_id || null;
+        }
+      }
+
+      const resendHeaders = { "Message-ID": messageId };
+      if (parentMessageId) {
+        resendHeaders["In-Reply-To"] = parentMessageId;
+        resendHeaders["References"] = parentMessageId;
+      }
+
       const resendRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ from: fromAddress, to: [to], reply_to: replyToAddress, subject, html }),
+        body: JSON.stringify({ from: fromAddress, to: [to], reply_to: replyToAddress, subject, html, headers: resendHeaders }),
       });
       if (!resendRes.ok) {
         const errBody = await resendRes.text();
@@ -161,11 +205,10 @@ export async function onRequest(context) {
       // picker or replying to an already-saved email) is itself a
       // deliberate action worth keeping on their record - unlike inbound
       // mail, which only gets auto-matched, not auto-saved.
-      const id = crypto.randomUUID();
       await db.prepare(`
-        INSERT INTO inbox_emails (id, direction, from_address, to_address, subject, body_text, customer_id, is_read, saved_to_customer)
-        VALUES (?, 'outbound', ?, ?, ?, ?, ?, 1, ?)
-      `).bind(id, fromAddress, to, subject, bodyText, data.customer_id || null, data.customer_id ? 1 : 0).run();
+        INSERT INTO inbox_emails (id, direction, from_address, to_address, subject, body_text, customer_id, is_read, saved_to_customer, message_id, in_reply_to, thread_id)
+        VALUES (?, 'outbound', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+      `).bind(id, fromAddress, to, subject, bodyText, data.customer_id || null, data.customer_id ? 1 : 0, messageId, parentMessageId, threadId).run();
 
       return json({ success: true, id });
     }

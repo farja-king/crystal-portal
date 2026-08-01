@@ -1922,30 +1922,31 @@
     // gone from the portal entirely, not just this record.
     async function deleteCvInboxEmail(id) {
       if (!confirm('Delete this email? This only removes it from the portal - your real mailbox is untouched.')) return;
+      // The main Inbox tab's detail panel (and its own list) has no idea
+      // this just got deleted from here - if the message's conversation
+      // happens to be the one currently open there, refresh/clear it too,
+      // same as deleting it from that side directly would.
+      const openThreadId = inboxById[id] ? (inboxById[id].thread_id || inboxById[id].id) : null;
       await fetch('/api/inbox', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
       });
       cvInboxEmails = cvInboxEmails.filter((e) => e.id !== id);
       cvInboxExpandedId = null;
       renderCustomerInboxEmails();
-      // The main Inbox tab's detail panel (and its own list) has no idea
-      // this just got deleted from here - clear it out if it happened to be
-      // showing the same email, same as deleting it there directly would.
       delete inboxById[id];
-      if (viewingInboxEmailId === id) {
-        viewingInboxEmailId = null;
-        const detail = document.getElementById('inbox-detail');
-        if (detail) detail.innerHTML = '<p class="text-slate-400 text-sm">Select an email to read it.</p>';
-      }
+      if (openThreadId && viewingInboxThreadId === openThreadId) viewInboxThread(viewingInboxThreadId);
       renderInboxList(Object.values(inboxById));
     }
 
-    // Jumps to the full Inbox tab view of this email (Reply, download the
-    // original .eml, etc. - none of which this compact card supports).
+    // Jumps to the full Inbox tab view of this email's conversation (Reply,
+    // download the original .eml, etc. - none of which this compact card
+    // supports).
     function viewCvInboxEmailInInbox(id) {
+      const e = cvInboxEmails.find((x) => x.id === id);
+      const threadId = e ? (e.thread_id || e.id) : id;
       closeCustomerViewModal();
       switchTab('inbox');
-      viewInboxEmail(id);
+      viewInboxThread(threadId);
     }
 
     // The quote builder keeps its own copy (orderCustomerItems) of whichever
@@ -4959,9 +4960,9 @@
     // only ever reads/manages what's already there, via functions/api/inbox.js.
     const API_INBOX_URL = '/api/inbox';
     let inboxById = {};
-    let viewingInboxEmailId = null;
-    let currentInboxEmail = null; // full detail of whichever email viewInboxEmail last loaded
+    let viewingInboxThreadId = null; // which conversation is open in the detail panel
     let inboxComposeReplyTo = null; // customer_id to tag a reply with, if replying to a matched customer
+    let inboxComposeInReplyToId = null; // the specific message id being replied to, for real threading (see functions/api/inbox.js)
 
     // Runs on a timer regardless of which tab is active, so the unread
     // badge in the nav updates even if you're not looking at the Inbox tab -
@@ -4996,52 +4997,102 @@
       badge.classList.toggle('hidden', unread === 0);
     }
 
+    // Groups the flat list into conversations by thread_id (falling back to
+    // the message's own id for anything sent/received before threading
+    // existed, so it still shows fine as a singleton thread), newest
+    // conversation first.
+    function groupInboxThreads(rows) {
+      const byThread = {};
+      rows.forEach((e) => {
+        const tid = e.thread_id || e.id;
+        (byThread[tid] = byThread[tid] || []).push(e);
+      });
+      return Object.entries(byThread).map(([threadId, messages]) => {
+        messages.sort((a, b) => new Date(a.received_at) - new Date(b.received_at));
+        return { threadId, messages, latest: messages[messages.length - 1] };
+      }).sort((a, b) => new Date(b.latest.received_at) - new Date(a.latest.received_at));
+    }
+
     function renderInboxList(rows) {
       const list = document.getElementById('inbox-list');
       if (!rows.length) {
         list.innerHTML = '<p class="p-4 text-center text-slate-400 text-sm">No emails yet.</p>';
         return;
       }
-      list.innerHTML = rows.map((e) => {
-        const isOutbound = e.direction === 'outbound';
-        const who = isOutbound ? ('To: ' + (e.to_address || '')) : (e.from_name || e.from_address || 'Unknown sender');
-        const unreadDot = !e.is_read && !isOutbound ? '<span class="inline-block w-2 h-2 bg-indigo-600 rounded-full mr-1.5"></span>' : '';
-        return `<button type="button" onclick="viewInboxEmail('${escapeAttr(e.id)}')" class="w-full text-left px-4 py-3 hover:bg-slate-50 ${viewingInboxEmailId === e.id ? 'bg-indigo-50' : ''}">
+      const threads = groupInboxThreads(rows);
+      list.innerHTML = threads.map(({ threadId, messages, latest }) => {
+        const isOutbound = latest.direction === 'outbound';
+        const who = isOutbound ? ('To: ' + (latest.to_address || '')) : (latest.from_name || latest.from_address || 'Unknown sender');
+        const hasUnread = messages.some((m) => !m.is_read && m.direction === 'inbound');
+        const unreadDot = hasUnread ? '<span class="inline-block w-2 h-2 bg-indigo-600 rounded-full mr-1.5"></span>' : '';
+        const countBadge = messages.length > 1 ? ` <span class="text-xs text-slate-400 font-normal">(${messages.length})</span>` : '';
+        return `<button type="button" onclick="viewInboxThread('${escapeAttr(threadId)}')" class="w-full text-left px-4 py-3 hover:bg-slate-50 ${viewingInboxThreadId === threadId ? 'bg-indigo-50' : ''}">
           <div class="flex items-center justify-between gap-2">
-            <span class="text-sm ${e.is_read || isOutbound ? 'text-slate-700' : 'font-semibold text-slate-900'} truncate">${unreadDot}${escapeHtml(who)}</span>
-            <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDate(e.received_at))}</span>
+            <span class="text-sm ${hasUnread ? 'font-semibold text-slate-900' : 'text-slate-700'} truncate">${unreadDot}${escapeHtml(who)}${countBadge}</span>
+            <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDate(latest.received_at))}</span>
           </div>
-          <div class="text-sm ${e.is_read || isOutbound ? 'text-slate-500' : 'text-slate-800 font-medium'} truncate">${escapeHtml(e.subject || '(no subject)')}</div>
-          <div class="text-xs text-slate-400 truncate">${escapeHtml(e.preview || '')}</div>
+          <div class="text-sm ${hasUnread ? 'text-slate-800 font-medium' : 'text-slate-500'} truncate">${escapeHtml(latest.subject || '(no subject)')}</div>
+          <div class="text-xs text-slate-400 truncate">${escapeHtml(latest.preview || '')}</div>
         </button>`;
       }).join('');
     }
 
-    async function viewInboxEmail(id) {
-      viewingInboxEmailId = id;
+    // The whole conversation, oldest message first (same convention as any
+    // real email client's thread view) - each message keeps its own
+    // Reply/Save/Delete controls, since "worth keeping on this customer's
+    // record" or "worth replying to" is a per-message judgment, not a
+    // whole-thread one.
+    async function viewInboxThread(threadId) {
+      viewingInboxThreadId = threadId;
       const detail = document.getElementById('inbox-detail');
       detail.innerHTML = '<p class="text-slate-400 text-sm">Loading…</p>';
       try {
-        const res = await fetch(API_INBOX_URL + '?id=' + encodeURIComponent(id), { cache: 'no-store' });
-        const e = await res.json();
-        if (!res.ok) throw new Error(e.error || 'HTTP ' + res.status);
+        const res = await fetch(API_INBOX_URL + '?thread_id=' + encodeURIComponent(threadId), { cache: 'no-store' });
+        const messages = await res.json();
+        if (!res.ok) throw new Error(messages.error || 'HTTP ' + res.status);
 
-        currentInboxEmail = e;
-        const customer = e.customer_id ? customersById[e.customer_id] : null;
-        // Already matched to a customer by sender address -> one click
-        // saves it, no need to search. Unmatched (e.g. a brand-new
-        // enquiry, or the sender's address doesn't match anyone on file) ->
-        // opens a picker to attach it to a customer by hand.
-        const saveBtn = e.saved_to_customer
-          ? `<button type="button" onclick="unsaveInboxEmailFromCustomer('${escapeAttr(e.id)}')" class="text-xs bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg font-semibold">✓ Saved to ${escapeHtml(customer ? customer.name : 'customer')}</button>`
-          : customer
-            ? `<button type="button" onclick="saveInboxEmailToCustomer('${escapeAttr(e.id)}', '${escapeAttr(customer.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-700 px-3 py-1.5 rounded-lg font-semibold transition-colors">+ Save to ${escapeHtml(customer.name)}</button>`
-            : `<button type="button" onclick="toggleInboxCustomerPicker('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">+ Add to Customer</button>`;
+        if (!messages.length) {
+          viewingInboxThreadId = null;
+          detail.innerHTML = '<p class="text-slate-400 text-sm">Select an email to read it.</p>';
+          renderInboxList(Object.values(inboxById));
+          return;
+        }
+
+        const subject = messages[messages.length - 1].subject || messages[0].subject || '(no subject)';
         detail.innerHTML = `
-          <div class="flex items-start justify-between gap-2 mb-3 pb-3 border-b border-slate-200">
+          <p class="font-bold text-slate-900 mb-3 pb-3 border-b border-slate-200">${escapeHtml(subject)}${messages.length > 1 ? ` <span class="text-sm font-normal text-slate-400">(${messages.length} messages)</span>` : ''}</p>
+          <div class="space-y-4">${messages.map(renderInboxMessageCard).join('')}</div>
+        `;
+
+        const unread = messages.filter((m) => !m.is_read && m.direction === 'inbound');
+        if (unread.length) {
+          await Promise.all(unread.map((m) => fetch(API_INBOX_URL, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, is_read: true }),
+          })));
+          unread.forEach((m) => { if (inboxById[m.id]) inboxById[m.id].is_read = 1; });
+        }
+        renderInboxList(Object.values(inboxById));
+      } catch (e2) {
+        detail.innerHTML = '<p class="text-sm text-red-500">Could not load this conversation.</p>';
+      }
+    }
+
+    function renderInboxMessageCard(e) {
+      const customer = e.customer_id ? customersById[e.customer_id] : null;
+      // Already matched to a customer by sender address -> one click
+      // saves it, no need to search. Unmatched (e.g. a brand-new
+      // enquiry, or the sender's address doesn't match anyone on file) ->
+      // opens a picker to attach it to a customer by hand.
+      const saveBtn = e.saved_to_customer
+        ? `<button type="button" onclick="unsaveInboxEmailFromCustomer('${escapeAttr(e.id)}')" class="text-xs bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg font-semibold">✓ Saved to ${escapeHtml(customer ? customer.name : 'customer')}</button>`
+        : customer
+          ? `<button type="button" onclick="saveInboxEmailToCustomer('${escapeAttr(e.id)}', '${escapeAttr(customer.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-700 px-3 py-1.5 rounded-lg font-semibold transition-colors">+ Save to ${escapeHtml(customer.name)}</button>`
+          : `<button type="button" onclick="toggleInboxCustomerPicker('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">+ Add to Customer</button>`;
+      return `
+        <div class="${e.direction === 'outbound' ? 'bg-indigo-50/40 border border-indigo-100 rounded-lg p-3' : 'border-b border-slate-100 pb-4 last:border-0'}">
+          <div class="flex items-start justify-between gap-2 mb-2">
             <div>
-              <p class="font-bold text-slate-900">${escapeHtml(e.subject || '(no subject)')}</p>
-              <p class="text-sm text-slate-600 mt-1">${e.direction === 'outbound' ? 'To' : 'From'}: ${escapeHtml(e.direction === 'outbound' ? e.to_address : (e.from_name ? e.from_name + ' <' + e.from_address + '>' : e.from_address))}</p>
+              <p class="text-sm text-slate-600">${e.direction === 'outbound' ? 'To' : 'From'}: <span class="font-semibold text-slate-900">${escapeHtml(e.direction === 'outbound' ? e.to_address : (e.from_name ? e.from_name + ' <' + e.from_address + '>' : e.from_address))}</span></p>
               ${customer ? `<p class="text-xs text-indigo-600 mt-0.5">Matched customer: ${escapeHtml(customer.name)}</p>` : ''}
               <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(ukDate(e.received_at))}</p>
             </div>
@@ -5052,20 +5103,9 @@
               <button type="button" onclick="deleteInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg font-semibold">Delete</button>
             </div>
           </div>
-          <div id="inbox-customer-picker" class="hidden mb-3 bg-slate-50 border border-slate-200 rounded-lg p-3"></div>
+          <div id="inbox-customer-picker-${escapeAttr(e.id)}" class="hidden mb-2 bg-slate-50 border border-slate-200 rounded-lg p-3"></div>
           <div class="text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml(e.body_text || '(No readable content)')}</div>
-        `;
-
-        if (!e.is_read && e.direction === 'inbound') {
-          await fetch(API_INBOX_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, is_read: true }) });
-          if (inboxById[id]) inboxById[id].is_read = 1;
-          loadInbox();
-        } else {
-          renderInboxList(Object.values(inboxById));
-        }
-      } catch (e2) {
-        detail.innerHTML = '<p class="text-sm text-red-500">Could not load this email.</p>';
-      }
+        </div>`;
     }
 
     // Explicitly attaches one email to a customer's permanent record (see
@@ -5078,7 +5118,8 @@
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, saved_to_customer: true, customer_id: customerId }),
       });
-      viewInboxEmail(id);
+      if (inboxById[id]) { inboxById[id].saved_to_customer = 1; inboxById[id].customer_id = customerId; }
+      if (viewingInboxThreadId) viewInboxThread(viewingInboxThreadId);
     }
 
     async function unsaveInboxEmailFromCustomer(id) {
@@ -5086,31 +5127,34 @@
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, saved_to_customer: false }),
       });
-      viewInboxEmail(id);
+      if (inboxById[id]) inboxById[id].saved_to_customer = 0;
+      if (viewingInboxThreadId) viewInboxThread(viewingInboxThreadId);
     }
 
     // Shown only when an email's sender didn't auto-match a customer (a
     // brand-new enquiry, or the address simply doesn't match anyone on
-    // file yet) - lets it be attached by hand instead.
+    // file yet) - lets it be attached by hand instead. IDs are per-message
+    // (not a single shared panel) since a whole thread of messages is now
+    // rendered in the detail panel at once.
     function toggleInboxCustomerPicker(id) {
-      const panel = document.getElementById('inbox-customer-picker');
+      const panel = document.getElementById('inbox-customer-picker-' + id);
       if (!panel) return;
       panel.classList.toggle('hidden');
       if (!panel.classList.contains('hidden')) {
         panel.innerHTML = `
           <div class="relative">
-            <input id="inbox-cust-picker-search" type="text" autocomplete="off" placeholder="Search customers by name, company, email or phone…"
+            <input id="inbox-cust-picker-search-${escapeAttr(id)}" type="text" autocomplete="off" placeholder="Search customers by name, company, email or phone…"
                    oninput="searchInboxCustomerPicker('${escapeAttr(id)}', this.value); toggleSearchClear(this)"
                    class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
-            <button type="button" onclick="clearSearchField('inbox-cust-picker-search')" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+            <button type="button" onclick="clearSearchField('inbox-cust-picker-search-${escapeAttr(id)}')" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
           </div>
-        <div id="inbox-cust-picker-results" class="mt-2 max-h-48 overflow-y-auto"></div>`;
-        document.getElementById('inbox-cust-picker-search').focus();
+        <div id="inbox-cust-picker-results-${escapeAttr(id)}" class="mt-2 max-h-48 overflow-y-auto"></div>`;
+        document.getElementById('inbox-cust-picker-search-' + id).focus();
       }
     }
 
     function searchInboxCustomerPicker(id, raw) {
-      const resultsEl = document.getElementById('inbox-cust-picker-results');
+      const resultsEl = document.getElementById('inbox-cust-picker-results-' + id);
       if (!resultsEl) return;
       const query = raw.trim().toLowerCase();
       if (!query) { resultsEl.innerHTML = ''; return; }
@@ -5135,10 +5179,8 @@
     async function deleteInboxEmail(id) {
       if (!confirm('Delete this email? This only removes it from the portal - your real mailbox is untouched.')) return;
       await fetch(API_INBOX_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
-      if (viewingInboxEmailId === id) {
-        viewingInboxEmailId = null;
-        document.getElementById('inbox-detail').innerHTML = '<p class="text-slate-400 text-sm">Select an email to read it.</p>';
-      }
+      delete inboxById[id];
+      if (viewingInboxThreadId) viewInboxThread(viewingInboxThreadId);
       loadInbox();
     }
 
@@ -5146,10 +5188,19 @@
       const panel = document.getElementById('inbox-compose-form');
       panel.classList.toggle('hidden');
       if (!panel.classList.contains('hidden')) {
+        // Always starts clean - replyToInboxEmail populates these fields
+        // itself immediately afterward when opening via Reply rather than
+        // this button, so a fresh "+ Compose" never inherits stale reply context.
+        inboxComposeReplyTo = null;
+        inboxComposeInReplyToId = null;
+        document.getElementById('inbox-compose-to').value = '';
+        document.getElementById('inbox-compose-subject').value = '';
+        document.getElementById('inbox-compose-body').value = '';
         document.getElementById('inbox-compose-msg').textContent = '';
         document.getElementById('inbox-compose-to').focus();
       } else {
         inboxComposeReplyTo = null;
+        inboxComposeInReplyToId = null;
       }
     }
 
@@ -5157,6 +5208,7 @@
       const e = inboxById[id];
       if (!e) return;
       inboxComposeReplyTo = e.customer_id || null;
+      inboxComposeInReplyToId = id;
       document.getElementById('inbox-compose-form').classList.remove('hidden');
       document.getElementById('inbox-compose-to').value = e.from_address || '';
       document.getElementById('inbox-compose-subject').value = /^re:/i.test(e.subject || '') ? e.subject : ('Re: ' + (e.subject || ''));
@@ -5179,15 +5231,17 @@
       try {
         const res = await fetch(API_INBOX_URL, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to, subject, body, customer_id: inboxComposeReplyTo }),
+          body: JSON.stringify({ to, subject, body, customer_id: inboxComposeReplyTo, in_reply_to_id: inboxComposeInReplyToId }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        const wasReplyToThread = viewingInboxThreadId;
         document.getElementById('inbox-compose-to').value = '';
         document.getElementById('inbox-compose-subject').value = '';
         document.getElementById('inbox-compose-body').value = '';
         toggleInboxCompose();
-        loadInbox();
+        await loadInbox();
+        if (wasReplyToThread) viewInboxThread(wasReplyToThread);
       } catch (e) {
         msg.className = 'text-xs text-red-600';
         msg.textContent = 'Could not send: ' + e.message;
