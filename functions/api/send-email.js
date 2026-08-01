@@ -51,10 +51,18 @@ export async function onRequest(context) {
         id TEXT PRIMARY KEY,
         order_id TEXT NOT NULL,
         sent_to TEXT NOT NULL,
+        subject TEXT,
         sent_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_email_log_order ON email_log (order_id)").run();
+    // The table already existed on live D1 before subject was added to the
+    // CREATE TABLE above - same "already exists" tolerance as everywhere else.
+    try {
+      await db.prepare("ALTER TABLE email_log ADD COLUMN subject TEXT").run();
+    } catch {
+      // already exists
+    }
 
     // GET ?order_id=X - the full send history for one quote/invoice, for
     // the View Quote panel's "Communication History" section.
@@ -62,7 +70,7 @@ export async function onRequest(context) {
       const orderId = new URL(request.url).searchParams.get("order_id");
       if (!orderId) return json({ error: "order_id is required" }, 400);
       const { results } = await db.prepare(
-        "SELECT sent_to, sent_at FROM email_log WHERE order_id = ? ORDER BY sent_at DESC"
+        "SELECT sent_to, subject, sent_at FROM email_log WHERE order_id = ? ORDER BY sent_at DESC"
       ).bind(orderId).all();
       return json(results);
     }
@@ -147,6 +155,8 @@ export async function onRequest(context) {
         <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
       </div>`;
 
+    const subject = `${docLabel} ${docNumber} from Crystal Custom Embroidery`;
+
     const resendRes = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -157,7 +167,7 @@ export async function onRequest(context) {
         from: fromAddress,
         to: [to],
         reply_to: replyToAddress,
-        subject: `${docLabel} ${docNumber} from Crystal Custom Embroidery`,
+        subject,
         html,
       }),
     });
@@ -171,8 +181,8 @@ export async function onRequest(context) {
       "UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP, email_sent_to = ?, email_sent_count = email_sent_count + 1 WHERE id = ?"
     ).bind(to, o.id).run();
     await db.prepare(
-      "INSERT INTO email_log (id, order_id, sent_to) VALUES (?, ?, ?)"
-    ).bind(crypto.randomUUID(), o.id, to).run();
+      "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
+    ).bind(crypto.randomUUID(), o.id, to, subject).run();
 
     return json({ success: true, sent_to: to });
   } catch (err) {

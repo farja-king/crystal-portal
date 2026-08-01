@@ -4550,8 +4550,9 @@
         }
         el.innerHTML = log.map((e) => `
           <div class="text-sm text-slate-700 border-b border-slate-100 last:border-0 py-1.5">
-            Emailed to <span class="font-medium">${escapeHtml(e.sent_to)}</span>
-            <span class="text-slate-400">- ${escapeHtml(ukDate(e.sent_at))} ${escapeHtml(new Date(e.sent_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}</span>
+            <div>Emailed to <span class="font-medium">${escapeHtml(e.sent_to)}</span>
+            <span class="text-slate-400">- ${escapeHtml(ukDate(e.sent_at))} ${escapeHtml(new Date(e.sent_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}</span></div>
+            ${e.subject ? `<div class="text-xs text-slate-500">Subject: ${escapeHtml(e.subject)}</div>` : ''}
           </div>`).join('');
       } catch (e) {
         if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load communication history.</p>';
