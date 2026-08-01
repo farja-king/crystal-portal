@@ -17,6 +17,9 @@
       </div>
       <div class="flex items-center gap-3">
         <div class="flex space-x-2 bg-slate-800 p-1 rounded-lg">
+          <button id="tab-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            📊 Dashboard
+          </button>
           <button id="tab-quotes" onclick="switchTab('quotes')" class="px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition">
             Quotes & Orders
           </button>
@@ -55,7 +58,46 @@
 
   <!-- Main Content Area -->
   <main class="max-w-7xl mx-auto px-6 py-8">
-    
+
+    <!-- DASHBOARD TAB -->
+    <section id="section-dashboard" class="hidden">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Dashboard</h2>
+          <p class="text-slate-500 text-sm">How things are going - revenue, orders, and the pipeline, at a glance.</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
+            <button id="dash-preset-today" onclick="setDashboardRange('today')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Today</button>
+            <button id="dash-preset-week" onclick="setDashboardRange('week')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Week</button>
+            <button id="dash-preset-month" onclick="setDashboardRange('month')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Month</button>
+            <button id="dash-preset-year" onclick="setDashboardRange('year')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Year</button>
+          </div>
+          <div class="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg shadow-sm px-2 py-1">
+            <input id="dash-from" type="date" onchange="setDashboardCustomRange()" class="text-xs border-0 focus:ring-0 p-1 text-slate-700" />
+            <span class="text-slate-300">–</span>
+            <input id="dash-to" type="date" onchange="setDashboardCustomRange()" class="text-xs border-0 focus:ring-0 p-1 text-slate-700" />
+          </div>
+        </div>
+      </div>
+
+      <div id="dash-tiles" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <p class="col-span-4 text-center text-slate-400 py-8">Loading…</p>
+      </div>
+
+      <div class="grid gap-6 lg:grid-cols-3 mb-6">
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <h3 class="font-bold text-slate-900 mb-1">Revenue</h3>
+          <p id="dash-chart-subtitle" class="text-xs text-slate-500 mb-4"></p>
+          <div id="dash-chart" class="relative"></div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <h3 class="font-bold text-slate-900 mb-3">Top Customers</h3>
+          <div id="dash-top-customers" class="space-y-2"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- QUOTES TAB -->
     <section id="section-quotes">
       <div class="flex justify-between items-center mb-6">
@@ -1025,7 +1067,7 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['quotes', 'customers', 'catalog', 'orders', 'inbox'];
+    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'orders', 'inbox'];
     function switchTab(tab) {
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
@@ -1053,6 +1095,7 @@
         if (document.getElementById('ord-customer').value) refreshOrderCustomerItems();
       }
       if (tab === 'inbox') loadInbox();
+      if (tab === 'dashboard') loadDashboard();
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
@@ -4960,7 +5003,7 @@
         const saveBtn = e.saved_to_customer
           ? `<button type="button" onclick="unsaveInboxEmailFromCustomer('${escapeAttr(e.id)}')" class="text-xs bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg font-semibold">✓ Saved to ${escapeHtml(customer ? customer.name : 'customer')}</button>`
           : customer
-            ? `<button type="button" onclick="saveInboxEmailToCustomer('${escapeAttr(e.id)}', '${escapeAttr(customer.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">+ Save to ${escapeHtml(customer.name)}</button>`
+            ? `<button type="button" onclick="saveInboxEmailToCustomer('${escapeAttr(e.id)}', '${escapeAttr(customer.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-700 px-3 py-1.5 rounded-lg font-semibold transition-colors">+ Save to ${escapeHtml(customer.name)}</button>`
             : `<button type="button" onclick="toggleInboxCustomerPicker('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">+ Add to Customer</button>`;
         detail.innerHTML = `
           <div class="flex items-start justify-between gap-2 mb-3 pb-3 border-b border-slate-200">
@@ -5114,6 +5157,283 @@
         msg.className = 'text-xs text-red-600';
         msg.textContent = 'Could not send: ' + e.message;
       }
+    }
+
+    // ============================== Dashboard ==============================
+    // Reuses the same /api/orders data the Quotes & Invoices tab already
+    // fetches in full (no pagination there), aggregated client-side per the
+    // selected date range - no new backend endpoint needed for this scope.
+    let dashboardOrders = [];
+    let dashboardRangeFrom = null;
+    let dashboardRangeTo = null;
+    let dashboardActivePreset = 'month';
+    const DASH_PRESETS = ['today', 'week', 'month', 'year'];
+
+    async function loadDashboard() {
+      const tiles = document.getElementById('dash-tiles');
+      try {
+        const res = await fetch(API_ORDERS_URL, { cache: 'no-store' });
+        dashboardOrders = await res.json();
+      } catch (e) {
+        dashboardOrders = [];
+        tiles.innerHTML = '<p class="col-span-4 text-center text-red-500 py-8">Could not load dashboard data.</p>';
+        return;
+      }
+      setDashboardRange(dashboardActivePreset || 'month');
+    }
+
+    function toDateInputValue(d) {
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    function setDashboardRange(preset) {
+      dashboardActivePreset = preset;
+      const now = new Date();
+      let from, to;
+      if (preset === 'today') {
+        from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      } else if (preset === 'week') {
+        const diffToMonday = (now.getDay() + 6) % 7; // getDay(): 0=Sun -> Monday-start week
+        from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday);
+        to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      } else if (preset === 'year') {
+        from = new Date(now.getFullYear(), 0, 1);
+        to = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+      } else {
+        from = new Date(now.getFullYear(), now.getMonth(), 1);
+        to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      }
+      dashboardRangeFrom = from;
+      dashboardRangeTo = to;
+      document.getElementById('dash-from').value = toDateInputValue(from);
+      document.getElementById('dash-to').value = toDateInputValue(to);
+      DASH_PRESETS.forEach((p) => {
+        document.getElementById('dash-preset-' + p).className = p === preset
+          ? 'px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white'
+          : 'px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100';
+      });
+      renderDashboard();
+    }
+
+    function setDashboardCustomRange() {
+      const fromVal = document.getElementById('dash-from').value;
+      const toVal = document.getElementById('dash-to').value;
+      if (!fromVal || !toVal) return;
+      dashboardActivePreset = null;
+      DASH_PRESETS.forEach((p) => {
+        document.getElementById('dash-preset-' + p).className = 'px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100';
+      });
+      dashboardRangeFrom = new Date(fromVal + 'T00:00:00');
+      dashboardRangeTo = new Date(toVal + 'T23:59:59.999');
+      renderDashboard();
+    }
+
+    function dashOrdersInRange(orders, from, to, dateField) {
+      return orders.filter((o) => {
+        if (!o[dateField]) return false;
+        const d = new Date(o[dateField]);
+        return d >= from && d <= to;
+      });
+    }
+
+    // vs the immediately preceding period of equal length - "vs previous
+    // period" rather than a fixed comparison, so it stays meaningful
+    // whichever preset or custom range is selected.
+    function dashDeltaPct(current, previous) {
+      if (!previous) return current > 0 ? { pct: null, up: true } : null;
+      const pct = ((current - previous) / previous) * 100;
+      return { pct, up: pct >= 0 };
+    }
+
+    function dashStatTile(label, value, delta) {
+      const deltaHtml = delta
+        ? `<span class="text-xs font-semibold ${delta.up ? 'text-emerald-600' : 'text-rose-600'} ml-2">${delta.pct === null ? 'new' : (delta.up ? '▲' : '▼') + Math.abs(delta.pct).toFixed(0) + '%'}</span>`
+        : '';
+      return `<div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+        <p class="text-xs text-slate-500 font-medium mb-1">${label}</p>
+        <p class="text-2xl font-bold text-slate-900">${value}${deltaHtml}</p>
+        <p class="text-xs text-slate-400 mt-1">vs previous period</p>
+      </div>`;
+    }
+
+    function renderDashboard() {
+      if (!dashboardRangeFrom || !dashboardRangeTo) return;
+      const from = dashboardRangeFrom, to = dashboardRangeTo;
+      const rangeMs = to - from;
+      const prevTo = new Date(from.getTime() - 1);
+      const prevFrom = new Date(prevTo.getTime() - rangeMs);
+
+      const paidInRange = dashOrdersInRange(dashboardOrders, from, to, 'paid_at').filter((o) => o.paid_status === 'paid');
+      const paidInPrev = dashOrdersInRange(dashboardOrders, prevFrom, prevTo, 'paid_at').filter((o) => o.paid_status === 'paid');
+      const createdInRange = dashOrdersInRange(dashboardOrders, from, to, 'created_at');
+      const createdInPrev = dashOrdersInRange(dashboardOrders, prevFrom, prevTo, 'created_at');
+      const quotesInRange = createdInRange.filter((o) => o.doc_type === 'quote');
+      const quotesInPrev = createdInPrev.filter((o) => o.doc_type === 'quote');
+
+      const revenue = paidInRange.reduce((s, o) => s + (Number(o.total) || 0), 0);
+      const revenuePrev = paidInPrev.reduce((s, o) => s + (Number(o.total) || 0), 0);
+      const avgOrder = paidInRange.length ? revenue / paidInRange.length : 0;
+      const avgOrderPrev = paidInPrev.length ? revenuePrev / paidInPrev.length : 0;
+
+      document.getElementById('dash-tiles').innerHTML = [
+        dashStatTile('Revenue (paid)', money(revenue), dashDeltaPct(revenue, revenuePrev)),
+        dashStatTile('Orders created', String(createdInRange.length), dashDeltaPct(createdInRange.length, createdInPrev.length)),
+        dashStatTile('Avg order value', money(avgOrder), dashDeltaPct(avgOrder, avgOrderPrev)),
+        dashStatTile('New quotes', String(quotesInRange.length), dashDeltaPct(quotesInRange.length, quotesInPrev.length)),
+      ].join('');
+
+      renderDashboardChart(paidInRange, from, to);
+      renderDashboardTopCustomers(paidInRange);
+    }
+
+    // Adaptive bucket size so the chart stays readable whether the range is
+    // a single day or a full year - daily buckets up to 3 weeks, weekly up
+    // to ~3 months, monthly beyond that.
+    function dashBucketDates(from, to) {
+      const days = Math.round((to - from) / 86400000) + 1;
+      let unit = 'day';
+      if (days > 92) unit = 'month';
+      else if (days > 21) unit = 'week';
+
+      const buckets = [];
+      if (unit === 'day') {
+        for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+          buckets.push({ start: new Date(d), label: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) });
+        }
+      } else if (unit === 'week') {
+        for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 7)) {
+          buckets.push({ start: new Date(d), label: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) });
+        }
+      } else {
+        for (let d = new Date(from.getFullYear(), from.getMonth(), 1); d <= to; d.setMonth(d.getMonth() + 1)) {
+          buckets.push({ start: new Date(d), label: d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }) });
+        }
+      }
+      return { unit, buckets };
+    }
+
+    function renderDashboardChart(paidOrders, from, to) {
+      const { unit, buckets } = dashBucketDates(from, to);
+      const bucketMs = unit === 'day' ? 86400000 : unit === 'week' ? 7 * 86400000 : null;
+
+      const values = buckets.map((b) => {
+        const bucketEnd = unit === 'month'
+          ? new Date(b.start.getFullYear(), b.start.getMonth() + 1, 1)
+          : new Date(b.start.getTime() + bucketMs);
+        return paidOrders.reduce((s, o) => {
+          const d = new Date(o.paid_at);
+          return (d >= b.start && d < bucketEnd) ? s + (Number(o.total) || 0) : s;
+        }, 0);
+      });
+
+      document.getElementById('dash-chart-subtitle').textContent =
+        (unit === 'day' ? 'By day' : unit === 'week' ? 'By week' : 'By month') + ' · ' + buckets.length + (buckets.length === 1 ? ' period' : ' periods');
+      document.getElementById('dash-chart').innerHTML = dashBuildBarChart(buckets.map((b) => b.label), values);
+    }
+
+    // Rounds a max value up to a clean gridline step (1/2/5 x 10^n) - e.g.
+    // 437 -> 500, 1250 -> 2000 - so axis labels read as round numbers.
+    function dashNiceCeil(v) {
+      if (v <= 0) return 1;
+      const exp = Math.floor(Math.log10(v));
+      const base = Math.pow(10, exp);
+      const norm = v / base;
+      const niceNorm = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+      return niceNorm * base;
+    }
+
+    function dashShortMoney(v) {
+      if (v >= 1000) return '£' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'K';
+      return '£' + Math.round(v);
+    }
+
+    // 4px rounded top corners, square baseline - a plain <rect> can't do
+    // per-corner rounding, so this is a hand-built path.
+    function dashRoundedTopBarPath(x, y, w, h, r) {
+      return `<path d="M ${x} ${y + h} L ${x} ${y + r} Q ${x} ${y} ${x + r} ${y} L ${x + w - r} ${y} Q ${x + w} ${y} ${x + w} ${y + r} L ${x + w} ${y + h} Z" fill="#4f46e5" />`;
+    }
+
+    // Hand-built SVG bar chart (no charting library in this codebase) -
+    // single series (revenue), so no legend needed per the mark spec; a
+    // hover tooltip on each bar carries the exact value + period.
+    function dashBuildBarChart(labels, values) {
+      const W = 720, H = 220, padL = 44, padR = 12, padT = 12, padB = 28;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const niceMax = dashNiceCeil(Math.max(...values, 1));
+      const n = values.length;
+      const slot = plotW / Math.max(n, 1);
+      const barW = Math.min(24, slot * 0.6);
+
+      const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+        const y = padT + plotH * (1 - f);
+        return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#e1e0d9" stroke-width="1" />
+          <text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="#898781">${dashShortMoney(niceMax * f)}</text>`;
+      }).join('');
+
+      const labelEvery = Math.max(1, Math.ceil(n / 14)); // thin out labels so they don't collide when there are many bars
+      const bars = values.map((v, i) => {
+        const x = padL + slot * i + (slot - barW) / 2;
+        const h = Math.max(1, (v / niceMax) * plotH);
+        const y = padT + plotH - h;
+        const r = Math.min(4, h / 2, barW / 2);
+        const showLabel = i % labelEvery === 0;
+        return `
+          <g onmouseenter="showDashTooltip(event, '${escapeAttr(labels[i])}', '${escapeAttr(money(v))}')" onmouseleave="hideDashTooltip()">
+            <rect x="${x - 2}" y="${padT}" width="${barW + 4}" height="${plotH}" fill="transparent" />
+            ${dashRoundedTopBarPath(x, y, barW, h, r)}
+          </g>
+          ${showLabel ? `<text x="${x + barW / 2}" y="${H - 8}" text-anchor="middle" font-size="9" fill="#898781">${escapeHtml(labels[i])}</text>` : ''}
+        `;
+      }).join('');
+
+      return `
+        <svg viewBox="0 0 ${W} ${H}" class="w-full" style="max-height:260px" preserveAspectRatio="xMidYMid meet">
+          ${gridLines}
+          <line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#c3c2b7" stroke-width="1" />
+          ${bars}
+        </svg>
+        <div id="dash-tooltip" class="hidden absolute z-10 pointer-events-none bg-slate-900 text-white text-xs rounded-lg px-2.5 py-1.5 shadow-lg whitespace-nowrap"></div>
+      `;
+    }
+
+    function showDashTooltip(evt, label, value) {
+      const tip = document.getElementById('dash-tooltip');
+      const container = document.getElementById('dash-chart');
+      if (!tip || !container) return;
+      tip.textContent = label + ': ' + value;
+      tip.classList.remove('hidden');
+      const rect = container.getBoundingClientRect();
+      tip.style.left = Math.max(0, evt.clientX - rect.left - 40) + 'px';
+      tip.style.top = Math.max(0, evt.clientY - rect.top - 34) + 'px';
+    }
+
+    function hideDashTooltip() {
+      const tip = document.getElementById('dash-tooltip');
+      if (tip) tip.classList.add('hidden');
+    }
+
+    function renderDashboardTopCustomers(paidOrders) {
+      const byCustomer = {};
+      paidOrders.forEach((o) => {
+        const key = o.customer_id || o.customer_name || 'unknown';
+        if (!byCustomer[key]) byCustomer[key] = { name: o.customer_name || 'Unknown', total: 0 };
+        byCustomer[key].total += Number(o.total) || 0;
+      });
+      const top = Object.values(byCustomer).sort((a, b) => b.total - a.total).slice(0, 8);
+      const el = document.getElementById('dash-top-customers');
+      if (!top.length) { el.innerHTML = '<p class="text-sm text-slate-400">No paid invoices in this period.</p>'; return; }
+      const maxTotal = top[0].total;
+      el.innerHTML = top.map((c) => `
+        <div>
+          <div class="flex items-center justify-between text-sm mb-0.5 gap-2">
+            <span class="text-slate-700 truncate">${escapeHtml(c.name)}</span>
+            <span class="font-semibold text-slate-900 shrink-0">${money(c.total)}</span>
+          </div>
+          <div class="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+            <div class="h-full bg-indigo-500 rounded-full" style="width:${maxTotal ? (c.total / maxTotal * 100) : 0}%"></div>
+          </div>
+        </div>`).join('');
     }
 
     renderOrderLines();

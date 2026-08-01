@@ -145,6 +145,15 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // paid_at - when an invoice was actually marked paid, not just that it
+    // currently is (paid_status alone has no timestamp) - needed so the
+    // Dashboard can report revenue against the date it actually came in,
+    // not the date the invoice happened to be created.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN paid_at TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
@@ -225,9 +234,12 @@ export async function onRequest(context) {
       if (data.action === "set_paid_status") {
         if (existing.doc_type !== "invoice") return json({ error: "Only invoices have a paid status" }, 400);
         const status = data.paid_status === "paid" ? "paid" : "unpaid";
+        // paid_at is set the moment it's marked paid, and cleared if it's
+        // ever flipped back to unpaid - keeps it meaning "when this
+        // actually became paid", not "has it ever been paid".
         await db.prepare(
-          "UPDATE orders SET paid_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).bind(status, data.id).run();
+          "UPDATE orders SET paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).bind(status, status === "paid" ? new Date().toISOString() : null, data.id).run();
         return json({ success: true });
       }
 
