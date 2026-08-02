@@ -45,9 +45,14 @@ export default {
       await env.DESIGN_FILES.put(r2Key, rawBuf, { httpMetadata: { contentType: "message/rfc822" } });
     }
 
-    // ---- 2. Headers Cloudflare already parses for us.
-    const subject = message.headers.get("subject") || "(no subject)";
-    const fromHeader = message.headers.get("from") || message.from || "";
+    // ---- 2. Headers Cloudflare already parses for us. Subject/From can
+    // arrive as raw RFC 2047 encoded-words (=?utf-8?B?...?=) whenever they
+    // contain anything outside plain ASCII - even just the non-breaking
+    // space some mail clients insert after "Re:" is enough to trigger it -
+    // decode before using, or it shows as gibberish and breaks subject-based
+    // thread matching (the whole encoded blob never looks like "Re: ...").
+    const subject = decodeMimeEncodedWords(message.headers.get("subject")) || "(no subject)";
+    const fromHeader = decodeMimeEncodedWords(message.headers.get("from")) || message.from || "";
     const { name: fromName, address: fromAddress } = parseAddress(fromHeader) || { name: "", address: message.from || "" };
     const toAddress = message.to || message.headers.get("to") || "";
 
@@ -238,6 +243,41 @@ function decodeBase64(str) {
   } catch (e) {
     return str;
   }
+}
+
+// Decodes RFC 2047 "encoded-word" syntax (=?charset?B?...?= or ?Q?),
+// used for any header (Subject, From display-name, ...) that contains
+// non-ASCII - triggered by far more than exotic characters; even the
+// non-breaking space some clients insert after "Re:" is enough. Handles
+// the common single-word case; a header with no encoded-word is returned
+// unchanged.
+function decodeMimeEncodedWords(str) {
+  if (!str) return str;
+  return str.replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (match, charset, encoding, text) => {
+    try {
+      let bytes;
+      if (encoding.toUpperCase() === "B") {
+        const binary = atob(text);
+        bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      } else {
+        const withSpaces = text.replace(/_/g, " ");
+        const out = [];
+        for (let i = 0; i < withSpaces.length; i++) {
+          if (withSpaces[i] === "=" && i + 2 < withSpaces.length) {
+            out.push(parseInt(withSpaces.substr(i + 1, 2), 16));
+            i += 2;
+          } else {
+            out.push(withSpaces.charCodeAt(i));
+          }
+        }
+        bytes = new Uint8Array(out);
+      }
+      return new TextDecoder(charset || "utf-8", { fatal: false, ignoreBOM: false }).decode(bytes);
+    } catch (e) {
+      return match; // couldn't decode - leave the raw encoded-word rather than losing data
+    }
+  });
 }
 
 function stripHtml(html) {

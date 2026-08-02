@@ -783,7 +783,13 @@
       </div>
 
       <div id="inbox-compose-form" class="hidden grid gap-2 mb-6 bg-slate-50 border border-slate-200 rounded-lg p-4">
-        <input id="inbox-compose-to" placeholder="To - email address *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <div class="relative">
+          <input id="inbox-compose-to" placeholder="To - name, company, or email address *" autocomplete="off"
+                 oninput="searchInboxComposeTo(this.value); toggleSearchClear(this)"
+                 class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+          <button type="button" onclick="clearSearchField('inbox-compose-to'); document.getElementById('inbox-compose-to-results').innerHTML=''" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          <div id="inbox-compose-to-results" class="absolute z-10 w-full bg-white border border-slate-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto"></div>
+        </div>
         <input id="inbox-compose-subject" placeholder="Subject *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         <textarea id="inbox-compose-body" rows="6" placeholder="Message…" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm"></textarea>
         <div class="flex gap-2">
@@ -1873,7 +1879,7 @@
             <button type="button" onclick="toggleCvInboxEmail('${escapeAttr(e.id)}')" class="w-full text-left">
               <div class="flex items-center justify-between gap-2">
                 <span class="text-sm font-medium text-slate-800 truncate">${escapeHtml(e.subject || '(no subject)')}</span>
-                <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDate(e.received_at))}</span>
+                <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDateTime(e.received_at))}</span>
               </div>
               <div class="text-xs text-slate-500 truncate">${escapeHtml(who)}</div>
             </button>
@@ -2832,6 +2838,25 @@
       const datePart = String(raw || '').slice(0, 10);
       const m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       return m ? `${m[3]}-${m[2]}-${m[1]}` : datePart;
+    }
+
+    // Same as ukDate but with the time too (for the Inbox, where several
+    // messages can land on the same day and the date alone doesn't tell
+    // them apart). Normalizes D1's "YYYY-MM-DD HH:MM:SS" (UTC, no timezone
+    // marker - browsers disagree on whether to treat that as UTC or local)
+    // to real ISO8601 first, then derives date and time from the same
+    // local Date object so they can never disagree across a midnight
+    // boundary the way slicing the raw string for date + converting only
+    // the time would.
+    function ukDateTime(raw) {
+      if (!raw) return '';
+      let iso = String(raw);
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(iso)) iso = iso.replace(' ', 'T') + 'Z';
+      const d = new Date(iso);
+      if (isNaN(d)) return ukDate(raw);
+      const datePart = String(d.getDate()).padStart(2, '0') + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + d.getFullYear();
+      const timePart = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      return `${datePart} ${timePart}`;
     }
 
     async function loadFacets() {
@@ -5029,7 +5054,7 @@
         return `<button type="button" onclick="viewInboxThread('${escapeAttr(threadId)}')" class="w-full text-left px-4 py-3 hover:bg-slate-50 ${viewingInboxThreadId === threadId ? 'bg-indigo-50' : ''}">
           <div class="flex items-center justify-between gap-2">
             <span class="text-sm ${hasUnread ? 'font-semibold text-slate-900' : 'text-slate-700'} truncate">${unreadDot}${escapeHtml(who)}${countBadge}</span>
-            <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDate(latest.received_at))}</span>
+            <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDateTime(latest.received_at))}</span>
           </div>
           <div class="text-sm ${hasUnread ? 'text-slate-800 font-medium' : 'text-slate-500'} truncate">${escapeHtml(latest.subject || '(no subject)')}</div>
           <div class="text-xs text-slate-400 truncate">${escapeHtml(latest.preview || '')}</div>
@@ -5094,7 +5119,7 @@
             <div>
               <p class="text-sm text-slate-600">${e.direction === 'outbound' ? 'To' : 'From'}: <span class="font-semibold text-slate-900">${escapeHtml(e.direction === 'outbound' ? e.to_address : (e.from_name ? e.from_name + ' <' + e.from_address + '>' : e.from_address))}</span></p>
               ${customer ? `<p class="text-xs text-indigo-600 mt-0.5">Matched customer: ${escapeHtml(customer.name)}</p>` : ''}
-              <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(ukDate(e.received_at))}</p>
+              <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(ukDateTime(e.received_at))}</p>
             </div>
             <div class="flex flex-wrap gap-2 shrink-0 justify-end">
               <button type="button" onclick="replyToInboxEmail('${escapeAttr(e.id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Reply</button>
@@ -5194,6 +5219,7 @@
         inboxComposeReplyTo = null;
         inboxComposeInReplyToId = null;
         document.getElementById('inbox-compose-to').value = '';
+        document.getElementById('inbox-compose-to-results').innerHTML = '';
         document.getElementById('inbox-compose-subject').value = '';
         document.getElementById('inbox-compose-body').value = '';
         document.getElementById('inbox-compose-msg').textContent = '';
@@ -5202,6 +5228,44 @@
         inboxComposeReplyTo = null;
         inboxComposeInReplyToId = null;
       }
+    }
+
+    // Autocomplete on the Compose "To" field - matches by name, company,
+    // email or phone the same way every other customer picker in the
+    // portal does, so a message doesn't need the full email typed out by
+    // hand. Picking a result also tags the send with that customer_id, same
+    // as replying to one of their saved emails would.
+    function searchInboxComposeTo(raw) {
+      const resultsEl = document.getElementById('inbox-compose-to-results');
+      if (!resultsEl) return;
+      const query = raw.trim().toLowerCase();
+      if (!query) { resultsEl.innerHTML = ''; return; }
+
+      const digits = query.replace(/\D/g, '');
+      const matches = Object.values(customersById).filter((c) => {
+        return (c.name || '').toLowerCase().includes(query)
+          || (c.company || '').toLowerCase().includes(query)
+          || (c.email || '').toLowerCase().includes(query)
+          || (digits.length >= 3 && (c.phone || '').replace(/\D/g, '').includes(digits));
+      }).slice(0, 8);
+
+      resultsEl.innerHTML = matches.map((c) => `
+        <button type="button" onclick="selectInboxComposeToCustomer('${escapeAttr(c.id)}')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm border-b border-slate-100 last:border-0">
+          <span class="font-semibold">${escapeHtml(c.name)}</span>${c.company ? ' - ' + escapeHtml(c.company) : ''}
+          <span class="block text-xs text-slate-500">${escapeHtml([c.email, c.phone].filter(Boolean).join(' · ') || 'No contact details')}</span>
+        </button>`).join('');
+    }
+
+    function selectInboxComposeToCustomer(customerId) {
+      const c = customersById[customerId];
+      if (!c) return;
+      if (!c.email) { alert(c.name + ' has no email address on file.'); return; }
+      const input = document.getElementById('inbox-compose-to');
+      input.value = c.email;
+      document.getElementById('inbox-compose-to-results').innerHTML = '';
+      toggleSearchClear(input);
+      inboxComposeReplyTo = customerId;
+      document.getElementById('inbox-compose-subject').focus();
     }
 
     // Works from either an inbound message (reply to whoever sent it) or
@@ -5215,6 +5279,7 @@
       inboxComposeInReplyToId = id;
       document.getElementById('inbox-compose-form').classList.remove('hidden');
       document.getElementById('inbox-compose-to').value = (e.direction === 'outbound' ? e.to_address : e.from_address) || '';
+      document.getElementById('inbox-compose-to-results').innerHTML = '';
       document.getElementById('inbox-compose-subject').value = /^re:/i.test(e.subject || '') ? e.subject : ('Re: ' + (e.subject || ''));
       document.getElementById('inbox-compose-body').value = '';
       document.getElementById('inbox-compose-msg').textContent = '';
