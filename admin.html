@@ -908,6 +908,13 @@
             <button type="button" onclick="toggleCvAddItemForm()" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
               + Add item manually
             </button>
+            <!-- Everything in this modal auto-saves the moment you edit it -
+                 there's nothing this button "saves" that isn't already saved.
+                 It's here purely so closing the record doesn't mean
+                 scrolling all the way back up to the ✕ at the top. -->
+            <button type="button" onclick="closeCustomerViewModal()" title="Everything here is already saved - this just closes the window" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+              ✓ Done
+            </button>
           </div>
         </div>
 
@@ -1008,10 +1015,15 @@
       <div class="border-t border-slate-200 pt-4 mb-4">
         <div class="flex items-center justify-between mb-2">
           <h4 class="font-bold text-slate-900">Design Files</h4>
-          <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer">
-            + Upload file(s)
-            <input id="cv-design-file-input" type="file" multiple class="hidden" onchange="uploadCustomerDesignFiles()" />
-          </label>
+          <div class="flex gap-2 items-center">
+            <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer">
+              + Upload file(s)
+              <input id="cv-design-file-input" type="file" multiple class="hidden" onchange="uploadCustomerDesignFiles()" />
+            </label>
+            <button type="button" onclick="closeCustomerViewModal()" title="Everything here is already saved - this just closes the window" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+              ✓ Done
+            </button>
+          </div>
         </div>
         <p class="text-xs text-slate-500 mb-2">DST, EMB, PDF proofs, or anything else worth keeping a backup of for this customer - stored independently of Hatch.</p>
         <p id="cv-design-files-status" class="text-xs mb-2 hidden"></p>
@@ -1036,14 +1048,24 @@
            worth keeping (see functions/api/inbox.js's saved_to_customer
            filter), so this doesn't turn into a wall of routine mail. -->
       <div class="border-t border-slate-200 pt-4 mb-4">
-        <h4 class="font-bold text-slate-900 mb-2">Email Conversation</h4>
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="font-bold text-slate-900">Email Conversation</h4>
+          <button type="button" onclick="closeCustomerViewModal()" title="Everything here is already saved - this just closes the window" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+            ✓ Done
+          </button>
+        </div>
         <p class="text-xs text-slate-500 mb-2">Emails saved from the Inbox tab (not every message - only what was marked worth keeping, e.g. a design proof approval).</p>
         <div id="cv-inbox-emails" class="border border-slate-200 rounded-lg divide-y divide-slate-100">
           <p class="p-3 text-center text-slate-400 text-sm">Loading…</p>
         </div>
       </div>
 
-      <h4 class="font-bold text-slate-900 mb-3">Order History</h4>
+      <div class="flex items-center justify-between mb-3">
+        <h4 class="font-bold text-slate-900">Order History</h4>
+        <button type="button" onclick="closeCustomerViewModal()" title="Everything here is already saved - this just closes the window" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+          ✓ Done
+        </button>
+      </div>
 
       <div class="flex flex-wrap items-end gap-3 mb-3">
         <label class="text-xs">
@@ -1089,6 +1111,12 @@
         </table>
       </div>
       <p id="cv-orders-summary" class="text-xs text-slate-500 mt-3"></p>
+
+      <div class="flex justify-end pt-4 mt-2 border-t border-slate-200">
+        <button type="button" onclick="closeCustomerViewModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+          ✓ Done - close this customer
+        </button>
+      </div>
     </div>
   </div>
 
