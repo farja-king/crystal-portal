@@ -27,7 +27,10 @@
             Customers
           </button>
           <button id="tab-catalog" onclick="switchTab('catalog')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
-            Garment Catalog
+            Garments
+          </button>
+          <button id="tab-services" onclick="switchTab('services')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            Services
           </button>
           <button id="tab-orders" onclick="switchTab('orders')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Quotes & Invoices
@@ -427,8 +430,8 @@
     <section id="section-catalog" class="hidden">
       <div class="flex justify-between items-center mb-6">
         <div>
-          <h2 class="text-2xl font-bold text-slate-900">Garment Catalog</h2>
-          <p class="text-slate-500 text-sm">Supplier cost prices, your sell price, and the profit between them.</p>
+          <h2 class="text-2xl font-bold text-slate-900">Garments</h2>
+          <p class="text-slate-500 text-sm">Supplier cost prices, your sell price, and the profit between them. Flat fees/services live on their own <a href="#" onclick="switchTab('services'); return false;" class="text-indigo-600 hover:underline">Services</a> tab.</p>
         </div>
         <div class="flex items-center gap-2">
           <button onclick="toggleAddProductForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
@@ -643,6 +646,92 @@
         <button id="cat-next" onclick="catalogPage(1)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm disabled:opacity-40">
           Next →
         </button>
+      </div>
+    </section>
+
+    <!-- SERVICES TAB - flat fees/charges (design setup, rush charges, etc)
+         that don't have a garment code/colour/size, kept separate from the
+         Garments tab so a service doesn't turn up as a phantom "code" in
+         the garment grouping (see functions/api/products.js's item_type
+         column and its GET handler's ?item_type= filter). Same products
+         table under the hood - just tagged differently and shown here
+         instead, so the two never need to be kept in sync by hand. -->
+    <section id="section-services" class="hidden">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Services</h2>
+          <p class="text-slate-500 text-sm">Flat fees and charges with no garment code - design setup, rush orders, and the like.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="toggleAddServiceForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            + Add Service
+          </button>
+          <button onclick="loadServices()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+
+      <div id="svc-add-form" class="hidden grid gap-2 md:grid-cols-4 mb-6 bg-slate-50 border border-slate-200 rounded-lg p-4">
+        <input id="svc-add-title" placeholder="Service name *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
+        <input id="svc-add-category" placeholder="Category (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
+        <label class="text-sm">
+          <span class="block text-xs text-slate-500 mb-1">Cost price</span>
+          <input id="svc-add-cost" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('svc-add-cost', 'svc-add-sell', 'svc-add-vat', 'svc-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        </label>
+        <label class="text-sm">
+          <span class="block text-xs text-slate-500 mb-1">VAT (20%, not reclaimable)</span>
+          <div id="svc-add-vat" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-500 text-sm">£0.00</div>
+        </label>
+        <label class="text-sm">
+          <span class="block text-xs text-slate-500 mb-1">Sell price</span>
+          <input id="svc-add-sell" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('svc-add-cost', 'svc-add-sell', 'svc-add-vat', 'svc-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        </label>
+        <label class="text-sm">
+          <span class="block text-xs text-slate-500 mb-1">Profit</span>
+          <div id="svc-add-profit" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400 text-sm font-semibold">-</div>
+        </label>
+        <div class="flex gap-2 md:col-span-2">
+          <button type="button" onclick="saveNewService()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Save</button>
+          <button type="button" onclick="toggleAddServiceForm()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Cancel</button>
+        </div>
+        <p id="svc-add-msg" class="text-xs text-red-600 md:col-span-4"></p>
+      </div>
+
+      <div class="relative mb-4 max-w-md">
+        <input id="svc-search" type="text" oninput="renderServicesTable(); toggleSearchClear(this)" placeholder="Search services…" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+        <button type="button" onclick="clearSearchField('svc-search'); renderServicesTable()" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+      </div>
+
+      <div id="svc-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+        <span id="svc-bulk-count" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="bulkDeleteServices()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected
+        </button>
+        <button type="button" onclick="clearServiceSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+              <th class="p-3 w-8"><input type="checkbox" id="svc-select-all" onchange="toggleSelectAllServices(this.checked)" class="rounded border-slate-300" /></th>
+              <th class="p-3">Name</th>
+              <th class="p-3">Category</th>
+              <th class="p-3 text-right">Cost</th>
+              <th class="p-3 text-right">VAT</th>
+              <th class="p-3 text-right">Sale Price</th>
+              <th class="p-3 text-right">Profit</th>
+              <th class="p-3 text-right">Margin</th>
+              <th class="p-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="svc-table-body" class="divide-y divide-slate-100 text-sm">
+            <tr><td colspan="9" class="p-8 text-center text-slate-400">Loading services…</td></tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -1206,7 +1295,7 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'orders', 'inbox'];
+    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'orders', 'inbox'];
     function switchTab(tab) {
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
@@ -1225,6 +1314,7 @@
       if (tab === 'quotes') loadQuotes();
       if (tab === 'customers') loadCustomers();
       if (tab === 'catalog') loadCatalog(0);
+      if (tab === 'services') loadServices();
       if (tab === 'orders') {
         loadOrders();
         renderOrderCustomerPicker();
@@ -3316,7 +3406,7 @@
 
     async function loadFacets() {
       try {
-        const res = await fetch(API_PRODUCTS_URL + '?facets=1', { cache: 'no-store' });
+        const res = await fetch(API_PRODUCTS_URL + '?facets=1&item_type=garment', { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
 
@@ -3389,6 +3479,7 @@
             cost_price: cost,
             sell_price: sell,
             vat_rate: 0.2,
+            item_type: 'garment',
           }),
         });
         const data = await res.json();
@@ -3397,6 +3488,236 @@
         toggleAddProductForm();
         loadCatalog(0);
         loadFacets();
+      } catch (e) {
+        msg.className = 'text-xs text-red-600 md:col-span-4';
+        msg.textContent = 'Could not save: ' + e.message;
+      }
+    }
+
+    // ============================== Services (flat fees, no garment code) ==============================
+    // Same products table as the Garments tab, just filtered to
+    // item_type='service' server-side (see functions/api/products.js) - a
+    // service is small in number (a handful of fees, not thousands of
+    // colour/size rows), so unlike Garments this loads everything at once
+    // with no grouping/pagination.
+    let allServices = [];
+    let servicesById = {};
+    let selectedServiceIds = new Set();
+    let serviceEditingIds = new Set();
+
+    async function loadServices() {
+      const tbody = document.getElementById('svc-table-body');
+      tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">Loading services…</td></tr>';
+      try {
+        const res = await fetch(API_PRODUCTS_URL + '?item_type=service&limit=1000', { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        allServices = data.results || [];
+        servicesById = {};
+        allServices.forEach((s) => { servicesById[s.id] = s; });
+        selectedServiceIds = new Set();
+        serviceEditingIds = new Set();
+        renderServicesTable();
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load services: ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    function renderServicesTable() {
+      const tbody = document.getElementById('svc-table-body');
+      const query = (document.getElementById('svc-search').value || '').trim().toLowerCase();
+      const filtered = query
+        ? allServices.filter((s) => (s.title || '').toLowerCase().includes(query) || (s.category || '').toLowerCase().includes(query))
+        : allServices;
+
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">' + (allServices.length ? 'No services match your search.' : 'No services yet - add your first one above.') + '</td></tr>';
+        updateServiceBulkBar();
+        return;
+      }
+
+      tbody.innerHTML = filtered.map((s) => {
+        const cost = Number(s.cost_price) || 0;
+        const vatRate = Number(s.vat_rate) || 0;
+        const vatAmount = cost * vatRate;
+        const totalCost = cost + vatAmount;
+        const sell = s.sell_price === null || s.sell_price === undefined ? null : Number(s.sell_price);
+        const profit = sell === null ? null : sell - totalCost;
+        const margin = sell && sell > 0 ? ((profit / sell) * 100).toFixed(1) + '%' : '-';
+        const profitClass = profit === null ? 'text-slate-400' : (profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold');
+
+        if (serviceEditingIds.has(s.id)) {
+          return `<tr class="bg-indigo-50/40">
+            <td class="p-2"></td>
+            <td class="p-2"><input id="svc-edit-title-${escapeAttr(s.id)}" value="${escapeAttr(s.title)}" class="w-full rounded border border-slate-300 px-2 py-1 text-sm" /></td>
+            <td class="p-2"><input id="svc-edit-category-${escapeAttr(s.id)}" value="${escapeAttr(s.category)}" class="w-full rounded border border-slate-300 px-2 py-1 text-sm" /></td>
+            <td class="p-2"><input id="svc-edit-cost-${escapeAttr(s.id)}" type="number" step="0.01" min="0" value="${cost}" class="w-20 text-right rounded border border-slate-300 px-2 py-1" /></td>
+            <td class="p-2 text-right text-xs text-slate-400">auto</td>
+            <td class="p-2 text-right"><input id="svc-edit-sell-${escapeAttr(s.id)}" type="number" step="0.01" min="0" value="${sell === null ? '' : sell.toFixed(2)}" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>
+            <td class="p-2 text-right text-xs text-slate-400">auto</td>
+            <td class="p-2 text-right text-xs text-slate-400">auto</td>
+            <td class="p-2 text-right whitespace-nowrap">
+              <button type="button" onclick="saveServiceRowEdit('${escapeAttr(s.id)}')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold mr-2">Save</button>
+              <button type="button" onclick="cancelServiceRowEdit('${escapeAttr(s.id)}')" class="text-slate-400 hover:text-slate-600 text-xs">Cancel</button>
+            </td>
+          </tr>`;
+        }
+
+        return `<tr class="hover:bg-slate-50">
+          <td class="p-3"><input type="checkbox" class="svc-select-checkbox rounded border-slate-300" data-id="${escapeAttr(s.id)}" ${selectedServiceIds.has(s.id) ? 'checked' : ''} onchange="toggleServiceSelect('${escapeAttr(s.id)}', this.checked)" /></td>
+          <td class="p-3 font-semibold text-slate-900">${escapeHtml(s.title)}</td>
+          <td class="p-3 text-slate-600 text-xs">${escapeHtml(s.category) || '-'}</td>
+          <td class="p-3 text-right text-slate-700">${money(cost)}</td>
+          <td class="p-3 text-right text-slate-600">${vatRate === 0 ? '—' : money(vatAmount)}</td>
+          <td class="p-3 text-right text-slate-900">${sell === null ? '-' : money(sell)}</td>
+          <td class="p-3 text-right ${profitClass}">${profit === null ? '-' : money(profit)}</td>
+          <td class="p-3 text-right text-slate-600">${margin}</td>
+          <td class="p-3 text-right whitespace-nowrap">
+            <button type="button" onclick="startServiceRowEdit('${escapeAttr(s.id)}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">Edit</button>
+            <button type="button" onclick="deleteService('${escapeAttr(s.id)}')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>
+          </td>
+        </tr>`;
+      }).join('');
+      updateServiceBulkBar();
+    }
+
+    function startServiceRowEdit(id) {
+      serviceEditingIds.add(id);
+      renderServicesTable();
+    }
+
+    function cancelServiceRowEdit(id) {
+      serviceEditingIds.delete(id);
+      renderServicesTable();
+    }
+
+    async function saveServiceRowEdit(id) {
+      const title = document.getElementById('svc-edit-title-' + id).value.trim();
+      if (!title) { alert('Service name is required.'); return; }
+      const cost = Number(document.getElementById('svc-edit-cost-' + id).value) || 0;
+      const sellRaw = document.getElementById('svc-edit-sell-' + id).value;
+      const sell = sellRaw === '' ? null : Number(sellRaw);
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id,
+            title,
+            category: document.getElementById('svc-edit-category-' + id).value.trim(),
+            cost_price: cost,
+            sell_price: sell,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        serviceEditingIds.delete(id);
+        loadServices();
+      } catch (e) {
+        alert('Could not save: ' + e.message);
+      }
+    }
+
+    async function deleteService(id) {
+      const s = servicesById[id];
+      if (!confirm(`Delete "${s ? s.title : id}"? This cannot be undone.`)) return;
+      try {
+        await fetch(API_PRODUCTS_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+        loadServices();
+      } catch (e) {
+        alert('Could not delete: ' + e.message);
+      }
+    }
+
+    function toggleServiceSelect(id, checked) {
+      if (checked) selectedServiceIds.add(id);
+      else selectedServiceIds.delete(id);
+      updateServiceBulkBar();
+    }
+
+    function toggleSelectAllServices(checked) {
+      document.querySelectorAll('#svc-table-body .svc-select-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) selectedServiceIds.add(cb.dataset.id);
+        else selectedServiceIds.delete(cb.dataset.id);
+      });
+      updateServiceBulkBar();
+    }
+
+    function clearServiceSelection() {
+      selectedServiceIds = new Set();
+      renderServicesTable();
+    }
+
+    function updateServiceBulkBar() {
+      const bar = document.getElementById('svc-bulk-bar');
+      const count = selectedServiceIds.size;
+      bar.classList.toggle('hidden', count === 0);
+      if (count === 0) return;
+      document.getElementById('svc-bulk-count').textContent = count + ' selected';
+    }
+
+    async function bulkDeleteServices() {
+      const ids = [...selectedServiceIds];
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} service(s)? This cannot be undone.`)) return;
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || 'Delete failed');
+        selectedServiceIds = new Set();
+        loadServices();
+      } catch (e) {
+        alert('Some services could not be deleted: ' + e.message);
+      }
+    }
+
+    function toggleAddServiceForm() {
+      const panel = document.getElementById('svc-add-form');
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        ['svc-add-title', 'svc-add-category', 'svc-add-cost', 'svc-add-sell'].forEach((id) => {
+          document.getElementById(id).value = '';
+        });
+        document.getElementById('svc-add-vat').textContent = '£0.00';
+        document.getElementById('svc-add-profit').textContent = '-';
+        document.getElementById('svc-add-profit').classList.remove('text-red-600', 'text-emerald-600');
+        document.getElementById('svc-add-msg').textContent = '';
+        document.getElementById('svc-add-title').focus();
+      }
+    }
+
+    async function saveNewService() {
+      const msg = document.getElementById('svc-add-msg');
+      const title = document.getElementById('svc-add-title').value.trim();
+      if (!title) { msg.textContent = 'Service name is required.'; return; }
+
+      const cost = Number(document.getElementById('svc-add-cost').value) || 0;
+      const sellRaw = document.getElementById('svc-add-sell').value;
+      const sell = sellRaw === '' ? null : Number(sellRaw);
+
+      msg.className = 'text-xs text-slate-500 md:col-span-4';
+      msg.textContent = 'Saving…';
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            supplier: 'Manual',
+            title,
+            category: document.getElementById('svc-add-category').value.trim(),
+            cost_price: cost,
+            sell_price: sell,
+            vat_rate: 0.2,
+            item_type: 'service',
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        toggleAddServiceForm();
+        loadServices();
       } catch (e) {
         msg.className = 'text-xs text-red-600 md:col-span-4';
         msg.textContent = 'Could not save: ' + e.message;
@@ -3418,6 +3739,7 @@
       if (f.unpriced) params.set('unpriced', '1');
       if (f.priced) params.set('priced', '1');
       params.set('group_by_code', '1');
+      params.set('item_type', 'garment');
       params.set('limit', CATALOG_PAGE_SIZE);
       params.set('offset', catalogOffset);
 

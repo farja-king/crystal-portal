@@ -87,6 +87,7 @@ export async function onRequest(context) {
         available_sizes TEXT DEFAULT '[]',
         on_website INTEGER DEFAULT 0,
         customer_id TEXT,
+        item_type TEXT DEFAULT 'garment',
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
@@ -99,13 +100,28 @@ export async function onRequest(context) {
     // must run before the index creation below - CREATE INDEX on a column
     // that doesn't exist yet throws "no such column", which would otherwise
     // break every request against a table that predates customer_id.
-    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0", "customer_id TEXT"]) {
+    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0", "customer_id TEXT", "item_type TEXT DEFAULT 'garment'"]) {
       try {
         await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run();
       } catch {
         // already exists
       }
     }
+    // One-time backfill: a shared-catalog row that's never had a supplier
+    // code (a flat fee/service like "Design Setup Fee", nothing to give it
+    // a garment code) predates the Garments/Services split and would
+    // otherwise sit tagged 'garment' by the column default above. Only
+    // touches shared-catalog rows (customer_id IS NULL) - a customer's own
+    // one-off Custom Price List items are a separate concern (see
+    // functions/api/inbox.js's customer_id scoping) and were never shown on
+    // either the Garment Catalog or Services tab anyway. Idempotent - a
+    // second run finds nothing left to update.
+    await db.prepare(`
+      UPDATE products SET item_type = 'service'
+      WHERE (supplier_code IS NULL OR supplier_code = '')
+        AND (customer_id IS NULL OR customer_id = '')
+        AND item_type = 'garment'
+    `).run();
 
     // 6k+ rows, so every list view is filtered/paged - these carry that load.
     await db.batch([
@@ -126,7 +142,9 @@ export async function onRequest(context) {
       // per-customer price list, not part of the general catalog Martin
       // browses/bulk-prices here.
       if (p.get("facets")) {
-        const globalOnly = "(customer_id IS NULL OR customer_id = '')";
+        const facetItemType = (p.get("item_type") || "").trim();
+        const globalOnly = "(customer_id IS NULL OR customer_id = '')"
+          + (facetItemType === "garment" || facetItemType === "service" ? ` AND item_type = '${facetItemType}'` : "");
         const [suppliers, brands, categories, totals] = await db.batch([
           db.prepare(`SELECT supplier AS value, COUNT(*) AS n FROM products WHERE ${globalOnly} GROUP BY supplier ORDER BY supplier`),
           db.prepare(`SELECT brand AS value, COUNT(*) AS n FROM products WHERE brand <> '' AND ${globalOnly} GROUP BY brand ORDER BY brand`),
@@ -160,6 +178,17 @@ export async function onRequest(context) {
       for (const [param, col] of [["supplier", "supplier"], ["brand", "brand"], ["category", "category"]]) {
         const v = p.get(param);
         if (v) { where.push(`${col} = ?${binds.length + 1}`); binds.push(v); }
+      }
+      // item_type narrows to just 'garment' or just 'service' rows - used by
+      // the Garments and Services tabs to keep the two apart. Left
+      // unfiltered (both types together) when omitted, so every caller that
+      // predates this split (the quote builder's catalog search, a
+      // customer's price-list picker, etc) keeps seeing exactly what it did
+      // before - nothing is hidden from them by default.
+      const itemType = (p.get("item_type") || "").trim();
+      if (itemType === "garment" || itemType === "service") {
+        where.push(`item_type = ?${binds.length + 1}`);
+        binds.push(itemType);
       }
       // customer_id scopes to one customer's own price list (e.g. imported
       // from their Square export) - without it, customer-tagged rows are
@@ -324,8 +353,8 @@ export async function onRequest(context) {
       await db.prepare(`
         INSERT INTO products (
           id, supplier, supplier_code, supplier_ref, brand, title, colour, size,
-          category, cost_price, surcharge_category, vat_rate, sell_price, profit, active, customer_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          category, cost_price, surcharge_category, vat_rate, sell_price, profit, active, customer_id, item_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         data.supplier || "",
@@ -342,7 +371,8 @@ export async function onRequest(context) {
         data.sell_price ?? null,
         profitOf(data.sell_price, cost, data.vat_rate ?? 0.2),
         data.active === 0 ? 0 : 1,
-        data.customer_id || null
+        data.customer_id || null,
+        data.item_type === "service" ? "service" : "garment"
       ).run();
 
       return json({ success: true, id });
