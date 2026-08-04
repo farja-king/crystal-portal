@@ -2181,7 +2181,9 @@
           const docNumber = p.doc_type === 'invoice' ? p.invoice_number : p.quote_number;
           return `
           <div class="flex items-start gap-3 p-3">
-            ${/^image\//.test(p.content_type || '')
+            ${!p.has_file
+              ? `<div title="Image removed to free up storage - the record stays" class="w-12 h-12 flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 shrink-0 text-slate-300 text-xs text-center leading-tight">Removed</div>`
+              : /^image\//.test(p.content_type || '')
               ? `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank"><img src="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" class="w-12 h-12 object-cover rounded-lg border border-slate-200 shrink-0" /></a>`
               : `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank" class="w-12 h-12 flex items-center justify-center rounded-lg border border-slate-200 shrink-0 text-slate-400 text-xs">File</a>`}
             <div class="min-w-0 flex-1">
@@ -6160,7 +6162,9 @@
         }
         el.innerHTML = rows.map((p) => `
           <div class="flex items-start gap-3 border-b border-slate-100 last:border-0 py-2">
-            ${/^image\//.test(p.content_type || '')
+            ${!p.has_file
+              ? `<div title="Image removed to free up storage - the record stays" class="w-14 h-14 flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 shrink-0 text-slate-300 text-xs text-center leading-tight">Removed</div>`
+              : /^image\//.test(p.content_type || '')
               ? `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank"><img src="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" class="w-14 h-14 object-cover rounded-lg border border-slate-200 shrink-0" /></a>`
               : `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank" class="w-14 h-14 flex items-center justify-center rounded-lg border border-slate-200 shrink-0 text-slate-400 text-xs">File</a>`}
             <div class="min-w-0 flex-1">
@@ -6325,8 +6329,44 @@
       setTimeout(closeNewQuoteProofModal, 2200);
     }
 
-    function notNowNewQuoteProof() {
-      showNewQuoteProofConfirmation('✓', 'Order saved. Nothing to send.');
+    // "Not now" means "don't SEND anything yet" - not "throw away the file
+    // I just picked". If a file was chosen, it still gets attached as a
+    // draft (same upload as Save & Send, just without the email step
+    // after) so it's sitting there ready on the quote's Design Proofs
+    // card next time - previously this discarded the picked file entirely
+    // without ever uploading it, which is why it looked like nothing had
+    // happened even after choosing an image.
+    async function notNowNewQuoteProof() {
+      const orderId = newQuoteProofOrderId;
+      const input = document.getElementById('nq-proof-file');
+      const file = input.files[0];
+
+      if (!file || !orderId) {
+        showNewQuoteProofConfirmation('✓', 'Order saved. Nothing to send.');
+        return;
+      }
+
+      const msg = document.getElementById('nq-proof-msg');
+      msg.className = 'text-sm text-slate-500 mb-3';
+      msg.textContent = 'Saving…';
+      document.getElementById('nq-proof-send-btn').disabled = true;
+
+      const o = ordersById[orderId];
+      const form = new FormData();
+      form.append('order_id', orderId);
+      if (o && o.customer_id) form.append('customer_id', o.customer_id);
+      form.append('file', file);
+
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
+        showNewQuoteProofConfirmation('✓', 'Order saved. Image saved as a draft - nothing sent yet.');
+      } catch (e) {
+        msg.className = 'text-sm text-red-600 mb-3';
+        msg.textContent = 'Order is saved, but the image could not be saved: ' + e.message;
+        document.getElementById('nq-proof-send-btn').disabled = false;
+      }
     }
 
     function previewNewQuoteProofFile() {
@@ -6455,8 +6495,9 @@
             <td class="p-2">${escapeHtml(o.customer_name)}</td>
             <td class="p-2">${money(o.total)}</td>
             <td class="p-2 text-xs text-slate-500">${escapeHtml(ukDate(o.archived_at))}</td>
-            <td class="p-2 text-right">
+            <td class="p-2 text-right whitespace-nowrap">
               <button onclick="restoreOrder('${escapeAttr(o.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Restore</button>
+              <button onclick="removeArchivedProofImages('${escapeAttr(o.id)}')" title="Deletes the actual image file(s) to free up storage - keeps the record of what was attached and what the customer decided" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Remove image from database</button>
             </td>
           </tr>`;
         }).join('');
@@ -6467,6 +6508,27 @@
 
     function closeOrderArchive() {
       document.getElementById('order-archive-modal').classList.add('hidden');
+    }
+
+    // Frees the actual image/PDF bytes for every design proof version on
+    // this archived order - the record itself (filename, version, status,
+    // decision notes, decided_at) is kept forever regardless; only the
+    // storage cost of the file is reclaimed. Deliberately manual and
+    // separate from Delete's automatic cleanup - an archived quote is being
+    // kept on purpose, so nothing here happens unless explicitly asked for.
+    async function removeArchivedProofImages(orderId) {
+      if (!confirm('Remove the design proof image(s) for this quote to free up storage?\n\nThe record of what was attached and what the customer decided stays - only the actual file(s) are deleted.')) return;
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'remove_storage', order_id: orderId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        alert(data.removed ? `Removed ${data.removed} image file(s). The record stays on this quote.` : 'No image files to remove for this quote.');
+      } catch (e) {
+        alert('Could not remove: ' + e.message);
+      }
     }
 
     async function restoreOrder(id) {

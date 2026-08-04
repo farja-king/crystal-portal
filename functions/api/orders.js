@@ -349,13 +349,48 @@ export async function onRequest(context) {
     }
 
     // --------------------------------------------------------------- DELETE --
+    // A genuine Delete (not Archive - see the "archive" PUT action above,
+    // which never touches design_proofs at all) removes every design proof
+    // attached to the order too - both the D1 rows and their actual image/
+    // PDF bytes in R2 (env.DESIGN_FILES, same bucket
+    // functions/api/design-proofs.js writes to). The order itself is gone
+    // for good, so there's nothing left for that record to be about.
+    // Archived quotes keep everything indefinitely (including the actual
+    // files) unless explicitly told otherwise via the "Remove image from
+    // database" button in the Archived list, which only clears the file
+    // bytes (see design-proofs.js's "remove_storage" action) while keeping
+    // the record - who approved/declined what, and when - permanently.
+    async function deleteOrphanedDesignProofs(orderIds) {
+      if (!orderIds.length) return;
+      const placeholders = orderIds.map(() => "?").join(",");
+      // No proof has necessarily ever been attached to anything yet on a
+      // given deploy - the table only gets created lazily by
+      // functions/api/design-proofs.js the first time that's used. Rather
+      // than depend on that having already run, tolerate its absence here
+      // exactly like every other "already exists" check in this codebase.
+      let results;
+      try {
+        ({ results } = await db.prepare(
+          `SELECT r2_key FROM design_proofs WHERE order_id IN (${placeholders}) AND r2_key <> ''`
+        ).bind(...orderIds).all());
+      } catch (e) {
+        return; // design_proofs table doesn't exist yet - nothing to clean up
+      }
+      if (env.DESIGN_FILES) {
+        await Promise.all(results.map((r) => env.DESIGN_FILES.delete(r.r2_key).catch(() => {})));
+      }
+      await db.prepare(`DELETE FROM design_proofs WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
+    }
+
     if (request.method === "DELETE") {
       const { id, ids } = await request.json();
       if (Array.isArray(ids) && ids.length) {
+        await deleteOrphanedDesignProofs(ids);
         const placeholders = ids.map(() => "?").join(",");
         await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...ids).run();
         return json({ success: true, count: ids.length });
       }
+      await deleteOrphanedDesignProofs([id]);
       await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
       return json({ success: true });
     }

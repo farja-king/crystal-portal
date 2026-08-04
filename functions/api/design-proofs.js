@@ -150,6 +150,7 @@ export async function onRequest(context) {
         ? await db.prepare("SELECT * FROM design_proofs WHERE id = ?").bind(byId).first()
         : await db.prepare("SELECT * FROM design_proofs WHERE token = ?").bind(byToken).first();
       if (!row) return json({ error: "Proof not found" }, 404);
+      if (!row.r2_key) return json({ error: "This image was removed to free up storage - the record (filename, version, decision) is still kept." }, 404);
 
       const obj = await bucket.get(row.r2_key);
       if (!obj) return json({ error: "File missing from storage" }, 404);
@@ -192,7 +193,8 @@ export async function onRequest(context) {
       const where = orderId ? "p.order_id = ?" : "p.customer_id = ?";
       const { results } = await db.prepare(`
         SELECT p.id, p.order_id, p.version, p.filename, p.content_type, p.status, p.decision_notes,
-               p.created_at, p.sent_at, p.decided_at, o.quote_number, o.invoice_number, o.doc_type
+               p.created_at, p.sent_at, p.decided_at, o.quote_number, o.invoice_number, o.doc_type,
+               (p.r2_key <> '') AS has_file
         FROM design_proofs p JOIN orders o ON o.id = p.order_id
         WHERE ${where} ORDER BY p.order_id, p.version DESC
       `).bind(orderId || customerId).all();
@@ -241,6 +243,25 @@ export async function onRequest(context) {
 
           const result = await sendProofEmail(env, db, bucket, url.origin, order, proof);
           return json({ success: true, ...result, id: proof.id, version: proof.version });
+        }
+
+        // Manual "Remove image from database" (offered on an Archived
+        // quote) - frees the actual file bytes in R2 for every proof
+        // version on this order, but keeps the design_proofs rows exactly
+        // as they are (filename, version, status, decision notes,
+        // decided_at) forever. Deliberately separate from Delete's
+        // automatic cleanup - an archived quote is being kept on purpose,
+        // so nothing about it is ever removed unless explicitly asked for
+        // here.
+        if (data.action === "remove_storage") {
+          if (!data.order_id) return json({ error: "order_id is required" }, 400);
+          const { results: proofs } = await db.prepare(
+            "SELECT id, r2_key FROM design_proofs WHERE order_id = ? AND r2_key <> ''"
+          ).bind(data.order_id).all();
+          if (!proofs.length) return json({ success: true, removed: 0 });
+          await Promise.all(proofs.map((p) => bucket.delete(p.r2_key).catch(() => {})));
+          await db.prepare("UPDATE design_proofs SET r2_key = '' WHERE order_id = ?").bind(data.order_id).run();
+          return json({ success: true, removed: proofs.length });
         }
 
         if (!data.token) return json({ error: "token is required" }, 400);
