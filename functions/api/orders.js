@@ -283,7 +283,12 @@ export async function onRequest(context) {
 
     // --------------------------------------------------------------- DELETE --
     if (request.method === "DELETE") {
-      const { id } = await request.json();
+      const { id, ids } = await request.json();
+      if (Array.isArray(ids) && ids.length) {
+        const placeholders = ids.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...ids).run();
+        return json({ success: true, count: ids.length });
+      }
       await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
       return json({ success: true });
     }

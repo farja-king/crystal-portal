@@ -39,6 +39,7 @@ export async function onRequest(context) {
         to_address TEXT,
         subject TEXT,
         body_text TEXT,
+        body_html TEXT,
         customer_id TEXT,
         is_read INTEGER DEFAULT 0,
         raw_r2_key TEXT,
@@ -56,7 +57,7 @@ export async function onRequest(context) {
     // CREATE TABLE above - same "already exists" tolerance as every other
     // API here. Must run before the thread_id index below, or that index
     // creation fails outright on a table that doesn't have the column yet.
-    for (const col of ["saved_to_customer INTEGER DEFAULT 0", "message_id TEXT", "in_reply_to TEXT", "thread_id TEXT"]) {
+    for (const col of ["saved_to_customer INTEGER DEFAULT 0", "message_id TEXT", "in_reply_to TEXT", "thread_id TEXT", "body_html TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE inbox_emails ADD COLUMN ${col}`).run();
       } catch {
@@ -151,6 +152,19 @@ export async function onRequest(context) {
 
     if (request.method === "DELETE") {
       const data = await request.json();
+      // Bulk: either a list of individual email ids, or a list of thread
+      // ids (deletes every message in each thread) - the Inbox tab's
+      // checkbox UI uses whichever matches what was selected.
+      if (Array.isArray(data.ids) && data.ids.length) {
+        const placeholders = data.ids.map(() => "?").join(",");
+        await db.prepare(`UPDATE inbox_emails SET deleted_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...data.ids).run();
+        return json({ success: true, count: data.ids.length });
+      }
+      if (Array.isArray(data.thread_ids) && data.thread_ids.length) {
+        const placeholders = data.thread_ids.map(() => "?").join(",");
+        await db.prepare(`UPDATE inbox_emails SET deleted_at = CURRENT_TIMESTAMP WHERE thread_id IN (${placeholders})`).bind(...data.thread_ids).run();
+        return json({ success: true, count: data.thread_ids.length });
+      }
       if (!data.id) return json({ error: "id is required" }, 400);
       await db.prepare("UPDATE inbox_emails SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
       return json({ success: true });

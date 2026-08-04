@@ -453,6 +453,11 @@ export async function onRequest(context) {
     // --------------------------------------------------------------- DELETE --
     if (request.method === "DELETE") {
       const data = await request.json();
+      if (Array.isArray(data.ids) && data.ids.length) {
+        const placeholders = data.ids.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM products WHERE id IN (${placeholders})`).bind(...data.ids).run();
+        return json({ success: true, count: data.ids.length });
+      }
       if (data.id) {
         await db.prepare("DELETE FROM products WHERE id = ?").bind(data.id).run();
         return json({ success: true });

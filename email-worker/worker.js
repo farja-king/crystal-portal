@@ -56,10 +56,15 @@ export default {
     const { name: fromName, address: fromAddress } = parseAddress(fromHeader) || { name: "", address: message.from || "" };
     const toAddress = message.to || message.headers.get("to") || "";
 
-    // ---- 3. Best-effort body extraction - see extractPlainText for the
-    // actual multipart/encoding handling.
+    // ---- 3. Best-effort body extraction - see extractBody for the actual
+    // multipart/encoding handling. Keeps both the plain-text preview (list/
+    // search) and, when present, the original HTML part (rendered in a
+    // sandboxed iframe in the portal) rather than the old approach of only
+    // ever stripping HTML down to text - that's what produced the "could
+    // not extract a text preview" message on HTML-only emails with no
+    // text/plain part, even though the HTML itself was perfectly readable.
     const rawText = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(rawBuf);
-    const bodyText = extractPlainText(rawText, message.headers.get("content-type") || "text/plain");
+    const { text: bodyText, html: bodyHtml } = extractBody(rawText, message.headers.get("content-type") || "text/plain");
 
     // ---- 4. Match to an existing customer by email, if any - brand new
     // enquiries from people not on file simply get no match (customer_id
@@ -133,6 +138,7 @@ export default {
           to_address TEXT,
           subject TEXT,
           body_text TEXT,
+          body_html TEXT,
           customer_id TEXT,
           is_read INTEGER DEFAULT 0,
           raw_r2_key TEXT,
@@ -148,7 +154,7 @@ export default {
       // existed before these columns were added to it - same fallback as
       // functions/api/inbox.js, needed here too since either side could be
       // the first to ever touch the table on a fresh deploy.
-      for (const col of ["saved_to_customer INTEGER DEFAULT 0", "message_id TEXT", "in_reply_to TEXT", "thread_id TEXT"]) {
+      for (const col of ["saved_to_customer INTEGER DEFAULT 0", "message_id TEXT", "in_reply_to TEXT", "thread_id TEXT", "body_html TEXT"]) {
         try {
           await env.DB.prepare(`ALTER TABLE inbox_emails ADD COLUMN ${col}`).run();
         } catch (e) {
@@ -157,9 +163,9 @@ export default {
       }
 
       await env.DB.prepare(`
-        INSERT INTO inbox_emails (id, direction, from_address, from_name, to_address, subject, body_text, customer_id, raw_r2_key, message_id, in_reply_to, thread_id)
-        VALUES (?, 'inbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(id, fromAddress, fromName, toAddress, subject, bodyText.slice(0, 20000), customerId, r2Key, messageId, inReplyTo, threadId).run();
+        INSERT INTO inbox_emails (id, direction, from_address, from_name, to_address, subject, body_text, body_html, customer_id, raw_r2_key, message_id, in_reply_to, thread_id)
+        VALUES (?, 'inbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(id, fromAddress, fromName, toAddress, subject, bodyText.slice(0, 20000), bodyHtml ? bodyHtml.slice(0, 200000) : null, customerId, r2Key, messageId, inReplyTo, threadId).run();
     }
 
     // ---- 6. Notification - a plain email via Resend (same service already
@@ -326,13 +332,15 @@ function decodePart(body, contentTransferEncoding) {
   return body;
 }
 
-// Best-effort plain-text extraction covering: a plain single-part email, a
-// multipart/alternative or multipart/mixed email (picks text/plain, falls
-// back to text/html with tags stripped), one level of nested multipart, and
-// base64/quoted-printable decoding. Not a full MIME parser - anything more
-// exotic just falls back to a truncated raw snippet, and the original is
-// always in R2 regardless (see raw_r2_key).
-function extractPlainText(rawText, topContentType) {
+// Best-effort body extraction covering: a plain single-part email, a
+// multipart/alternative or multipart/mixed email (picks text/plain and/or
+// text/html), one level of nested multipart, and base64/quoted-printable
+// decoding. Not a full MIME parser - anything more exotic just falls back
+// to a truncated raw snippet, and the original is always in R2 regardless
+// (see raw_r2_key). Returns both the plain-text preview (used in the list/
+// search) and the raw HTML part when one exists, so the portal can render
+// the actual email instead of only a stripped-down text approximation.
+function extractBody(rawText, topContentType) {
   const headerBoundaryIdx = rawText.search(/\r?\n\r?\n/);
   const body = headerBoundaryIdx === -1 ? rawText : rawText.slice(headerBoundaryIdx).replace(/^\r?\n\r?\n/, "");
 
@@ -346,7 +354,8 @@ function extractPlainText(rawText, topContentType) {
     const asIs = body.trim();
     const qp = decodeQuotedPrintable(body).trim();
     const candidate = qp.length && qp !== asIs ? qp : asIs;
-    return /html/i.test(topContentType) ? stripHtml(candidate) : candidate;
+    if (/html/i.test(topContentType)) return { text: stripHtml(candidate), html: candidate };
+    return { text: candidate, html: null };
   }
 
   const parts = splitMultipart(body, boundaryMatch[1]);
@@ -373,7 +382,8 @@ function extractPlainText(rawText, topContentType) {
     if (/text\/html/i.test(ct) && !html) html = decodePart(part.body, cte);
   }
 
-  if (plain && plain.trim()) return plain.trim();
-  if (html && html.trim()) return stripHtml(html);
-  return "(Could not extract a text preview - download the original to read this email.)";
+  const htmlOut = html && html.trim() ? html.trim() : null;
+  if (plain && plain.trim()) return { text: plain.trim(), html: htmlOut };
+  if (htmlOut) return { text: stripHtml(htmlOut), html: htmlOut };
+  return { text: "(Could not extract a text preview - download the original to read this email.)", html: null };
 }

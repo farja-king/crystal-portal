@@ -593,11 +593,24 @@
         </div>
       </div>
 
+      <!-- Bulk selection bar - ticked variant rows can be deleted together,
+           same pattern as the Customer Directory's bulk bar. -->
+      <div id="cat-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+        <span id="cat-bulk-count" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="bulkDeleteCatalog()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected
+        </button>
+        <button type="button" onclick="clearCatalogSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
+      </div>
+
       <!-- Catalog table -->
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+              <th class="p-3 w-8"><input type="checkbox" id="cat-select-all" onchange="toggleSelectAllCatalog(this.checked)" class="rounded border-slate-300" /></th>
               <th class="p-3">Code</th>
               <th class="p-3">Title</th>
               <th class="p-3">Colour</th>
@@ -611,7 +624,7 @@
             </tr>
           </thead>
           <tbody id="catalog-table-body" class="divide-y divide-slate-100 text-sm">
-            <tr><td colspan="10" class="p-8 text-center text-slate-400">Loading catalog…</td></tr>
+            <tr><td colspan="11" class="p-8 text-center text-slate-400">Loading catalog…</td></tr>
           </tbody>
         </table>
       </div>
@@ -745,11 +758,23 @@
         </div>
       </div>
 
+      <!-- Bulk selection bar -->
+      <div id="ord-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+        <span id="ord-bulk-count" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="bulkDeleteOrders()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected
+        </button>
+        <button type="button" onclick="clearOrderSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
+      </div>
+
       <!-- List -->
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table class="w-full text-left">
           <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
             <tr>
+              <th class="p-4 w-8"><input type="checkbox" id="ord-select-all" onchange="toggleSelectAllOrders(this.checked)" class="rounded border-slate-300" /></th>
               <th class="p-4">Number</th>
               <th class="p-4">Customer</th>
               <th class="p-4">Date</th>
@@ -759,7 +784,7 @@
             </tr>
           </thead>
           <tbody id="orders-table-body" class="divide-y divide-slate-100 text-sm">
-            <tr><td colspan="6" class="p-8 text-center text-slate-400">Loading…</td></tr>
+            <tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -801,6 +826,17 @@
 
       <div class="grid gap-4 md:grid-cols-5">
         <div class="md:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-100 text-xs">
+            <label class="flex items-center gap-1.5 text-slate-500 font-medium cursor-pointer">
+              <input type="checkbox" id="inbox-select-all" onchange="toggleSelectAllInboxThreads(this.checked)" class="rounded border-slate-300" />
+              Select all
+            </label>
+            <div id="inbox-bulk-bar" class="hidden items-center gap-2 ml-auto">
+              <span id="inbox-bulk-count" class="font-semibold text-indigo-700"></span>
+              <button type="button" onclick="bulkDeleteInboxThreads()" class="bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 rounded text-xs font-semibold">Delete</button>
+              <button type="button" onclick="clearInboxThreadSelection()" class="text-slate-400 hover:text-slate-600 font-medium">Clear</button>
+            </div>
+          </div>
           <div id="inbox-list" class="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto text-sm">
             <p class="p-4 text-center text-slate-400">Loading…</p>
           </div>
@@ -2732,6 +2768,63 @@
     // Product rows currently showing their inline edit inputs (Code/Title/
     // Colour/Size/Cost) instead of plain text - see renderCatalogGroups.
     let catalogEditingIds = new Set();
+    // Ticked variant rows for bulk delete - same pattern as selectedCustomerIds.
+    let selectedCatalogIds = new Set();
+
+    function toggleCatalogSelect(id, checked) {
+      if (checked) selectedCatalogIds.add(id);
+      else selectedCatalogIds.delete(id);
+      updateCatalogBulkBar();
+    }
+
+    function toggleCatalogGroupSelect(groupCode, checked) {
+      const group = lastCatalogGroups.find((g) => g.supplier_code === groupCode);
+      if (!group) return;
+      (group.variants || []).forEach((v) => {
+        if (checked) selectedCatalogIds.add(v.id);
+        else selectedCatalogIds.delete(v.id);
+      });
+      renderCatalogGroups(lastCatalogGroups);
+    }
+
+    function toggleSelectAllCatalog(checked) {
+      lastCatalogGroups.forEach((g) => {
+        (g.variants || []).forEach((v) => {
+          if (checked) selectedCatalogIds.add(v.id);
+          else selectedCatalogIds.delete(v.id);
+        });
+      });
+      renderCatalogGroups(lastCatalogGroups);
+    }
+
+    function clearCatalogSelection() {
+      selectedCatalogIds = new Set();
+      renderCatalogGroups(lastCatalogGroups);
+    }
+
+    function updateCatalogBulkBar() {
+      const bar = document.getElementById('cat-bulk-bar');
+      const count = selectedCatalogIds.size;
+      bar.classList.toggle('hidden', count === 0);
+      if (count === 0) return;
+      document.getElementById('cat-bulk-count').textContent = count + ' selected';
+    }
+
+    async function bulkDeleteCatalog() {
+      const ids = [...selectedCatalogIds];
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} product(s) from the catalog? This cannot be undone.`)) return;
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || 'Delete failed');
+        selectedCatalogIds = new Set();
+        loadCatalog(catalogOffset);
+      } catch (e) {
+        alert('Some products could not be deleted: ' + e.message);
+      }
+    }
 
     function styleCatalogViewButtons() {
       document.querySelectorAll('.cat-view-btn').forEach((btn) => {
@@ -3272,16 +3365,19 @@
       document.getElementById('cat-stat-matching').textContent = catalogVariantTotal.toLocaleString();
 
       if (!groups.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-slate-400">No products match these filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="p-8 text-center text-slate-400">No products match these filters.</td></tr>';
       } else {
         tbody.innerHTML = groups.map((g) => {
           const variants = g.variants || [];
           const pricedCount = variants.filter((v) => v.sell_price !== null && v.sell_price !== undefined).length;
           const isOpen = expandedCatalogGroups.has(g.supplier_code);
 
+          const groupIds = variants.map((v) => v.id);
+          const groupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedCatalogIds.has(id));
           const headerRow = `
-            <tr class="bg-slate-50 hover:bg-slate-100 cursor-pointer transition" data-group-toggle="${escapeAttr(g.supplier_code)}">
-              <td class="p-3" colspan="4">
+            <tr class="bg-slate-50 hover:bg-slate-100 transition" data-group-toggle="${escapeAttr(g.supplier_code)}">
+              <td class="p-3" onclick="event.stopPropagation()"><input type="checkbox" class="rounded border-slate-300" ${groupAllSelected ? 'checked' : ''} onchange="toggleCatalogGroupSelect('${escapeAttr(g.supplier_code)}', this.checked)" /></td>
+              <td class="p-3 cursor-pointer" colspan="4">
                 <span class="inline-block w-3 text-slate-400 transition-transform ${isOpen ? 'rotate-90' : ''}" data-group-chevron="${escapeAttr(g.supplier_code)}">▶</span>
                 <span class="font-mono text-xs font-semibold text-slate-800 ml-1">${escapeHtml(g.supplier_code)}</span>
                 <span class="text-slate-700 ml-2">${escapeHtml(g.title)}</span>
@@ -3305,6 +3401,7 @@
 
             if (catalogEditingIds.has(p.id)) {
               return '<tr class="bg-indigo-50/40 ' + (isOpen ? '' : 'hidden') + '" data-group-row="' + escapeAttr(g.supplier_code) + '">' +
+                '<td class="p-2"><input type="checkbox" class="cat-select-checkbox rounded border-slate-300" data-id="' + escapeAttr(p.id) + '" data-group="' + escapeAttr(g.supplier_code) + '" ' + (selectedCatalogIds.has(p.id) ? 'checked' : '') + ' onchange="toggleCatalogSelect(\'' + escapeAttr(p.id) + '\', this.checked)" /></td>' +
                 '<td class="p-2"><input id="cat-edit-code-' + escapeAttr(p.id) + '" value="' + escapeAttr(p.supplier_code) + '" class="w-24 rounded border border-slate-300 px-2 py-1 text-xs" /></td>' +
                 '<td class="p-2"><input id="cat-edit-title-' + escapeAttr(p.id) + '" value="' + escapeAttr(p.title) + '" class="w-full rounded border border-slate-300 px-2 py-1 text-sm" /></td>' +
                 '<td class="p-2"><input id="cat-edit-colour-' + escapeAttr(p.id) + '" value="' + escapeAttr(p.colour) + '" class="w-20 rounded border border-slate-300 px-2 py-1 text-xs" /></td>' +
@@ -3322,6 +3419,7 @@
             }
 
             return '<tr class="hover:bg-slate-50 ' + (isOpen ? '' : 'hidden') + '" data-group-row="' + escapeAttr(g.supplier_code) + '">' +
+              '<td class="p-3"><input type="checkbox" class="cat-select-checkbox rounded border-slate-300" data-id="' + escapeAttr(p.id) + '" data-group="' + escapeAttr(g.supplier_code) + '" ' + (selectedCatalogIds.has(p.id) ? 'checked' : '') + ' onchange="toggleCatalogSelect(\'' + escapeAttr(p.id) + '\', this.checked)" /></td>' +
               '<td class="p-3 font-mono text-xs text-slate-700">' + escapeHtml(p.supplier_code) +
                 '<div class="text-slate-400">' + escapeHtml(p.supplier) + '</div></td>' +
               '<td class="p-3 text-slate-800">' + escapeHtml(p.title) + sur +
@@ -3353,6 +3451,7 @@
         catalogTotal === 0 ? 'No results' : 'Showing ' + from + '–' + to + ' of ' + catalogTotal.toLocaleString() + ' product codes';
       document.getElementById('cat-prev').disabled = catalogOffset === 0;
       document.getElementById('cat-next').disabled = catalogOffset + CATALOG_PAGE_SIZE >= catalogTotal;
+      updateCatalogBulkBar();
     }
 
     // Toggle a group open/closed by flipping the hidden class on its detail
@@ -4668,15 +4767,17 @@
     async function loadOrders() {
       ordersLoaded = true;
       const tbody = document.getElementById('orders-table-body');
-      tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">Loading…</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       try {
         const res = await fetch(API_ORDERS_URL);
         const rows = await res.json();
         ordersById = {};
         rows.forEach((o) => { ordersById[o.id] = o; });
+        selectedOrderIds = new Set();
+        updateOrderBulkBar();
 
         if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">No quotes yet.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No quotes yet.</td></tr>';
           return;
         }
 
@@ -4703,6 +4804,7 @@
 
           return `
             <tr class="hover:bg-slate-50">
+              <td class="p-4"><input type="checkbox" class="ord-select-checkbox rounded border-slate-300" data-id="${escapeAttr(o.id)}" ${selectedOrderIds.has(o.id) ? 'checked' : ''} onchange="toggleOrderSelect('${escapeAttr(o.id)}', this.checked)" /></td>
               <td class="p-4 font-semibold text-slate-900">${number}</td>
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
@@ -4712,7 +4814,55 @@
             </tr>`;
         }).join('');
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    // Ticked orders/invoices for bulk delete - same pattern as selectedCustomerIds.
+    let selectedOrderIds = new Set();
+
+    function toggleOrderSelect(id, checked) {
+      if (checked) selectedOrderIds.add(id);
+      else selectedOrderIds.delete(id);
+      updateOrderBulkBar();
+    }
+
+    function toggleSelectAllOrders(checked) {
+      document.querySelectorAll('#orders-table-body .ord-select-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) selectedOrderIds.add(cb.dataset.id);
+        else selectedOrderIds.delete(cb.dataset.id);
+      });
+      updateOrderBulkBar();
+    }
+
+    function clearOrderSelection() {
+      selectedOrderIds = new Set();
+      loadOrders();
+    }
+
+    function updateOrderBulkBar() {
+      const bar = document.getElementById('ord-bulk-bar');
+      if (!bar) return;
+      const count = selectedOrderIds.size;
+      bar.classList.toggle('hidden', count === 0);
+      if (count === 0) return;
+      document.getElementById('ord-bulk-count').textContent = count + ' selected';
+    }
+
+    async function bulkDeleteOrders() {
+      const ids = [...selectedOrderIds];
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} quote(s)/invoice(s)? This cannot be undone.`)) return;
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || 'Delete failed');
+        selectedOrderIds = new Set();
+        loadOrders();
+      } catch (e) {
+        alert('Some items could not be deleted: ' + e.message);
       }
     }
 
@@ -5038,28 +5188,93 @@
       }).sort((a, b) => new Date(b.latest.received_at) - new Date(a.latest.received_at));
     }
 
+    // Ticked conversation threads for bulk delete - same Set pattern as
+    // selectedCustomerIds. Deleting a ticked thread removes every message
+    // in it (server-side thread_ids branch in functions/api/inbox.js).
+    let selectedInboxThreadIds = new Set();
+    let lastInboxThreads = [];
+
     function renderInboxList(rows) {
       const list = document.getElementById('inbox-list');
       if (!rows.length) {
         list.innerHTML = '<p class="p-4 text-center text-slate-400 text-sm">No emails yet.</p>';
+        lastInboxThreads = [];
+        updateInboxBulkBar();
         return;
       }
       const threads = groupInboxThreads(rows);
+      lastInboxThreads = threads;
       list.innerHTML = threads.map(({ threadId, messages, latest }) => {
         const isOutbound = latest.direction === 'outbound';
         const who = isOutbound ? ('To: ' + (latest.to_address || '')) : (latest.from_name || latest.from_address || 'Unknown sender');
         const hasUnread = messages.some((m) => !m.is_read && m.direction === 'inbound');
         const unreadDot = hasUnread ? '<span class="inline-block w-2 h-2 bg-indigo-600 rounded-full mr-1.5"></span>' : '';
         const countBadge = messages.length > 1 ? ` <span class="text-xs text-slate-400 font-normal">(${messages.length})</span>` : '';
-        return `<button type="button" onclick="viewInboxThread('${escapeAttr(threadId)}')" class="w-full text-left px-4 py-3 hover:bg-slate-50 ${viewingInboxThreadId === threadId ? 'bg-indigo-50' : ''}">
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-sm ${hasUnread ? 'font-semibold text-slate-900' : 'text-slate-700'} truncate">${unreadDot}${escapeHtml(who)}${countBadge}</span>
-            <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDateTime(latest.received_at))}</span>
-          </div>
-          <div class="text-sm ${hasUnread ? 'text-slate-800 font-medium' : 'text-slate-500'} truncate">${escapeHtml(latest.subject || '(no subject)')}</div>
-          <div class="text-xs text-slate-400 truncate">${escapeHtml(latest.preview || '')}</div>
-        </button>`;
+        return `<div class="flex items-start gap-1 hover:bg-slate-50 ${viewingInboxThreadId === threadId ? 'bg-indigo-50' : ''}">
+          <label class="pl-3 pt-4 shrink-0" onclick="event.stopPropagation()">
+            <input type="checkbox" class="inbox-thread-checkbox rounded border-slate-300" data-thread-id="${escapeAttr(threadId)}" ${selectedInboxThreadIds.has(threadId) ? 'checked' : ''} onchange="toggleInboxThreadSelect('${escapeAttr(threadId)}', this.checked)" />
+          </label>
+          <button type="button" onclick="viewInboxThread('${escapeAttr(threadId)}')" class="flex-1 min-w-0 text-left px-2 py-3">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm ${hasUnread ? 'font-semibold text-slate-900' : 'text-slate-700'} truncate">${unreadDot}${escapeHtml(who)}${countBadge}</span>
+              <span class="text-xs text-slate-400 shrink-0">${escapeHtml(ukDateTime(latest.received_at))}</span>
+            </div>
+            <div class="text-sm ${hasUnread ? 'text-slate-800 font-medium' : 'text-slate-500'} truncate">${escapeHtml(latest.subject || '(no subject)')}</div>
+            <div class="text-xs text-slate-400 truncate">${escapeHtml(latest.preview || '')}</div>
+          </button>
+        </div>`;
       }).join('');
+      updateInboxBulkBar();
+    }
+
+    function toggleInboxThreadSelect(threadId, checked) {
+      if (checked) selectedInboxThreadIds.add(threadId);
+      else selectedInboxThreadIds.delete(threadId);
+      updateInboxBulkBar();
+    }
+
+    function toggleSelectAllInboxThreads(checked) {
+      lastInboxThreads.forEach(({ threadId }) => {
+        if (checked) selectedInboxThreadIds.add(threadId);
+        else selectedInboxThreadIds.delete(threadId);
+      });
+      renderInboxList(Object.values(inboxById));
+    }
+
+    function clearInboxThreadSelection() {
+      selectedInboxThreadIds = new Set();
+      renderInboxList(Object.values(inboxById));
+    }
+
+    function updateInboxBulkBar() {
+      const bar = document.getElementById('inbox-bulk-bar');
+      if (!bar) return;
+      const count = selectedInboxThreadIds.size;
+      bar.classList.toggle('hidden', count === 0);
+      bar.classList.toggle('flex', count > 0);
+      if (count === 0) return;
+      document.getElementById('inbox-bulk-count').textContent = count + ' selected';
+    }
+
+    async function bulkDeleteInboxThreads() {
+      const threadIds = [...selectedInboxThreadIds];
+      if (!threadIds.length) return;
+      const messageCount = lastInboxThreads.filter((t) => selectedInboxThreadIds.has(t.threadId)).reduce((sum, t) => sum + t.messages.length, 0);
+      if (!confirm(`Delete ${threadIds.length} conversation(s) (${messageCount} email(s) total)? This only removes them from the portal.`)) return;
+      try {
+        const res = await fetch(API_INBOX_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ thread_ids: threadIds }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || 'Delete failed');
+        selectedInboxThreadIds = new Set();
+        if (threadIds.includes(viewingInboxThreadId)) {
+          viewingInboxThreadId = null;
+          document.getElementById('inbox-detail').innerHTML = '<p class="text-slate-400 text-sm">Select an email to read it.</p>';
+        }
+        loadInbox();
+      } catch (e) {
+        alert('Some conversations could not be deleted: ' + e.message);
+      }
     }
 
     // The whole conversation, oldest message first (same convention as any
@@ -5129,7 +5344,9 @@
             </div>
           </div>
           <div id="inbox-customer-picker-${escapeAttr(e.id)}" class="hidden mb-2 bg-slate-50 border border-slate-200 rounded-lg p-3"></div>
-          <div class="text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml(e.body_text || '(No readable content)')}</div>
+          ${e.body_html
+            ? `<iframe class="w-full border border-slate-200 rounded-lg bg-white" style="min-height:120px;" sandbox="allow-same-origin" srcdoc="${escapeAttr(e.body_html)}" onload="try{this.style.height=(this.contentWindow.document.body.scrollHeight+20)+'px';}catch(err){}"></iframe>`
+            : `<div class="text-sm text-slate-800 whitespace-pre-wrap">${escapeHtml(e.body_text || '(No readable content)')}</div>`}
         </div>`;
     }
 

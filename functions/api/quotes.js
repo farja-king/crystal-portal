@@ -84,7 +84,12 @@ export async function onRequest(context) {
 
     // DELETE: Remove a quote (e.g. mis-entered or test data)
     if (request.method === "DELETE") {
-      const { id } = await request.json();
+      const { id, ids } = await request.json();
+      if (Array.isArray(ids) && ids.length) {
+        const placeholders = ids.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM quotes WHERE id IN (${placeholders})`).bind(...ids).run();
+        return new Response(JSON.stringify({ success: true, count: ids.length }), { headers: corsHeaders });
+      }
       await db.prepare("DELETE FROM quotes WHERE id = ?").bind(id).run();
       return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
     }
