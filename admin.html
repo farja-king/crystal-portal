@@ -677,15 +677,19 @@
         <input id="svc-add-category" placeholder="Category (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
         <label class="text-sm">
           <span class="block text-xs text-slate-500 mb-1">Cost price</span>
-          <input id="svc-add-cost" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('svc-add-cost', 'svc-add-sell', 'svc-add-vat', 'svc-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="svc-add-cost" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcServiceFormVat('svc-add-cost', 'svc-add-sell', 'svc-add-vat-toggle', 'svc-add-vat', 'svc-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         </label>
         <label class="text-sm">
-          <span class="block text-xs text-slate-500 mb-1">VAT (20%, not reclaimable)</span>
-          <div id="svc-add-vat" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-500 text-sm">£0.00</div>
+          <span class="block text-xs text-slate-500 mb-1">VAT on this cost?</span>
+          <select id="svc-add-vat-toggle" onchange="recalcServiceFormVat('svc-add-cost', 'svc-add-sell', 'svc-add-vat-toggle', 'svc-add-vat', 'svc-add-profit')" class="w-full rounded-lg border border-slate-300 px-2 py-2 text-slate-900 text-sm mb-1">
+            <option value="0.2" selected>Yes - 20%</option>
+            <option value="0">No VAT</option>
+          </select>
+          <div id="svc-add-vat" class="text-xs text-slate-500">£0.00</div>
         </label>
         <label class="text-sm">
           <span class="block text-xs text-slate-500 mb-1">Sell price</span>
-          <input id="svc-add-sell" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('svc-add-cost', 'svc-add-sell', 'svc-add-vat', 'svc-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="svc-add-sell" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcServiceFormVat('svc-add-cost', 'svc-add-sell', 'svc-add-vat-toggle', 'svc-add-vat', 'svc-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         </label>
         <label class="text-sm">
           <span class="block text-xs text-slate-500 mb-1">Profit</span>
@@ -3342,6 +3346,32 @@
       profitEl.classList.toggle('text-emerald-600', profit >= 0);
     }
 
+    // Same as recalcAddFormVat, but for the Services tab, where VAT isn't a
+    // fixed 20% - not being VAT-registered means most services are quoted
+    // with no VAT at all, and the previous hardcoded 20% was silently
+    // knocking a chunk off the margin on things that were never meant to
+    // carry VAT (e.g. cost £15, sell £15 was showing as a £3 loss). The
+    // "VAT on this cost?" toggle picks 20% or 0% per service, and this
+    // reads that toggle instead of assuming one fixed rate.
+    function recalcServiceFormVat(costId, sellId, vatToggleId, vatElId, profitElId) {
+      const cost = Number(document.getElementById(costId).value) || 0;
+      const vatRate = Number(document.getElementById(vatToggleId).value) || 0;
+      const vat = cost * vatRate;
+      document.getElementById(vatElId).textContent = money(vat);
+
+      const sellRaw = document.getElementById(sellId).value;
+      const profitEl = document.getElementById(profitElId);
+      if (sellRaw === '') {
+        profitEl.textContent = '-';
+        profitEl.classList.remove('text-red-600', 'text-emerald-600');
+        return;
+      }
+      const profit = Number(sellRaw) - (cost + vat);
+      profitEl.textContent = money(profit);
+      profitEl.classList.toggle('text-red-600', profit < 0);
+      profitEl.classList.toggle('text-emerald-600', profit >= 0);
+    }
+
     // Groups a flat list of customer-catalog product rows by title (Square's
     // "Item Name") - a customer export has one row per *variation* (e.g. one
     // school's badge priced separately per placement: "Main Logo", "PE",
@@ -3552,7 +3582,12 @@
             <td class="p-2"><input id="svc-edit-title-${escapeAttr(s.id)}" value="${escapeAttr(s.title)}" class="w-full rounded border border-slate-300 px-2 py-1 text-sm" /></td>
             <td class="p-2"><input id="svc-edit-category-${escapeAttr(s.id)}" value="${escapeAttr(s.category)}" class="w-full rounded border border-slate-300 px-2 py-1 text-sm" /></td>
             <td class="p-2"><input id="svc-edit-cost-${escapeAttr(s.id)}" type="number" step="0.01" min="0" value="${cost}" class="w-20 text-right rounded border border-slate-300 px-2 py-1" /></td>
-            <td class="p-2 text-right text-xs text-slate-400">auto</td>
+            <td class="p-2 text-right">
+              <select id="svc-edit-vat-${escapeAttr(s.id)}" class="rounded border border-slate-300 px-1 py-1 text-xs">
+                <option value="0.2" ${vatRate !== 0 ? 'selected' : ''}>Yes - 20%</option>
+                <option value="0" ${vatRate === 0 ? 'selected' : ''}>No VAT</option>
+              </select>
+            </td>
             <td class="p-2 text-right"><input id="svc-edit-sell-${escapeAttr(s.id)}" type="number" step="0.01" min="0" value="${sell === null ? '' : sell.toFixed(2)}" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>
             <td class="p-2 text-right text-xs text-slate-400">auto</td>
             <td class="p-2 text-right text-xs text-slate-400">auto</td>
@@ -3597,6 +3632,7 @@
       const cost = Number(document.getElementById('svc-edit-cost-' + id).value) || 0;
       const sellRaw = document.getElementById('svc-edit-sell-' + id).value;
       const sell = sellRaw === '' ? null : Number(sellRaw);
+      const vatRate = Number(document.getElementById('svc-edit-vat-' + id).value) || 0;
 
       try {
         const res = await fetch(API_PRODUCTS_URL, {
@@ -3607,6 +3643,7 @@
             category: document.getElementById('svc-edit-category-' + id).value.trim(),
             cost_price: cost,
             sell_price: sell,
+            vat_rate: vatRate,
           }),
         });
         const data = await res.json();
@@ -3680,6 +3717,7 @@
         ['svc-add-title', 'svc-add-category', 'svc-add-cost', 'svc-add-sell'].forEach((id) => {
           document.getElementById(id).value = '';
         });
+        document.getElementById('svc-add-vat-toggle').value = '0.2';
         document.getElementById('svc-add-vat').textContent = '£0.00';
         document.getElementById('svc-add-profit').textContent = '-';
         document.getElementById('svc-add-profit').classList.remove('text-red-600', 'text-emerald-600');
@@ -3696,6 +3734,7 @@
       const cost = Number(document.getElementById('svc-add-cost').value) || 0;
       const sellRaw = document.getElementById('svc-add-sell').value;
       const sell = sellRaw === '' ? null : Number(sellRaw);
+      const vatRate = Number(document.getElementById('svc-add-vat-toggle').value) || 0;
 
       msg.className = 'text-xs text-slate-500 md:col-span-4';
       msg.textContent = 'Saving…';
@@ -3709,7 +3748,7 @@
             category: document.getElementById('svc-add-category').value.trim(),
             cost_price: cost,
             sell_price: sell,
-            vat_rate: 0.2,
+            vat_rate: vatRate,
             item_type: 'service',
           }),
         });
@@ -4461,14 +4500,14 @@
     // plain embroidery, e.g. DTF/sublimation stay manual-entry always.
     function suggestDecorationPrice(method, placement, source) {
       if (method !== 'embroidery') return null;
-      if (placement === 'left_chest') return source === 'customer_supplied' ? 5 : 0;
+      if (placement === 'left_chest' || placement === 'right_chest') return source === 'customer_supplied' ? 5 : 0;
       if (placement === 'sleeve') return 5;
       if (placement === 'back') return 10;
       return null;
     }
 
     const METHOD_LABELS = { embroidery: 'Embroidery', dtf: 'DTF', sublimation: 'Sublimation', other: 'Other' };
-    const PLACEMENT_LABELS = { left_chest: 'Left chest', sleeve: 'Sleeve', back: 'Back', other: 'Other' };
+    const PLACEMENT_LABELS = { left_chest: 'Left chest', right_chest: 'Right chest', sleeve: 'Sleeve', back: 'Back', other: 'Other' };
 
     // Customer picker for the quote builder - a search box (matching name,
     // company, email or phone, same fields as the Customer Directory search)
