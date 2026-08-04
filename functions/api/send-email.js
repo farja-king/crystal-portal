@@ -24,7 +24,7 @@ export async function onRequest(context) {
     new Response(JSON.stringify(body), { status, headers: corsHeaders });
 
   const METHOD_LABELS = { embroidery: "Embroidery", dtf: "DTF", sublimation: "Sublimation", other: "Other" };
-  const PLACEMENT_LABELS = { left_chest: "Left chest", sleeve: "Sleeve", back: "Back", other: "Other" };
+  const PLACEMENT_LABELS = { left_chest: "Left chest", right_chest: "Right chest", sleeve: "Sleeve", back: "Back", other: "Other" };
   const escapeHtml = (str) => String(str ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const money = (n) => "£" + Number(n || 0).toFixed(2);
@@ -106,18 +106,34 @@ export async function onRequest(context) {
       const baseLabel = item.source === "catalog"
         ? `${escapeHtml(item.supplier_code)} ${escapeHtml(item.title)}`
         : (escapeHtml([item.description, item.title].filter(Boolean).join(" - ")) || "Customer's own garment");
-      const breakdownLines = (item.breakdown && item.breakdown.length && !item.customer_item)
-        ? item.breakdown.map((b) => `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(b.colour || "-")} / ${escapeHtml(b.size || "-")} × ${b.qty}</div>`).join("")
-        : "";
-      const decLines = (item.decorations || []).map((d) => {
+      // Each breakdown row's decorations are shown right underneath that
+      // row (not lumped together under the whole line) - a real garment
+      // sent to the customer this way now clearly shows e.g. "Black / M"
+      // followed by "Embroidery - Left chest - Highlanders Logo" directly
+      // below it, rather than every logo on the line appearing as one
+      // undifferentiated block a customer can't match back to a size. Falls
+      // back to the old flat display for a quote saved before decorations
+      // moved onto individual rows (see admin.html's itemDetailLines, the
+      // same logic for the internal View/Print).
+      const decLine = (d) => {
         const dQty = Number(d.qty) || 1;
         const priceLabel = d.price
           ? `${money(d.price)} each${dQty > 1 ? ` × ${dQty} = ${money(d.price * dQty)}` : ""}`
           : "included";
         return `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)} (${priceLabel})${d.notes ? " - " + escapeHtml(d.notes) : ""}</div>`;
-      }).join("");
+      };
+      let detailLines;
+      if (!item.breakdown || !item.breakdown.length || item.customer_item) {
+        detailLines = (item.decorations || []).map(decLine).join("");
+      } else {
+        const hasRowDecorations = item.breakdown.some((b) => (b.decorations || []).length);
+        detailLines = item.breakdown.map((b) => {
+          const rowLine = `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(b.colour || "-")} / ${escapeHtml(b.size || "-")} × ${b.qty}</div>`;
+          return rowLine + (hasRowDecorations ? (b.decorations || []).map(decLine).join("") : "");
+        }).join("") + (!hasRowDecorations ? (item.decorations || []).map(decLine).join("") : "");
+      }
       return `<tr>
-        <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${baseLabel}${breakdownLines}${decLines}</td>
+        <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${baseLabel}${detailLines}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${item.qty}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${money(item.unit_price)}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${money(item.line_total)}</td>

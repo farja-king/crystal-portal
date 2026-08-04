@@ -30,36 +30,72 @@ export async function onRequest(context) {
     return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
   }
 
+  function sanitizeDecoration(d) {
+    return {
+      method: String(d.method || "").slice(0, 40),
+      placement: String(d.placement || "").slice(0, 40),
+      price: Number(d.price) || 0,
+      qty: Math.max(1, parseInt(d.qty, 10) || 1),
+      notes: String(d.notes || "").slice(0, 200),
+    };
+  }
+
   // Recomputed from the submitted items every time, never trusted verbatim
   // from the client - this is the thing that becomes an invoice, so the
   // stored total has to be right.
   function priceItems(items, discountPct, discountFlat) {
     const priced = (Array.isArray(items) ? items : []).map((item) => {
       const source = item.source === "customer_supplied" ? "customer_supplied" : "catalog";
+      const isGarmentLine = source === "catalog" && !item.customer_item;
 
       // Catalog rows are often a pricing tier ("All Colours" / "XS - XXL"),
       // not one physical garment, so the real per-unit colour/size/qty is
       // itemized in breakdown - qty for the line is the sum of those, not a
       // single number the client could otherwise send disconnected from it.
+      // Each row also carries its own decorations (e.g. Black/M gets a
+      // "Highlanders Logo", Black/XL gets a different logo) - added so a
+      // decoration is priced against, and later printed alongside, the
+      // specific colour/size it was actually put on, not shared across
+      // every row in the line ambiguously.
       const breakdown = (Array.isArray(item.breakdown) ? item.breakdown : []).map((b) => ({
         colour: String(b.colour || "").slice(0, 60),
         size: String(b.size || "").slice(0, 60),
         qty: Math.max(1, parseInt(b.qty, 10) || 1),
+        decorations: (Array.isArray(b.decorations) ? b.decorations : []).map(sanitizeDecoration),
       }));
-      const qty = source === "catalog" && breakdown.length
-        ? breakdown.reduce((sum, b) => sum + b.qty, 0)
-        : Math.max(1, parseInt(item.qty, 10) || 1);
 
       const unitPrice = Number(item.unit_price) || 0;
-      const decorations = (Array.isArray(item.decorations) ? item.decorations : []).map((d) => ({
-        method: String(d.method || "").slice(0, 40),
-        placement: String(d.placement || "").slice(0, 40),
-        price: Number(d.price) || 0,
-        qty: Math.max(1, parseInt(d.qty, 10) || 1),
-        notes: String(d.notes || "").slice(0, 200),
-      }));
-      const decorationTotal = decorations.reduce((sum, d) => sum + d.price * d.qty, 0);
-      const lineTotal = round2(qty * (unitPrice + decorationTotal));
+      // Line-level decorations - still how a customer-supplied line or a
+      // customer's flat saved item (no colour/size breakdown to attach a
+      // decoration to) carries decorations, and also how an OLDER quote
+      // saved before per-row decorations existed still has them stored.
+      const decorations = (Array.isArray(item.decorations) ? item.decorations : []).map(sanitizeDecoration);
+      const hasRowDecorations = breakdown.some((b) => b.decorations.length);
+
+      let qty, lineTotal;
+      if (isGarmentLine && breakdown.length) {
+        qty = breakdown.reduce((sum, b) => sum + b.qty, 0);
+        if (hasRowDecorations || !decorations.length) {
+          // New-style: each row's own decorations only cost against that
+          // row's own qty.
+          lineTotal = round2(breakdown.reduce((sum, b) => {
+            const rowDecTotal = b.decorations.reduce((s, d) => s + d.price * d.qty, 0);
+            return sum + b.qty * (unitPrice + rowDecTotal);
+          }, 0));
+        } else {
+          // Old-style: this item still only has line-level decorations (a
+          // quote saved before this feature existed, not yet re-opened in
+          // the builder) - keep the original formula so its stored total
+          // doesn't shift underneath it.
+          const decorationTotal = decorations.reduce((sum, d) => sum + d.price * d.qty, 0);
+          lineTotal = round2(qty * (unitPrice + decorationTotal));
+        }
+      } else {
+        qty = Math.max(1, parseInt(item.qty, 10) || 1);
+        const decorationTotal = decorations.reduce((sum, d) => sum + d.price * d.qty, 0);
+        lineTotal = round2(qty * (unitPrice + decorationTotal));
+      }
+
       return {
         source,
         product_id: item.product_id || null,

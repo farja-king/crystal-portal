@@ -4717,7 +4717,7 @@
         // Catalog rows are often a pricing tier, not one physical garment -
         // "All Colours" / "XS - XXL" covers a whole size run at one price.
         // breakdown is where the actual colour+size+qty per unit gets itemized.
-        breakdown: source === 'catalog' ? [{ colour: '', size: '', qty: 1 }] : [],
+        breakdown: source === 'catalog' ? [{ colour: '', size: '', qty: 1, decorations: [] }] : [],
         colourOptions: [], sizeOptions: [],
         decorations: [],
         customer_item: false,
@@ -4844,7 +4844,7 @@
       Object.assign(orderLines[idx], {
         product_id: p.id, supplier_code: p.supplier_code, title: p.title,
         colour: p.colour, size: p.size, unit_price: Number(p.sell_price) || 0,
-        breakdown: [{ colour: specificColour, size: specificSize, qty: 1 }],
+        breakdown: [{ colour: specificColour, size: specificSize, qty: 1, decorations: [] }],
         colourOptions: [], sizeOptions: [],
       });
       renderOrderLines();
@@ -4875,7 +4875,7 @@
         product_id: p.id, supplier_code: p.supplier_code,
         title: isGarment ? p.title : (p.size ? (p.title + ' - ' + p.size) : p.title),
         colour: '', size: '', unit_price: Number(p.sell_price) || 0,
-        breakdown: [{ colour: p.colour || '', size: p.size || '', qty: 1 }],
+        breakdown: [{ colour: p.colour || '', size: p.size || '', qty: 1, decorations: [] }],
         colourOptions: [], sizeOptions: [],
         customer_item: !isGarment,
       });
@@ -5098,7 +5098,7 @@
         Object.assign(orderLines[idx], {
           product_id: data.id, supplier_code: code, title,
           colour, size, unit_price: Number(price) || 0,
-          breakdown: [{ colour, size, qty: 1 }],
+          breakdown: [{ colour, size, qty: 1, decorations: [] }],
           colourOptions: [], sizeOptions: [],
           customer_item: !!targetCustomerId,
         });
@@ -5167,14 +5167,14 @@
     }
 
     function clearOrderLineProduct(idx) {
-      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1 }], colourOptions: [], sizeOptions: [], customer_item: false });
+      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1, decorations: [] }], colourOptions: [], sizeOptions: [], customer_item: false });
       orderLineOpenVariantPicker = null;
       delete orderCustomerItemQuery[idx];
       renderOrderLines();
     }
 
     function addBreakdownRow(idx) {
-      orderLines[idx].breakdown.push({ colour: '', size: '', qty: 1 });
+      orderLines[idx].breakdown.push({ colour: '', size: '', qty: 1, decorations: [] });
       renderOrderLines();
     }
 
@@ -5193,15 +5193,120 @@
       renderOrderTotals();
     }
 
+    // Decorations scoped to one specific breakdown row (one colour/size),
+    // not the whole line - so "Highlanders Logo" on the Black/M row and
+    // "RCT Logo" on the Black/XL row stay two distinct, correctly-priced
+    // and correctly-labelled things instead of both applying ambiguously
+    // to the whole line. Mirrors the line-level addOrderLineDecoration/etc
+    // functions, just indexed by rowIdx as well - those still exist
+    // unchanged for a customer-supplied line or a customer's flat saved
+    // item (no colour/size breakdown to attach a decoration to).
+    function addBreakdownDecoration(idx, rowIdx) {
+      const line = orderLines[idx];
+      const row = line.breakdown[rowIdx];
+      const method = 'embroidery';
+      const placement = 'left_chest';
+      row.decorations.push({ method, placement, price: suggestDecorationPrice(method, placement, line.source) ?? 0, qty: 1, notes: '' });
+      renderOrderLines();
+    }
+
+    function removeBreakdownDecoration(idx, rowIdx, decIdx) {
+      orderLines[idx].breakdown[rowIdx].decorations.splice(decIdx, 1);
+      renderOrderLines();
+    }
+
+    function updateBreakdownDecorationMethod(idx, rowIdx, decIdx, value) {
+      const line = orderLines[idx];
+      const dec = line.breakdown[rowIdx].decorations[decIdx];
+      dec.method = value;
+      const suggestion = suggestDecorationPrice(dec.method, dec.placement, line.source);
+      if (suggestion !== null) dec.price = suggestion;
+      renderOrderLines();
+    }
+
+    function updateBreakdownDecorationPlacement(idx, rowIdx, decIdx, value) {
+      const line = orderLines[idx];
+      const dec = line.breakdown[rowIdx].decorations[decIdx];
+      dec.placement = value;
+      const suggestion = suggestDecorationPrice(dec.method, dec.placement, line.source);
+      if (suggestion !== null) dec.price = suggestion;
+      renderOrderLines();
+    }
+
+    function setBreakdownDecorationPrice(idx, rowIdx, decIdx, value) {
+      orderLines[idx].breakdown[rowIdx].decorations[decIdx].price = Number(value) || 0;
+      renderOrderLines();
+    }
+
+    function updateBreakdownDecorationPriceLive(idx, rowIdx, decIdx, value) {
+      orderLines[idx].breakdown[rowIdx].decorations[decIdx].price = Number(value) || 0;
+      renderOrderTotals();
+    }
+
+    function updateBreakdownDecorationQtyLive(idx, rowIdx, decIdx, value) {
+      orderLines[idx].breakdown[rowIdx].decorations[decIdx].qty = Math.max(1, parseInt(value, 10) || 1);
+      renderOrderTotals();
+    }
+
+    function updateBreakdownDecorationNotes(idx, rowIdx, decIdx, value) {
+      orderLines[idx].breakdown[rowIdx].decorations[decIdx].notes = value;
+    }
+
     function lineQty(line) {
       return line.source === 'catalog'
         ? (line.breakdown || []).reduce((sum, b) => sum + (Number(b.qty) || 0), 0)
         : (Number(line.qty) || 0);
     }
 
+    // A garment line (real colour/size breakdown, not a customer's flat
+    // saved item) prices each row's decorations against just that row's own
+    // qty - see addBreakdownDecoration above. Every other line type keeps
+    // the original whole-line formula (decorations shared across lineQty).
     function lineTotal(line) {
-      const decTotal = line.decorations.reduce((sum, d) => sum + (Number(d.price) || 0) * (Number(d.qty) || 1), 0);
+      const isGarmentLine = line.source === 'catalog' && !line.customer_item;
+      if (isGarmentLine) {
+        return (line.breakdown || []).reduce((sum, b) => {
+          const decTotal = (b.decorations || []).reduce((s, d) => s + (Number(d.price) || 0) * (Number(d.qty) || 1), 0);
+          return sum + (Number(b.qty) || 0) * ((Number(line.unit_price) || 0) + decTotal);
+        }, 0);
+      }
+      const decTotal = (line.decorations || []).reduce((sum, d) => sum + (Number(d.price) || 0) * (Number(d.qty) || 1), 0);
       return lineQty(line) * ((Number(line.unit_price) || 0) + decTotal);
+    }
+
+    // One decoration's editable row - shared markup between a line-level
+    // decoration (customer-supplied / customer's flat saved item) and a
+    // per-breakdown-row decoration (a real garment line - see
+    // usesRowDecorations in renderOrderLines) so both look and behave
+    // identically; only which mutator function each control calls differs,
+    // passed in as ready-to-use onclick/oninput strings.
+    function decorationRowMarkup(dec, showQuickPicks, includedNote, h) {
+      const decQty = Number(dec.qty) || 1;
+      return `
+        <div class="flex flex-wrap items-center gap-2 bg-slate-50 rounded-lg p-2 mt-2">
+          <select onchange="${h.method}" class="rounded border border-slate-300 px-2 py-1 text-sm">
+            ${Object.entries(METHOD_LABELS).map(([v, l]) => `<option value="${v}" ${dec.method === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <select onchange="${h.placement}" class="rounded border border-slate-300 px-2 py-1 text-sm">
+            ${Object.entries(PLACEMENT_LABELS).map(([v, l]) => `<option value="${v}" ${dec.placement === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          ${includedNote
+            ? '<span class="text-xs text-emerald-700 font-medium px-1">Included with garment</span>'
+            : ''}
+          <span class="text-sm text-slate-500">£</span>
+          <input type="number" step="0.01" value="${dec.price}" oninput="${h.priceLive}" class="w-20 rounded border border-slate-300 px-2 py-1 text-sm" />
+          ${showQuickPicks ? `
+            <span class="flex gap-1">
+              <button type="button" onclick="${h.price5}" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£5</button>
+              <button type="button" onclick="${h.price75}" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£7.50</button>
+              <button type="button" onclick="${h.price10}" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£10</button>
+            </span>` : ''}
+          <span class="text-sm text-slate-500">×</span>
+          <input type="number" min="1" value="${decQty}" oninput="${h.qtyLive}" title="e.g. 2 for both sleeves" class="w-14 rounded border border-slate-300 px-2 py-1 text-sm" />
+          ${decQty > 1 ? `<span class="text-xs text-slate-500">= £${((Number(dec.price) || 0) * decQty).toFixed(2)}</span>` : ''}
+          <input value="${escapeAttr(dec.notes)}" oninput="${h.notes}" placeholder="Notes (optional) - e.g. which logo" class="flex-1 min-w-[100px] rounded border border-slate-300 px-2 py-1 text-sm" />
+          <button type="button" onclick="${h.remove}" class="text-rose-500 hover:text-rose-700 text-sm px-1">✕</button>
+        </div>`;
     }
 
     function renderOrderLines() {
@@ -5250,64 +5355,76 @@
         // selected the actual colour/size/qty per unit gets itemized here.
         // A customer's own saved item (line.customer_item) has no colour/size
         // concept at all - just a qty, so it skips this grid entirely.
+        // A real garment breakdown row (usesRowDecorations below) carries its
+        // OWN decorations - one row, one garment, one logo, all grouped
+        // together as a single unit - instead of a decoration list shared
+        // ambiguously across every colour/size on the line (see
+        // addBreakdownDecoration and lineTotal).
+        const usesRowDecorations = !isCustomerSupplied && line.product_id && !line.customer_item;
+
         const breakdownBlock = (!isCustomerSupplied && line.product_id && line.customer_item) ? `
           <div class="mt-2 flex items-center gap-2">
             <span class="text-xs text-slate-500 font-medium">Qty</span>
             <input type="number" min="1" value="${line.breakdown[0] ? line.breakdown[0].qty : 1}" oninput="updateBreakdownQtyLive(${idx}, 0, this.value)" class="w-20 rounded border border-slate-300 px-2 py-1 text-sm" />
-          </div>` : (!isCustomerSupplied && line.product_id) ? `
-          <div class="mt-2 space-y-1.5">
+          </div>` : usesRowDecorations ? `
+          <div class="mt-2 space-y-2">
             <div class="flex items-center gap-2 text-xs text-slate-500 font-medium px-1">
               <span class="w-32">Colour</span><span class="w-[120px]">Size</span><span class="w-16">Qty</span><span class="w-5"></span>
             </div>
-            ${line.breakdown.map((b, rowIdx) => `
-              <div class="flex items-center gap-2">
-                <select value="${escapeAttr(b.colour)}" onchange="updateBreakdownField(${idx}, ${rowIdx}, 'colour', this.value)" class="w-32 rounded border border-slate-300 px-2 py-1 text-sm">
-                  <option value="">Choose colour…</option>
-                  ${(line.colourOptions || []).map((c) => `<option value="${escapeAttr(c)}" ${b.colour === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
-                </select>
-                <select value="${escapeAttr(b.size)}" onchange="updateBreakdownField(${idx}, ${rowIdx}, 'size', this.value)" class="w-[120px] rounded border border-slate-300 px-2 py-1 text-sm">
-                  <option value="">Choose size…</option>
-                  ${(line.sizeOptions || []).map((s) => `<option value="${escapeAttr(s)}" ${b.size === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
-                </select>
-                <input type="number" min="1" value="${b.qty}" oninput="updateBreakdownQtyLive(${idx}, ${rowIdx}, this.value)" class="w-16 rounded border border-slate-300 px-2 py-1 text-sm" />
-                <button type="button" onclick="removeBreakdownRow(${idx}, ${rowIdx})" class="w-5 text-rose-500 hover:text-rose-700 text-sm ${line.breakdown.length <= 1 ? 'invisible' : ''}">✕</button>
-              </div>`).join('')}
+            ${line.breakdown.map((b, rowIdx) => {
+              const rowDecorationsHtml = (b.decorations || []).map((dec, decIdx) => decorationRowMarkup(dec, false,
+                dec.method === 'embroidery' && (dec.placement === 'left_chest' || dec.placement === 'right_chest'), {
+                method: `updateBreakdownDecorationMethod(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
+                placement: `updateBreakdownDecorationPlacement(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
+                priceLive: `updateBreakdownDecorationPriceLive(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
+                price5: `setBreakdownDecorationPrice(${idx}, ${rowIdx}, ${decIdx}, 5)`,
+                price75: `setBreakdownDecorationPrice(${idx}, ${rowIdx}, ${decIdx}, 7.5)`,
+                price10: `setBreakdownDecorationPrice(${idx}, ${rowIdx}, ${decIdx}, 10)`,
+                qtyLive: `updateBreakdownDecorationQtyLive(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
+                notes: `updateBreakdownDecorationNotes(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
+                remove: `removeBreakdownDecoration(${idx}, ${rowIdx}, ${decIdx})`,
+              })).join('');
+              return `
+              <div class="border border-slate-200 rounded-lg p-2 bg-slate-50/60">
+                <div class="flex items-center gap-2">
+                  <select value="${escapeAttr(b.colour)}" onchange="updateBreakdownField(${idx}, ${rowIdx}, 'colour', this.value)" class="w-32 rounded border border-slate-300 px-2 py-1 text-sm bg-white">
+                    <option value="">Choose colour…</option>
+                    ${(line.colourOptions || []).map((c) => `<option value="${escapeAttr(c)}" ${b.colour === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+                  </select>
+                  <select value="${escapeAttr(b.size)}" onchange="updateBreakdownField(${idx}, ${rowIdx}, 'size', this.value)" class="w-[120px] rounded border border-slate-300 px-2 py-1 text-sm bg-white">
+                    <option value="">Choose size…</option>
+                    ${(line.sizeOptions || []).map((s) => `<option value="${escapeAttr(s)}" ${b.size === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+                  </select>
+                  <input type="number" min="1" value="${b.qty}" oninput="updateBreakdownQtyLive(${idx}, ${rowIdx}, this.value)" class="w-16 rounded border border-slate-300 px-2 py-1 text-sm bg-white" />
+                  <button type="button" onclick="removeBreakdownRow(${idx}, ${rowIdx})" class="w-5 text-rose-500 hover:text-rose-700 text-sm ${line.breakdown.length <= 1 ? 'invisible' : ''}">✕</button>
+                </div>
+                ${rowDecorationsHtml}
+                <button type="button" onclick="addBreakdownDecoration(${idx}, ${rowIdx})" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1.5">+ Add decoration for this item</button>
+              </div>`;
+            }).join('')}
             <div class="flex items-center justify-between pt-0.5">
               <button type="button" onclick="addBreakdownRow(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add colour/size</button>
               <span class="text-xs text-slate-500">Total qty: ${lineQty(line)}</span>
             </div>
           </div>` : '';
 
-        const decorationsBlock = line.decorations.map((dec, decIdx) => {
-          const showQuickPicks = dec.method === 'embroidery' && dec.placement === 'left_chest' && isCustomerSupplied;
-          const includedNote = dec.method === 'embroidery' && dec.placement === 'left_chest' && !isCustomerSupplied;
-          const decQty = Number(dec.qty) || 1;
-          return `
-            <div class="flex flex-wrap items-center gap-2 bg-slate-50 rounded-lg p-2 mt-2">
-              <select onchange="updateDecorationMethod(${idx}, ${decIdx}, this.value)" class="rounded border border-slate-300 px-2 py-1 text-sm">
-                ${Object.entries(METHOD_LABELS).map(([v, l]) => `<option value="${v}" ${dec.method === v ? 'selected' : ''}>${l}</option>`).join('')}
-              </select>
-              <select onchange="updateDecorationPlacement(${idx}, ${decIdx}, this.value)" class="rounded border border-slate-300 px-2 py-1 text-sm">
-                ${Object.entries(PLACEMENT_LABELS).map(([v, l]) => `<option value="${v}" ${dec.placement === v ? 'selected' : ''}>${l}</option>`).join('')}
-              </select>
-              ${includedNote
-                ? '<span class="text-xs text-emerald-700 font-medium px-1">Included with garment</span>'
-                : ''}
-              <span class="text-sm text-slate-500">£</span>
-              <input type="number" step="0.01" value="${dec.price}" oninput="updateDecorationPriceLive(${idx}, ${decIdx}, this.value)" class="w-20 rounded border border-slate-300 px-2 py-1 text-sm" />
-              ${showQuickPicks ? `
-                <span class="flex gap-1">
-                  <button type="button" onclick="setDecorationPrice(${idx}, ${decIdx}, 5)" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£5</button>
-                  <button type="button" onclick="setDecorationPrice(${idx}, ${decIdx}, 7.5)" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£7.50</button>
-                  <button type="button" onclick="setDecorationPrice(${idx}, ${decIdx}, 10)" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£10</button>
-                </span>` : ''}
-              <span class="text-sm text-slate-500">×</span>
-              <input type="number" min="1" value="${decQty}" oninput="updateDecorationQtyLive(${idx}, ${decIdx}, this.value)" title="e.g. 2 for both sleeves" class="w-14 rounded border border-slate-300 px-2 py-1 text-sm" />
-              ${decQty > 1 ? `<span class="text-xs text-slate-500">= £${((Number(dec.price) || 0) * decQty).toFixed(2)}</span>` : ''}
-              <input value="${escapeAttr(dec.notes)}" oninput="updateDecorationNotes(${idx}, ${decIdx}, this.value)" placeholder="Notes (optional)" class="flex-1 min-w-[100px] rounded border border-slate-300 px-2 py-1 text-sm" />
-              <button type="button" onclick="removeOrderLineDecoration(${idx}, ${decIdx})" class="text-rose-500 hover:text-rose-700 text-sm px-1">✕</button>
-            </div>`;
-        }).join('');
+        // Line-level decorations - only used for the two line types with no
+        // colour/size breakdown to attach a decoration to (customer-supplied,
+        // and a customer's flat saved item): a real garment breakdown line
+        // renders its decorations per row instead (see breakdownBlock above).
+        const decorationsBlock = usesRowDecorations ? '' : line.decorations.map((dec, decIdx) => decorationRowMarkup(dec,
+          dec.method === 'embroidery' && (dec.placement === 'left_chest' || dec.placement === 'right_chest') && isCustomerSupplied,
+          dec.method === 'embroidery' && (dec.placement === 'left_chest' || dec.placement === 'right_chest') && !isCustomerSupplied, {
+          method: `updateDecorationMethod(${idx}, ${decIdx}, this.value)`,
+          placement: `updateDecorationPlacement(${idx}, ${decIdx}, this.value)`,
+          priceLive: `updateDecorationPriceLive(${idx}, ${decIdx}, this.value)`,
+          price5: `setDecorationPrice(${idx}, ${decIdx}, 5)`,
+          price75: `setDecorationPrice(${idx}, ${decIdx}, 7.5)`,
+          price10: `setDecorationPrice(${idx}, ${decIdx}, 10)`,
+          qtyLive: `updateDecorationQtyLive(${idx}, ${decIdx}, this.value)`,
+          notes: `updateDecorationNotes(${idx}, ${decIdx}, this.value)`,
+          remove: `removeOrderLineDecoration(${idx}, ${decIdx})`,
+        })).join('');
 
         const topRow = isCustomerSupplied
           ? `<div class="grid gap-2 md:grid-cols-4 items-start">
@@ -5337,7 +5454,7 @@
             ${topRow}
             ${decorationsBlock}
             <div class="flex items-center justify-between mt-2">
-              <button type="button" onclick="addOrderLineDecoration(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add decoration</button>
+              ${usesRowDecorations ? '<span></span>' : `<button type="button" onclick="addOrderLineDecoration(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add decoration</button>`}
               <span class="text-sm font-semibold text-slate-700">Line total: ${money(lineTotal(line))}</span>
             </div>
           </div>`;
@@ -5394,7 +5511,10 @@
           source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
           title: l.title, colour: l.colour, size: l.size, description: l.description,
           qty: l.qty, unit_price: l.unit_price, customer_item: !!l.customer_item,
-          breakdown: l.breakdown ? l.breakdown.map((b) => ({ colour: b.colour, size: b.size, qty: b.qty })) : [],
+          breakdown: l.breakdown ? l.breakdown.map((b) => ({
+            colour: b.colour, size: b.size, qty: b.qty,
+            decorations: (b.decorations || []).map((d) => ({ method: d.method, placement: d.placement, price: d.price, qty: d.qty, notes: d.notes })),
+          })) : [],
           decorations: l.decorations.map((d) => ({ method: d.method, placement: d.placement, price: d.price, qty: d.qty, notes: d.notes })),
         })),
       };
@@ -5450,23 +5570,46 @@
       closeOrderPanel();
       editingExistingOrderId = id;
 
-      orderLines = (o.items || []).map((item) => ({
-        source: item.source,
-        product_id: item.product_id || null,
-        supplier_code: item.supplier_code || '',
-        title: item.title || '',
-        colour: item.colour || '',
-        size: item.size || '',
-        unit_price: Number(item.unit_price) || 0,
-        description: item.description || '',
-        qty: item.qty || 1,
-        breakdown: (item.breakdown || []).map((b) => ({ colour: b.colour || '', size: b.size || '', qty: b.qty || 1 })),
-        colourOptions: [], sizeOptions: [],
-        decorations: (item.decorations || []).map((d) => ({
-          method: d.method, placement: d.placement, price: d.price, qty: d.qty || 1, notes: d.notes || '',
-        })),
-        customer_item: !!item.customer_item,
-      }));
+      orderLines = (o.items || []).map((item) => {
+        const breakdown = (item.breakdown || []).map((b) => ({
+          colour: b.colour || '', size: b.size || '', qty: b.qty || 1,
+          decorations: (b.decorations || []).map((d) => ({
+            method: d.method, placement: d.placement, price: d.price, qty: d.qty || 1, notes: d.notes || '',
+          })),
+        }));
+        // Backward-compat: a quote saved before decorations moved onto
+        // individual breakdown rows still has them as one flat line-level
+        // list (item.decorations) with no row carrying its own - rather than
+        // lose that on edit, drop them onto the first row so they're still
+        // visible and editable (best-effort single association; multiple
+        // rows on a pre-existing quote were always ambiguous about which
+        // decoration belonged to which anyway - see lineTotal's old-style
+        // fallback in functions/api/orders.js for the read-only view/print
+        // equivalent of this same fallback).
+        const isGarmentLine = item.source === 'catalog' && !item.customer_item;
+        if (isGarmentLine && breakdown.length && !breakdown.some((b) => b.decorations.length) && (item.decorations || []).length) {
+          breakdown[0].decorations = (item.decorations || []).map((d) => ({
+            method: d.method, placement: d.placement, price: d.price, qty: d.qty || 1, notes: d.notes || '',
+          }));
+        }
+        return {
+          source: item.source,
+          product_id: item.product_id || null,
+          supplier_code: item.supplier_code || '',
+          title: item.title || '',
+          colour: item.colour || '',
+          size: item.size || '',
+          unit_price: Number(item.unit_price) || 0,
+          description: item.description || '',
+          qty: item.qty || 1,
+          breakdown,
+          colourOptions: [], sizeOptions: [],
+          decorations: (item.decorations || []).map((d) => ({
+            method: d.method, placement: d.placement, price: d.price, qty: d.qty || 1, notes: d.notes || '',
+          })),
+          customer_item: !!item.customer_item,
+        };
+      });
 
       const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
       document.getElementById('ord-builder-heading').textContent = 'Editing ' + docNumber;
@@ -5633,6 +5776,39 @@
       document.getElementById('order-view-edit-panel').classList.add('hidden');
     }
 
+    // Shared by viewOrder and printOrder - one line per breakdown row
+    // (colour/size × qty), each immediately followed by ITS OWN decorations,
+    // so "Black / M" sits right above "Embroidery - Left chest - Highlanders
+    // Logo" instead of every decoration being lumped together underneath
+    // every row with no way to tell which garment it was actually for (the
+    // bug this whole per-row restructuring fixes - see usesRowDecorations in
+    // renderOrderLines for the matching builder-side pairing). A decoration's
+    // notes (e.g. which logo) are always included - previously missing
+    // entirely from the View panel, which is exactly why a saved quote
+    // looked like it was charging for embroidery with no indication of what
+    // was actually being embroidered.
+    // Falls back to the old flat "every decoration once, underneath every
+    // row" display for a quote saved before this existed (no breakdown row
+    // has its own decorations, but the item still has old-style line-level
+    // ones) - so an old quote still displays exactly as it always did.
+    function itemDetailLines(item, decClass) {
+      const decLine = (d) => {
+        const dQty = Number(d.qty) || 1;
+        const totalSuffix = decClass === 'dec' && dQty > 1 ? ' = £' + (d.price * dQty).toFixed(2) : '';
+        const priceLabel = d.price ? `£${Number(d.price).toFixed(2)} each${dQty > 1 ? ' × ' + dQty + totalSuffix : ''}` : 'included';
+        return `<div class="${decClass}">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)} (${priceLabel})${d.notes ? ' - ' + escapeHtml(d.notes) : ''}</div>`;
+      };
+      if (!item.breakdown || !item.breakdown.length || item.customer_item) {
+        return (item.decorations || []).map(decLine).join('');
+      }
+      const hasRowDecorations = item.breakdown.some((b) => (b.decorations || []).length);
+      const rows = item.breakdown.map((b) => {
+        const rowLine = `<div class="${decClass}">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}</div>`;
+        return rowLine + (hasRowDecorations ? (b.decorations || []).map(decLine).join('') : '');
+      }).join('');
+      return rows + (!hasRowDecorations ? (item.decorations || []).map(decLine).join('') : '');
+    }
+
     function viewOrder(id) {
       const o = ordersById[id];
       if (!o) return;
@@ -5660,19 +5836,10 @@
         // A customer's own saved item (see products.customer_id) has no
         // colour/size - the breakdown row only ever carries its qty, so
         // showing it here would just be a redundant "- / - × 1".
-        const breakdownLines = (item.breakdown && item.breakdown.length && !item.customer_item)
-          ? item.breakdown.map((b) => `<div class="text-xs text-slate-500">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}</div>`).join('')
-          : '';
-        const decLines = item.decorations.map((d) => {
-          const dQty = Number(d.qty) || 1;
-          const priceLabel = d.price
-            ? `£${Number(d.price).toFixed(2)} each${dQty > 1 ? ' × ' + dQty : ''}`
-            : 'included';
-          return `<div class="text-xs text-slate-500">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)} (${priceLabel})</div>`;
-        }).join('');
+        const detailLines = itemDetailLines(item, 'text-xs text-slate-500');
         return `<div class="border-b border-slate-100 pb-3 mb-3 last:border-0">
           <div class="font-medium text-slate-900">${baseLabel}</div>
-          ${breakdownLines}${decLines}
+          ${detailLines}
           <div class="text-sm mt-1">Qty: ${item.qty} | £${Number(item.unit_price).toFixed(2)} each | Total: £${Number(item.line_total).toFixed(2)}</div>
         </div>`;
       }).join('');
@@ -5799,17 +5966,8 @@
         // often just a pricing tier ("All Colours" / "XS - XXL"), not what
         // was actually cut and packed. Skipped for a customer's own saved
         // item (no colour/size concept - see admin.html's other breakdownLines).
-        const breakdownLines = (item.breakdown && item.breakdown.length && !item.customer_item)
-          ? item.breakdown.map((b) => `<div class="dec">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}</div>`).join('')
-          : '';
-        const decLines = item.decorations.map((d) => {
-          const dQty = Number(d.qty) || 1;
-          const priceLabel = d.price
-            ? `£${Number(d.price).toFixed(2)} each${dQty > 1 ? ' × ' + dQty + ' = £' + (d.price * dQty).toFixed(2) : ''}`
-            : 'included';
-          return `<div class="dec">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)} (${priceLabel})${d.notes ? ' - ' + escapeHtml(d.notes) : ''}</div>`;
-        }).join('');
-        return `<tr><td>${baseLabel}${breakdownLines}${decLines}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
+        const detailLines = itemDetailLines(item, 'dec');
+        return `<tr><td>${baseLabel}${detailLines}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
       }).join('');
 
       win.document.write(`
