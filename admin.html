@@ -925,27 +925,15 @@
           </div>
           <div id="cv-catalog-picker-results" class="mb-2 max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-lg empty:border-0"></div>
           <div id="cv-catalog-picker-variants" class="hidden">
-            <div class="flex items-center justify-between mb-2">
-              <p id="cv-catalog-picker-product-name" class="text-sm font-semibold text-slate-800"></p>
-              <label class="text-xs text-slate-600 flex items-center gap-1.5">
-                <input type="checkbox" id="cv-catalog-picker-select-all" onchange="toggleAllCvCatalogPickerVariants(this.checked)" class="rounded border-slate-300" />
-                Select all
-              </label>
-            </div>
-            <div class="overflow-x-auto border border-slate-200 rounded-lg bg-white mb-2">
-              <table class="w-full text-left text-sm">
-                <thead class="bg-slate-100 text-xs uppercase tracking-wider text-slate-500">
-                  <tr>
-                    <th class="p-2 w-8"></th>
-                    <th class="p-2">Colour</th>
-                    <th class="p-2">Size</th>
-                    <th class="p-2 text-right">Catalog price</th>
-                    <th class="p-2 text-right">Price for this customer</th>
-                  </tr>
-                </thead>
-                <tbody id="cv-catalog-picker-variants-body" class="divide-y divide-slate-100"></tbody>
-              </table>
-            </div>
+            <p id="cv-catalog-picker-product-name" class="text-sm font-semibold text-slate-800 mb-2"></p>
+            <!-- One block per price tier (a catalog code can have more than
+                 one, e.g. standard sizes vs a 3XL-4XL surcharge tier) - pick
+                 the exact colour(s) and size(s) actually being bought for
+                 this customer under each tier, same colour/size dropdown
+                 pattern as the quote builder's breakdown grid, rather than
+                 adding the tier's placeholder "All Colours" / size-range row
+                 as-is. See loadCvCatalogPickerVariants/addCvPickerBreakdownRow. -->
+            <div id="cv-catalog-picker-tiers" class="space-y-3 mb-2"></div>
             <div class="flex gap-2 items-center">
               <button type="button" onclick="addCvCatalogPickerVariants()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
                 Add selected to this customer
@@ -2434,13 +2422,25 @@
       }, 250);
     }
 
+    // Colour/size choices offered per tier - shared across every tier of the
+    // same code (a code has one set of available colours/sizes regardless of
+    // how many price tiers it's split into). Same source/fallback as the
+    // quote builder's loadOrderLineVariantOptions: the scraped
+    // available_colours/available_sizes JSON first, falling back to the
+    // distinct colour/size values actually present across the tier rows.
+    let cvCatalogPickerColourOptions = [];
+    let cvCatalogPickerSizeOptions = [];
+    // One breakdown array per tier (index-matched to cvCatalogPickerVariants)
+    // of { colour, size } rows still being picked - mirrors orderLines[].breakdown.
+    let cvCatalogPickerBreakdown = [];
+
     async function loadCvCatalogPickerVariants(code) {
       const wrap = document.getElementById('cv-catalog-picker-variants');
-      const body = document.getElementById('cv-catalog-picker-variants-body');
+      const tiersEl = document.getElementById('cv-catalog-picker-tiers');
       const msg = document.getElementById('cv-catalog-picker-msg');
       msg.textContent = '';
       wrap.classList.remove('hidden');
-      body.innerHTML = '<tr><td colspan="5" class="p-3 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      tiersEl.innerHTML = '<p class="p-3 text-center text-slate-400 text-sm">Loading…</p>';
       document.getElementById('cv-catalog-picker-results').innerHTML = '';
       document.getElementById('cv-catalog-picker-search').value = code;
 
@@ -2451,43 +2451,118 @@
         document.getElementById('cv-catalog-picker-product-name').textContent =
           cvCatalogPickerVariants.length ? `${code} - ${cvCatalogPickerVariants[0].title}` : code;
 
-        body.innerHTML = cvCatalogPickerVariants.length
-          ? cvCatalogPickerVariants.map((v, i) => `
-              <tr>
-                <td class="p-2"><input type="checkbox" class="cv-picker-variant-cb rounded border-slate-300" data-idx="${i}" /></td>
-                <td class="p-2 text-slate-700">${escapeHtml(v.colour) || '-'}</td>
-                <td class="p-2 text-slate-700">${escapeHtml(v.size) || '-'}</td>
-                <td class="p-2 text-right text-slate-500">${v.sell_price === null || v.sell_price === undefined ? '-' : money(v.sell_price)}</td>
-                <td class="p-2 text-right">
-                  <input type="number" step="0.01" min="0" data-price-idx="${i}" value="${v.sell_price === null || v.sell_price === undefined ? '' : Number(v.sell_price).toFixed(2)}" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900 text-sm" />
-                </td>
-              </tr>`).join('')
-          : '<tr><td colspan="5" class="p-3 text-center text-slate-400 text-sm">No variants found for this code.</td></tr>';
-        document.getElementById('cv-catalog-picker-select-all').checked = false;
+        // Same primary/fallback logic as loadOrderLineVariantOptions.
+        let colourOptions = [];
+        let sizeOptions = [];
+        const first = cvCatalogPickerVariants[0];
+        if (first) {
+          try {
+            const scrapedColours = JSON.parse(first.available_colours || '[]');
+            const scrapedSizes = JSON.parse(first.available_sizes || '[]');
+            if (scrapedColours && scrapedColours.length > 0) colourOptions = scrapedColours;
+            if (scrapedSizes && scrapedSizes.length > 0) sizeOptions = scrapedSizes;
+          } catch (e) { /* fall through to fallback below */ }
+        }
+        if (colourOptions.length === 0) colourOptions = [...new Set(cvCatalogPickerVariants.map((r) => r.colour).filter(Boolean))];
+        if (sizeOptions.length === 0) sizeOptions = [...new Set(cvCatalogPickerVariants.map((r) => r.size).filter(Boolean))];
+        cvCatalogPickerColourOptions = colourOptions;
+        cvCatalogPickerSizeOptions = sizeOptions;
+
+        // Each tier starts with one blank colour/size row to fill in.
+        cvCatalogPickerBreakdown = cvCatalogPickerVariants.map(() => [{ colour: '', size: '' }]);
+        renderCvCatalogPickerTiers();
       } catch (e) {
-        body.innerHTML = '<tr><td colspan="5" class="p-3 text-center text-red-500 text-sm">Could not load variants.</td></tr>';
+        tiersEl.innerHTML = '<p class="p-3 text-center text-red-500 text-sm">Could not load this product.</p>';
       }
     }
 
-    function toggleAllCvCatalogPickerVariants(checked) {
-      document.querySelectorAll('.cv-picker-variant-cb').forEach((cb) => { cb.checked = checked; });
+    function renderCvCatalogPickerTiers() {
+      const tiersEl = document.getElementById('cv-catalog-picker-tiers');
+      if (!cvCatalogPickerVariants.length) {
+        tiersEl.innerHTML = '<p class="p-3 text-center text-slate-400 text-sm">No variants found for this code.</p>';
+        return;
+      }
+      const noColourSizeData = !cvCatalogPickerColourOptions.length && !cvCatalogPickerSizeOptions.length;
+      tiersEl.innerHTML = cvCatalogPickerVariants.map((v, tierIdx) => {
+        const tierLabel = [v.colour, v.size].filter(Boolean).join(' / ') || 'Standard';
+        const rows = cvCatalogPickerBreakdown[tierIdx] || [];
+        return `<div class="border border-slate-200 rounded-lg p-3 bg-white">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <span class="text-xs text-slate-500">Price tier: <span class="font-medium text-slate-700">${escapeHtml(tierLabel)}</span></span>
+            <span class="text-xs text-slate-500">Catalog price: <span class="font-medium text-slate-700">${v.sell_price === null || v.sell_price === undefined ? '-' : money(v.sell_price)}</span></span>
+            <label class="text-xs text-slate-600 flex items-center gap-1.5">
+              Price for this customer
+              <input type="number" step="0.01" min="0" data-tier-price-idx="${tierIdx}" value="${v.sell_price === null || v.sell_price === undefined ? '' : Number(v.sell_price).toFixed(2)}" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900 text-sm" />
+            </label>
+          </div>
+          ${noColourSizeData ? `<p class="text-xs text-slate-400 italic">No colour/size list on file for this code - this tier will be added as-is (${escapeHtml(tierLabel)}).</p>` : `
+          <div class="space-y-1.5">
+            <div class="flex items-center gap-2 text-xs text-slate-500 font-medium px-1">
+              <span class="w-32">Colour</span><span class="w-32">Size</span><span class="w-5"></span>
+            </div>
+            ${rows.map((r, rowIdx) => `
+              <div class="flex items-center gap-2">
+                <select onchange="updateCvPickerBreakdownField(${tierIdx}, ${rowIdx}, 'colour', this.value)" class="w-32 rounded border border-slate-300 px-2 py-1 text-sm">
+                  <option value="">Choose colour…</option>
+                  ${cvCatalogPickerColourOptions.map((c) => `<option value="${escapeAttr(c)}" ${r.colour === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+                </select>
+                <select onchange="updateCvPickerBreakdownField(${tierIdx}, ${rowIdx}, 'size', this.value)" class="w-32 rounded border border-slate-300 px-2 py-1 text-sm">
+                  <option value="">Choose size…</option>
+                  ${cvCatalogPickerSizeOptions.map((s) => `<option value="${escapeAttr(s)}" ${r.size === s ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+                </select>
+                <button type="button" onclick="removeCvPickerBreakdownRow(${tierIdx}, ${rowIdx})" class="w-5 text-rose-500 hover:text-rose-700 text-sm ${rows.length <= 1 ? 'invisible' : ''}">✕</button>
+              </div>`).join('')}
+            <button type="button" onclick="addCvPickerBreakdownRow(${tierIdx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add colour/size</button>
+          </div>`}
+        </div>`;
+      }).join('');
+    }
+
+    function updateCvPickerBreakdownField(tierIdx, rowIdx, field, value) {
+      cvCatalogPickerBreakdown[tierIdx][rowIdx][field] = value;
+    }
+
+    function addCvPickerBreakdownRow(tierIdx) {
+      cvCatalogPickerBreakdown[tierIdx].push({ colour: '', size: '' });
+      renderCvCatalogPickerTiers();
+    }
+
+    function removeCvPickerBreakdownRow(tierIdx, rowIdx) {
+      if (cvCatalogPickerBreakdown[tierIdx].length <= 1) return;
+      cvCatalogPickerBreakdown[tierIdx].splice(rowIdx, 1);
+      renderCvCatalogPickerTiers();
     }
 
     async function addCvCatalogPickerVariants() {
       const msg = document.getElementById('cv-catalog-picker-msg');
-      const checked = [...document.querySelectorAll('.cv-picker-variant-cb:checked')].map((cb) => Number(cb.dataset.idx));
-      if (!checked.length) { msg.textContent = 'Tick at least one colour/size to add.'; return; }
       if (!cvCatalogCustomerId) return;
+
+      const noColourSizeData = !cvCatalogPickerColourOptions.length && !cvCatalogPickerSizeOptions.length;
+      // One row to add per (tier, filled colour+size pair) - or, for a code
+      // with no colour/size list on file at all, the tier's own placeholder
+      // colour/size (nothing to choose between, so nothing to narrow down).
+      const toAdd = [];
+      cvCatalogPickerVariants.forEach((v, tierIdx) => {
+        const priceInput = document.querySelector(`[data-tier-price-idx="${tierIdx}"]`);
+        const priceRaw = priceInput ? priceInput.value : '';
+        const sell = priceRaw === '' ? null : Number(priceRaw);
+        if (noColourSizeData) {
+          toAdd.push({ v, colour: v.colour || '', size: v.size || '', sell });
+          return;
+        }
+        (cvCatalogPickerBreakdown[tierIdx] || []).forEach((r) => {
+          if (r.colour && r.size) toAdd.push({ v, colour: r.colour, size: r.size, sell });
+        });
+      });
+
+      if (!toAdd.length) { msg.textContent = 'Choose at least one colour and size to add.'; return; }
 
       msg.className = 'text-xs text-slate-500';
       msg.textContent = 'Adding…';
 
       let failed = 0;
-      for (const idx of checked) {
-        const v = cvCatalogPickerVariants[idx];
-        const priceInput = document.querySelector(`[data-price-idx="${idx}"]`);
-        const priceRaw = priceInput ? priceInput.value : '';
-        const sell = priceRaw === '' ? null : Number(priceRaw);
+      for (const item of toAdd) {
+        const v = item.v;
         try {
           const res = await fetch(API_PRODUCTS_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2498,12 +2573,12 @@
               supplier_ref: v.supplier_ref || '',
               brand: v.brand || '',
               title: v.title || '',
-              colour: v.colour || '',
-              size: v.size || '',
+              colour: item.colour,
+              size: item.size,
               category: v.category || '',
               cost_price: v.cost_price || 0,
               vat_rate: v.vat_rate ?? 0.2,
-              sell_price: sell,
+              sell_price: item.sell,
               customer_id: cvCatalogCustomerId,
             }),
           });
@@ -2515,7 +2590,7 @@
       }
 
       msg.className = failed ? 'text-xs text-red-600' : 'text-xs text-emerald-600';
-      msg.textContent = failed ? `${failed} of ${checked.length} could not be added.` : `Added ${checked.length} item(s) to this customer's price list.`;
+      msg.textContent = failed ? `${failed} of ${toAdd.length} could not be added.` : `Added ${toAdd.length} item(s) to this customer's price list.`;
       loadCustomerCatalogItems(cvCatalogCustomerId);
       if (!failed) setTimeout(() => { toggleCvCatalogPicker(); }, 900);
     }
