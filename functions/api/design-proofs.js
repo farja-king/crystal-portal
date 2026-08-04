@@ -263,6 +263,18 @@ export async function onRequest(context) {
           "UPDATE design_proofs SET status = ?, decision_notes = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).bind(data.decision, notes, proof.id).run();
 
+        // The quote's own Status field (Draft/Sent/Approved/Declined - see
+        // the ord-status dropdown in admin.html) mirrors the customer's
+        // decision automatically, so it's visible on the main Quotes &
+        // Invoices list the moment they respond, without Martin having to
+        // set it by hand. "approved" is short-lived here if this also goes
+        // on to auto-convert to an invoice below (paid_status takes over
+        // once it's an invoice), but still correct in the moment, and is
+        // the lasting record if the auto-conversion below doesn't happen
+        // (e.g. this was already an invoice, or it fails).
+        await db.prepare("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .bind(data.decision, proof.order_id).run();
+
         // Approving a proof on a quote (not already an invoice) converts it
         // straight to an invoice and emails that invoice out - the same
         // "convert" and "email" actions Martin would otherwise click by

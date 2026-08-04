@@ -5745,6 +5745,18 @@
 
       document.getElementById('ord-design-proofs-section').classList.remove('hidden');
       document.getElementById('ord-design-proofs-hint').classList.add('hidden');
+      // This card is a fixed part of the builder's own HTML (unlike the
+      // View panel, which rebuilds its whole innerHTML - and its proof
+      // status message with it - fresh every time), so switching to edit a
+      // DIFFERENT quote never clears whatever "Version 1 attached..."
+      // message was left over from the last quote attached to here. Reset
+      // it explicitly, or that stale message keeps showing above this
+      // quote's own (correctly fresh) proof list, looking like it belongs
+      // to a proof that was never actually attached here.
+      const proofUploadStatus = document.getElementById('ord-proof-upload-status');
+      proofUploadStatus.textContent = '';
+      proofUploadStatus.classList.add('hidden');
+      document.getElementById('ord-proof-file-input').value = '';
       loadOrderDesignProofs(id, 'ord-design-proofs');
 
       renderOrderLines();
@@ -5780,6 +5792,9 @@
       document.getElementById('ord-save-msg').textContent = '';
       document.getElementById('ord-design-proofs-section').classList.add('hidden');
       document.getElementById('ord-design-proofs-hint').classList.remove('hidden');
+      document.getElementById('ord-proof-upload-status').textContent = '';
+      document.getElementById('ord-proof-upload-status').classList.add('hidden');
+      document.getElementById('ord-proof-file-input').value = '';
       renderOrderLines();
     }
 
@@ -5816,11 +5831,11 @@
             actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
           }
           actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold">View</button>`);
+          actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
           actions.push(`<label title="Attach a design proof - saved as a draft, nothing sent until you email/save this quote or hit Send now" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold cursor-pointer">
             Add Image
             <input type="file" accept="image/*,.pdf" class="hidden" onchange="quickUploadDesignProof('${escapeAttr(o.id)}', this)" />
           </label>`);
-          actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
           actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
           actions.push(`<button id="email-order-btn-${o.id}" onclick="emailOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Email</button>`);
           actions.push(`<button onclick="archiveOrder('${o.id}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Archive</button>`);
