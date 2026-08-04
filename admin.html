@@ -4500,8 +4500,10 @@
     // plain embroidery, e.g. DTF/sublimation stay manual-entry always.
     function suggestDecorationPrice(method, placement, source) {
       if (method !== 'embroidery') return null;
-      if (placement === 'left_chest' || placement === 'right_chest') return source === 'customer_supplied' ? 5 : 0;
-      if (placement === 'sleeve') return 5;
+      // Only left chest is included free with a garment we supply - right
+      // chest is a chargeable extra placement, same rate as a sleeve.
+      if (placement === 'left_chest') return source === 'customer_supplied' ? 5 : 0;
+      if (placement === 'right_chest' || placement === 'sleeve') return 5;
       if (placement === 'back') return 10;
       return null;
     }
@@ -5373,7 +5375,7 @@
             </div>
             ${line.breakdown.map((b, rowIdx) => {
               const rowDecorationsHtml = (b.decorations || []).map((dec, decIdx) => decorationRowMarkup(dec, false,
-                dec.method === 'embroidery' && (dec.placement === 'left_chest' || dec.placement === 'right_chest'), {
+                dec.method === 'embroidery' && dec.placement === 'left_chest', {
                 method: `updateBreakdownDecorationMethod(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
                 placement: `updateBreakdownDecorationPlacement(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
                 priceLive: `updateBreakdownDecorationPriceLive(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
@@ -5413,8 +5415,8 @@
         // and a customer's flat saved item): a real garment breakdown line
         // renders its decorations per row instead (see breakdownBlock above).
         const decorationsBlock = usesRowDecorations ? '' : line.decorations.map((dec, decIdx) => decorationRowMarkup(dec,
-          dec.method === 'embroidery' && (dec.placement === 'left_chest' || dec.placement === 'right_chest') && isCustomerSupplied,
-          dec.method === 'embroidery' && (dec.placement === 'left_chest' || dec.placement === 'right_chest') && !isCustomerSupplied, {
+          dec.method === 'embroidery' && dec.placement === 'left_chest' && isCustomerSupplied,
+          dec.method === 'embroidery' && dec.placement === 'left_chest' && !isCustomerSupplied, {
           method: `updateDecorationMethod(${idx}, ${decIdx}, this.value)`,
           placement: `updateDecorationPlacement(${idx}, ${decIdx}, this.value)`,
           priceLive: `updateDecorationPriceLive(${idx}, ${decIdx}, this.value)`,
