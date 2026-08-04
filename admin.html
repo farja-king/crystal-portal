@@ -4508,12 +4508,14 @@
       return null;
     }
 
-    // "Name" - personalised name embroidery, e.g. on a sleeve or under a
-    // badge. No suggestDecorationPrice rule for it (same as DTF/Sublimation/
-    // Other) - always manual entry, since a name isn't a fixed placement
-    // charge the same way left/right chest or a sleeve logo is.
-    const METHOD_LABELS = { embroidery: 'Embroidery', name: 'Name', dtf: 'DTF', sublimation: 'Sublimation', other: 'Other' };
-    const PLACEMENT_LABELS = { left_chest: 'Left chest', right_chest: 'Right chest', sleeve: 'Sleeve', back: 'Back', other: 'Other' };
+    const METHOD_LABELS = { embroidery: 'Embroidery', dtf: 'DTF', sublimation: 'Sublimation', other: 'Other' };
+    // "Name" - a name placed on the garment (e.g. above a number on the
+    // back), same category of thing as Left chest/Right chest/Sleeve/Back -
+    // it's WHERE the decoration goes, not the technique used to put it
+    // there. No suggestDecorationPrice rule for it (same as "Other") -
+    // always manual entry, since a name isn't a fixed placement charge the
+    // same way left/right chest or a sleeve logo is.
+    const PLACEMENT_LABELS = { left_chest: 'Left chest', right_chest: 'Right chest', sleeve: 'Sleeve', back: 'Back', name: 'Name', other: 'Other' };
 
     // Customer picker for the quote builder - a search box (matching name,
     // company, email or phone, same fields as the Customer Directory search)
