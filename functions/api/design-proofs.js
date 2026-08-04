@@ -42,7 +42,7 @@ export async function onRequest(context) {
   // (sent_at gets set immediately after), so attaching several times before
   // ever sending just replaces which version goes out, never sends more
   // than one proof email per attach.
-  async function sendProofEmail(env, db, origin, order, proof) {
+  async function sendProofEmail(env, db, bucket, origin, order, proof) {
     if (!env.RESEND_API_KEY) return { sent: false, reason: "Email isn't set up yet - the RESEND_API_KEY secret is missing." };
     const to = (order.customer_email || "").trim();
     if (!to) return { sent: false, reason: "No email address on file for this customer" };
@@ -52,7 +52,29 @@ export async function onRequest(context) {
     const docLabel = order.doc_type === "invoice" ? "Invoice" : "Quote";
     const docNumber = order.doc_type === "invoice" ? order.invoice_number : order.quote_number;
     const proofUrl = `${origin}/proof.html?token=${proof.token}`;
-    const imageUrl = /^image\//.test(proof.content_type || "") ? `${origin}/api/design-proofs?view_token=${proof.token}` : null;
+    const isImage = /^image\//.test(proof.content_type || "");
+
+    // Embedded as an inline attachment (Content-ID, referenced via cid: in
+    // the html) rather than a remote <img src> pointing back at this
+    // portal - a remote image is exactly what most email clients block by
+    // default until the user explicitly clicks "show images", which is why
+    // it was showing as a placeholder icon instead of the actual logo.
+    // Embedding the bytes directly means the image always renders
+    // immediately, with nothing to fetch or block.
+    let attachments;
+    if (isImage) {
+      const obj = await bucket.get(proof.r2_key);
+      if (obj) {
+        const bytes = new Uint8Array(await obj.arrayBuffer());
+        let binary = "";
+        const CHUNK = 8192; // avoid blowing the call stack on String.fromCharCode(...bigArray)
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+        }
+        attachments = [{ filename: proof.filename, content: btoa(binary), content_id: "proof-image" }];
+      }
+    }
+    const imageTag = attachments ? `<img src="cid:proof-image" alt="${escapeHtml(proof.filename)}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:8px;margin:16px 0;" />` : null;
 
     const html = `
       <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
@@ -60,7 +82,7 @@ export async function onRequest(context) {
         <div style="color:#64748b;margin-bottom:20px;">Design proof for ${escapeHtml(docLabel)} ${escapeHtml(docNumber)}${proof.version > 1 ? ` (version ${proof.version})` : ""}</div>
         <p>Hi ${escapeHtml(order.customer_name)},</p>
         <p>Here's the design proof for your order - please take a look and let us know if it's good to go.</p>
-        ${imageUrl ? `<img src="${imageUrl}" alt="${escapeHtml(proof.filename)}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:8px;margin:16px 0;" />` : `<p><a href="${proofUrl}" style="color:#4f46e5;">View the attached file</a></p>`}
+        ${imageTag || `<p><a href="${proofUrl}" style="color:#4f46e5;">View the attached file</a></p>`}
         <div style="margin-top:20px;">
           <a href="${proofUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;">Review &amp; Respond</a>
         </div>
@@ -76,6 +98,7 @@ export async function onRequest(context) {
           from: fromAddress, to: [to], reply_to: replyToAddress,
           subject: `Design proof for your ${docLabel.toLowerCase()} ${docNumber} - please review`,
           html,
+          ...(attachments ? { attachments } : {}),
         }),
       });
       if (!resendRes.ok) return { sent: false, reason: "Resend rejected the email" };
@@ -202,7 +225,7 @@ export async function onRequest(context) {
           ).bind(data.order_id).first();
           if (!proof) return json({ success: true, sent: false, reason: "Nothing pending to send" });
 
-          const result = await sendProofEmail(env, db, url.origin, order, proof);
+          const result = await sendProofEmail(env, db, bucket, url.origin, order, proof);
           return json({ success: true, ...result, id: proof.id, version: proof.version });
         }
 
@@ -216,7 +239,7 @@ export async function onRequest(context) {
           const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(proof.order_id).first();
           if (!order) return json({ error: "Quote/invoice not found" }, 404);
 
-          const result = await sendProofEmail(env, db, url.origin, order, proof);
+          const result = await sendProofEmail(env, db, bucket, url.origin, order, proof);
           return json({ success: true, ...result, id: proof.id, version: proof.version });
         }
 

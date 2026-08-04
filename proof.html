@@ -59,6 +59,7 @@
             ${isApproved ? '✓ You already approved this proof' : '✕ You already declined this proof'}
           </div>
           ${p.decision_notes ? `<p class="text-sm text-slate-500 mt-3"><strong>Your note:</strong> ${escapeHtml(p.decision_notes)}</p>` : ''}
+          <p class="text-sm text-slate-400 mt-4 text-center">You may now close this window.</p>
         `;
         return;
       }
