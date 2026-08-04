@@ -854,6 +854,26 @@
           <textarea id="ord-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" placeholder="Artwork notes, turnaround, special instructions…"></textarea>
         </label>
 
+        <!-- Attach a mockup right here while building/editing the quote -
+             only shows once this quote actually has an id to attach to (see
+             editOrderInBuilder), since a brand-new not-yet-saved quote has
+             nowhere for the file to belong to yet. Same draft-until-sent
+             behaviour as the read-only View panel's card (they're the same
+             functions, just pointed at these element ids instead - see
+             loadOrderDesignProofs/uploadDesignProof/sendDesignProofNow). -->
+        <div id="ord-design-proofs-section" class="hidden bg-slate-50 rounded-xl border border-slate-200 p-4 mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-sm font-semibold text-slate-900">Design Proofs <span class="font-normal text-xs text-slate-400">(customer approves/declines by email, no login needed)</span></p>
+            <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer" title="Saved as a draft - nothing is sent to the customer until you email or save/update this quote, or hit Send now">
+              + Attach proof (draft)
+              <input id="ord-proof-file-input" type="file" accept="image/*,.pdf" class="hidden" onchange="uploadDesignProof(editingExistingOrderId, 'ord-proof-file-input', 'ord-proof-upload-status', 'ord-design-proofs')" />
+            </label>
+          </div>
+          <p id="ord-proof-upload-status" class="text-xs mb-2 hidden"></p>
+          <div id="ord-design-proofs"></div>
+        </div>
+        <p id="ord-design-proofs-hint" class="text-xs text-slate-400 mb-4">Save this quote first, then you'll be able to attach a design proof to it.</p>
+
         <div class="bg-slate-50 rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
           <div class="text-sm text-slate-600 space-y-0.5">
             <div>Subtotal: <span id="ord-subtotal" class="font-semibold text-slate-900">£0.00</span></div>
@@ -5723,6 +5743,10 @@
       document.getElementById('ord-cancel-edit-btn').textContent = 'Cancel Edit';
       document.getElementById('ord-save-msg').textContent = '';
 
+      document.getElementById('ord-design-proofs-section').classList.remove('hidden');
+      document.getElementById('ord-design-proofs-hint').classList.add('hidden');
+      loadOrderDesignProofs(id, 'ord-design-proofs');
+
       renderOrderLines();
       // Colour/size dropdowns start empty (same as a freshly-picked catalog
       // line) and get filled in per line, same lookup used when building a
@@ -5754,6 +5778,8 @@
       document.getElementById('ord-save-btn').textContent = '💾 Save as Quote';
       document.getElementById('ord-cancel-edit-btn').textContent = 'Cancel';
       document.getElementById('ord-save-msg').textContent = '';
+      document.getElementById('ord-design-proofs-section').classList.add('hidden');
+      document.getElementById('ord-design-proofs-hint').classList.remove('hidden');
       renderOrderLines();
     }
 
@@ -6051,8 +6077,9 @@
     // quality forever, never overwritten). An attached-but-unsent version
     // stays a pure draft (see uploadDesignProof/sendDesignProofNow) - Martin
     // checks it's right before anything goes to the customer.
-    async function loadOrderDesignProofs(orderId) {
-      const el = document.getElementById('order-design-proofs');
+    async function loadOrderDesignProofs(orderId, containerId) {
+      containerId = containerId || 'order-design-proofs';
+      const el = document.getElementById(containerId);
       if (!el) return;
       try {
         const res = await fetch(API_DESIGN_PROOFS_URL + '?order_id=' + encodeURIComponent(orderId), { cache: 'no-store' });
@@ -6074,7 +6101,7 @@
               </div>
               <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not sent yet - will go out with your next email, or hit Send now'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
               ${p.decision_notes ? `<div class="text-xs text-slate-600 mt-0.5"><strong>Note:</strong> ${escapeHtml(p.decision_notes)}</div>` : ''}
-              ${!p.sent_at ? `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(orderId)}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Send now</button>` : ''}
+              ${!p.sent_at ? `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Send now</button>` : ''}
             </div>
           </div>`).join('');
       } catch (e) {
@@ -6082,9 +6109,11 @@
       }
     }
 
-    async function uploadDesignProof(orderId) {
-      const input = document.getElementById('proof-file-input-' + orderId);
-      const status = document.getElementById('proof-upload-status-' + orderId);
+    async function uploadDesignProof(orderId, inputId, statusId, containerId) {
+      inputId = inputId || ('proof-file-input-' + orderId);
+      statusId = statusId || ('proof-upload-status-' + orderId);
+      const input = document.getElementById(inputId);
+      const status = document.getElementById(statusId);
       const file = input.files[0];
       if (!file) return;
 
@@ -6106,15 +6135,16 @@
         status.className = 'text-xs mb-2 text-emerald-600';
         status.textContent = `Version ${data.version} attached as a draft - nothing sent yet. It'll go out next time you email or save/update this quote, or click Send now below.`;
         input.value = '';
-        loadOrderDesignProofs(orderId);
+        loadOrderDesignProofs(orderId, containerId);
       } catch (e) {
         status.className = 'text-xs mb-2 text-red-600';
         status.textContent = 'Could not attach proof: ' + e.message;
       }
     }
 
-    async function sendDesignProofNow(proofId, orderId) {
-      const status = document.getElementById('proof-upload-status-' + orderId);
+    async function sendDesignProofNow(proofId, orderId, containerId, statusId) {
+      statusId = statusId || ('proof-upload-status-' + orderId);
+      const status = document.getElementById(statusId);
       if (status) { status.classList.remove('hidden'); status.className = 'text-xs mb-2 text-slate-500'; status.textContent = 'Sending…'; }
       try {
         const res = await fetch(API_DESIGN_PROOFS_URL, {
@@ -6127,7 +6157,7 @@
           status.className = data.sent ? 'text-xs mb-2 text-emerald-600' : 'text-xs mb-2 text-red-600';
           status.textContent = data.sent ? 'Sent to the customer.' : 'Could not send: ' + data.reason;
         }
-        loadOrderDesignProofs(orderId);
+        loadOrderDesignProofs(orderId, containerId);
       } catch (e) {
         if (status) { status.className = 'text-xs mb-2 text-red-600'; status.textContent = 'Could not send: ' + e.message; }
       }
