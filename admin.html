@@ -2433,6 +2433,9 @@
     // One breakdown array per tier (index-matched to cvCatalogPickerVariants)
     // of { colour, size } rows still being picked - mirrors orderLines[].breakdown.
     let cvCatalogPickerBreakdown = [];
+    // Per-tier "price for this customer" input, index-matched to
+    // cvCatalogPickerVariants - see loadCvCatalogPickerVariants/updateCvPickerTierPrice.
+    let cvCatalogPickerPrices = [];
 
     async function loadCvCatalogPickerVariants(code) {
       const wrap = document.getElementById('cv-catalog-picker-variants');
@@ -2468,8 +2471,13 @@
         cvCatalogPickerColourOptions = colourOptions;
         cvCatalogPickerSizeOptions = sizeOptions;
 
-        // Each tier starts with one blank colour/size row to fill in.
+        // Each tier starts with one blank colour/size row to fill in, and its
+        // own editable price seeded from the catalog's sell price - tracked
+        // here (not just left to the <input>'s DOM value) so re-rendering
+        // this panel to add/remove a colour/size row doesn't wipe out a
+        // price Martin already typed in.
         cvCatalogPickerBreakdown = cvCatalogPickerVariants.map(() => [{ colour: '', size: '' }]);
+        cvCatalogPickerPrices = cvCatalogPickerVariants.map((v) => (v.sell_price === null || v.sell_price === undefined ? '' : Number(v.sell_price).toFixed(2)));
         renderCvCatalogPickerTiers();
       } catch (e) {
         tiersEl.innerHTML = '<p class="p-3 text-center text-red-500 text-sm">Could not load this product.</p>';
@@ -2492,7 +2500,7 @@
             <span class="text-xs text-slate-500">Catalog price: <span class="font-medium text-slate-700">${v.sell_price === null || v.sell_price === undefined ? '-' : money(v.sell_price)}</span></span>
             <label class="text-xs text-slate-600 flex items-center gap-1.5">
               Price for this customer
-              <input type="number" step="0.01" min="0" data-tier-price-idx="${tierIdx}" value="${v.sell_price === null || v.sell_price === undefined ? '' : Number(v.sell_price).toFixed(2)}" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900 text-sm" />
+              <input type="number" step="0.01" min="0" data-tier-price-idx="${tierIdx}" value="${cvCatalogPickerPrices[tierIdx] ?? ''}" oninput="updateCvPickerTierPrice(${tierIdx}, this.value)" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900 text-sm" />
             </label>
           </div>
           ${noColourSizeData ? `<p class="text-xs text-slate-400 italic">No colour/size list on file for this code - this tier will be added as-is (${escapeHtml(tierLabel)}).</p>` : `
@@ -2522,6 +2530,10 @@
       cvCatalogPickerBreakdown[tierIdx][rowIdx][field] = value;
     }
 
+    function updateCvPickerTierPrice(tierIdx, value) {
+      cvCatalogPickerPrices[tierIdx] = value;
+    }
+
     function addCvPickerBreakdownRow(tierIdx) {
       cvCatalogPickerBreakdown[tierIdx].push({ colour: '', size: '' });
       renderCvCatalogPickerTiers();
@@ -2543,8 +2555,7 @@
       // colour/size (nothing to choose between, so nothing to narrow down).
       const toAdd = [];
       cvCatalogPickerVariants.forEach((v, tierIdx) => {
-        const priceInput = document.querySelector(`[data-tier-price-idx="${tierIdx}"]`);
-        const priceRaw = priceInput ? priceInput.value : '';
+        const priceRaw = cvCatalogPickerPrices[tierIdx] ?? '';
         const sell = priceRaw === '' ? null : Number(priceRaw);
         if (noColourSizeData) {
           toAdd.push({ v, colour: v.colour || '', size: v.size || '', sell });
