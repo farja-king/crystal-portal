@@ -337,6 +337,11 @@
         </div>
       </div>
 
+      <!-- Directory search/import/bulk-actions/table - hidden while the Edit/
+           Add Customer form above is open, so editing one customer reads as
+           its own page rather than a form sitting on top of everyone else's
+           list (see openCustomerEditForm/openAddCustomerForm/closeCustomerEditForm). -->
+      <div id="customer-directory-list">
       <!-- Customers Table -->
       <div class="grid gap-4 sm:grid-cols-2 items-start mb-6">
         <div class="relative">
@@ -414,6 +419,7 @@
             </tr>
           </tbody>
         </table>
+      </div>
       </div>
     </section>
 
@@ -2605,7 +2611,8 @@
       document.getElementById('edit-transaction-count').value = c.transaction_count || 0;
       document.getElementById('edit-last-visit').value = (c.last_visit || '').slice(0, 10);
       document.getElementById('customer-edit-form').classList.remove('hidden');
-      document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById('customer-directory-list').classList.add('hidden');
+      document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     // Same form as Edit, just blank and posting a new record - see
@@ -2626,7 +2633,8 @@
       document.getElementById('edit-transaction-count').value = 0;
       document.getElementById('edit-last-visit').value = '';
       document.getElementById('customer-edit-form').classList.remove('hidden');
-      document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById('customer-directory-list').classList.add('hidden');
+      document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
       document.getElementById('edit-name').focus();
     }
 
@@ -2634,6 +2642,7 @@
       editingCustomerId = null;
       addingNewCustomer = false;
       document.getElementById('customer-edit-form').classList.add('hidden');
+      document.getElementById('customer-directory-list').classList.remove('hidden');
     }
 
     function renderCustomerEditDupeWarning(matches) {
