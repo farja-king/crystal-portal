@@ -786,6 +786,40 @@
           </div>
         </div>
       </div>
+
+      <!-- Offered right after the first save of a brand-new quote - that's
+           the first moment it actually has an id to attach a proof to (see
+           saveOrder's POST-success branch / openNewQuoteProofModal). "Save
+           and Send" attaches the picked file as a draft then immediately
+           runs the normal Email flow (which itself sends whatever proof is
+           pending - see emailOrder/sendPendingDesignProof), so this is
+           genuinely the same "attach, then send" action as everywhere
+           else, just offered proactively instead of Martin having to come
+           back and find this quote again. "Not now" does nothing further -
+           the quote itself is already saved regardless of this dialog. -->
+      <div id="new-quote-proof-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+          <h3 class="text-lg font-bold text-slate-900 mb-1">Attach a design proof?</h3>
+          <p id="nq-proof-subtitle" class="text-sm text-slate-500 mb-4"></p>
+
+          <label class="block text-center border-2 border-dashed border-slate-300 rounded-lg p-6 mb-3 cursor-pointer hover:bg-slate-50" id="nq-proof-dropzone">
+            <span id="nq-proof-placeholder" class="text-sm text-slate-500">Click to choose an image or PDF…</span>
+            <img id="nq-proof-preview" class="hidden max-h-48 mx-auto rounded-lg border border-slate-200" />
+            <input id="nq-proof-file" type="file" accept="image/*,.pdf" class="hidden" onchange="previewNewQuoteProofFile()" />
+          </label>
+          <p id="nq-proof-filename" class="text-xs text-slate-500 mb-4 text-center"></p>
+          <p id="nq-proof-msg" class="text-sm text-red-600 mb-3"></p>
+
+          <div class="flex gap-2">
+            <button type="button" id="nq-proof-send-btn" onclick="saveAndSendNewQuoteProof()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">
+              Save &amp; Send
+            </button>
+            <button type="button" onclick="closeNewQuoteProofModal()" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+              Not now
+            </button>
+          </div>
+        </div>
+      </div>
       <p id="ord-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
 
       <!-- Builder -->
@@ -5655,7 +5689,6 @@
           });
           const data = await res.json();
           if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
-          await sendPendingDesignProof(data.id);
 
           msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
           msg.textContent = 'Saved as ' + data.quote_number + '.';
@@ -5671,6 +5704,12 @@
           orderCustomerItemQuery = {};
           orderLineAddFormOpen = new Set();
           renderOrderLines();
+
+          // First save of a brand-new quote is the first moment it actually
+          // has an id to attach a proof to - offer it right here instead of
+          // making Martin go find this quote again afterward just to attach
+          // one. See openNewQuoteProofModal.
+          openNewQuoteProofModal(data.id, data.quote_number, customer.name);
         }
         loadOrders();
       } catch (e) {
@@ -6211,6 +6250,95 @@
         loadOrderDesignProofs(orderId, containerId);
       } catch (e) {
         if (status) { status.className = 'text-xs mb-2 text-red-600'; status.textContent = 'Could not send: ' + e.message; }
+      }
+    }
+
+    // The "attach a proof?" prompt offered right after the first save of a
+    // brand-new quote - see saveOrder(). newQuoteProofOrderId is set while
+    // this is open so previewNewQuoteProofFile/saveAndSendNewQuoteProof
+    // know which quote it belongs to.
+    let newQuoteProofOrderId = null;
+
+    function openNewQuoteProofModal(orderId, quoteNumber, customerName) {
+      newQuoteProofOrderId = orderId;
+      document.getElementById('nq-proof-subtitle').textContent = `${quoteNumber} for ${customerName} - optional, you can always attach one later.`;
+      document.getElementById('nq-proof-file').value = '';
+      document.getElementById('nq-proof-preview').classList.add('hidden');
+      document.getElementById('nq-proof-placeholder').classList.remove('hidden');
+      document.getElementById('nq-proof-filename').textContent = '';
+      document.getElementById('nq-proof-msg').textContent = '';
+      document.getElementById('nq-proof-send-btn').disabled = true;
+      document.getElementById('new-quote-proof-modal').classList.remove('hidden');
+    }
+
+    function closeNewQuoteProofModal() {
+      newQuoteProofOrderId = null;
+      document.getElementById('new-quote-proof-modal').classList.add('hidden');
+      loadOrders();
+    }
+
+    function previewNewQuoteProofFile() {
+      const input = document.getElementById('nq-proof-file');
+      const file = input.files[0];
+      const preview = document.getElementById('nq-proof-preview');
+      const placeholder = document.getElementById('nq-proof-placeholder');
+      const filenameEl = document.getElementById('nq-proof-filename');
+      if (!file) {
+        preview.classList.add('hidden');
+        placeholder.classList.remove('hidden');
+        filenameEl.textContent = '';
+        document.getElementById('nq-proof-send-btn').disabled = true;
+        return;
+      }
+      filenameEl.textContent = file.name;
+      document.getElementById('nq-proof-send-btn').disabled = false;
+      if (/^image\//.test(file.type)) {
+        preview.src = URL.createObjectURL(file);
+        preview.classList.remove('hidden');
+        placeholder.classList.add('hidden');
+      } else {
+        preview.classList.add('hidden');
+        placeholder.classList.remove('hidden');
+        placeholder.textContent = 'PDF selected - no preview, but it will attach the same way.';
+      }
+    }
+
+    // Attaches the picked file as a draft (same as uploadDesignProof), then
+    // immediately runs the normal Email flow on this quote - which itself
+    // sends whatever proof is now pending (see emailOrder/
+    // sendPendingDesignProof) - so this really is just "attach, then send"
+    // happening in one step instead of two separate visits.
+    async function saveAndSendNewQuoteProof() {
+      const orderId = newQuoteProofOrderId;
+      const input = document.getElementById('nq-proof-file');
+      const file = input.files[0];
+      const msg = document.getElementById('nq-proof-msg');
+      if (!file || !orderId) return;
+
+      const btn = document.getElementById('nq-proof-send-btn');
+      btn.disabled = true;
+      msg.className = 'text-sm text-slate-500 mb-3';
+      msg.textContent = 'Attaching…';
+
+      const o = ordersById[orderId];
+      const form = new FormData();
+      form.append('order_id', orderId);
+      if (o && o.customer_id) form.append('customer_id', o.customer_id);
+      form.append('file', file);
+
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
+
+        document.getElementById('new-quote-proof-modal').classList.add('hidden');
+        newQuoteProofOrderId = null;
+        await loadOrders();
+        await emailOrder(orderId);
+      } catch (e) {
+        msg.className = 'text-sm text-red-600 mb-3';
+        msg.textContent = 'Could not attach: ' + e.message;
+        btn.disabled = false;
       }
     }
 
