@@ -5593,6 +5593,7 @@
           });
           const data = await res.json();
           if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+          await sendPendingDesignProof(editingExistingOrderId);
 
           msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
           msg.textContent = 'Updated.';
@@ -5603,6 +5604,7 @@
           });
           const data = await res.json();
           if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+          await sendPendingDesignProof(data.id);
 
           msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
           msg.textContent = 'Saved as ' + data.quote_number + '.';
@@ -5946,8 +5948,8 @@
         <div class="py-4 border-b border-slate-200">
           <div class="flex items-center justify-between mb-2">
             <p class="text-xs text-slate-500 font-medium">Design Proofs <span class="font-normal text-slate-400">(customer approves/declines by email, no login needed)</span></p>
-            <label class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer">
-              + Attach &amp; email proof
+            <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer" title="Saved as a draft - nothing is sent to the customer until you email or save/update this quote, or hit Send now">
+              + Attach proof (draft)
               <input id="proof-file-input-${escapeAttr(id)}" type="file" accept="image/*,.pdf" class="hidden" onchange="uploadDesignProof('${escapeAttr(id)}')" />
             </label>
           </div>
@@ -6002,9 +6004,10 @@
 
     const API_DESIGN_PROOFS_URL = '/api/design-proofs';
 
-    function designProofStatusBadge(status) {
+    function designProofStatusBadge(status, sentAt) {
       if (status === 'approved') return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">✓ Approved</span>';
       if (status === 'declined') return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">✕ Declined</span>';
+      if (!sentAt) return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-slate-100 text-slate-600">📎 Draft - not sent</span>';
       return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">⏳ Awaiting response</span>';
     }
 
@@ -6013,7 +6016,9 @@
     // link points at; older ones just sit here as a permanent record of
     // what was actually shown and what happened to it (see
     // functions/api/design-proofs.js for why every version is kept at full
-    // quality forever, never overwritten).
+    // quality forever, never overwritten). An attached-but-unsent version
+    // stays a pure draft (see uploadDesignProof/sendDesignProofNow) - Martin
+    // checks it's right before anything goes to the customer.
     async function loadOrderDesignProofs(orderId) {
       const el = document.getElementById('order-design-proofs');
       if (!el) return;
@@ -6033,10 +6038,11 @@
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="text-sm font-medium text-slate-900">Version ${p.version} - ${escapeHtml(p.filename)}</span>
-                ${designProofStatusBadge(p.status)}
+                ${designProofStatusBadge(p.status, p.sent_at)}
               </div>
-              <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not emailed yet'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
+              <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not sent yet - will go out with your next email, or hit Send now'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
               ${p.decision_notes ? `<div class="text-xs text-slate-600 mt-0.5"><strong>Note:</strong> ${escapeHtml(p.decision_notes)}</div>` : ''}
+              ${!p.sent_at ? `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(orderId)}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Send now</button>` : ''}
             </div>
           </div>`).join('');
       } catch (e) {
@@ -6052,7 +6058,7 @@
 
       status.classList.remove('hidden');
       status.className = 'text-xs mb-2 text-slate-500';
-      status.textContent = 'Uploading and emailing…';
+      status.textContent = 'Uploading…';
 
       const o = ordersById[orderId];
       const form = new FormData();
@@ -6065,15 +6071,33 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
 
-        status.className = data.emailed ? 'text-xs mb-2 text-emerald-600' : 'text-xs mb-2 text-amber-600';
-        status.textContent = data.emailed
-          ? `Version ${data.version} attached and emailed to the customer.`
-          : `Version ${data.version} attached, but could not be emailed (${data.reason}). It's saved - you can still show it to them another way.`;
+        status.className = 'text-xs mb-2 text-emerald-600';
+        status.textContent = `Version ${data.version} attached as a draft - nothing sent yet. It'll go out next time you email or save/update this quote, or click Send now below.`;
         input.value = '';
         loadOrderDesignProofs(orderId);
       } catch (e) {
         status.className = 'text-xs mb-2 text-red-600';
         status.textContent = 'Could not attach proof: ' + e.message;
+      }
+    }
+
+    async function sendDesignProofNow(proofId, orderId) {
+      const status = document.getElementById('proof-upload-status-' + orderId);
+      if (status) { status.classList.remove('hidden'); status.className = 'text-xs mb-2 text-slate-500'; status.textContent = 'Sending…'; }
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'send', id: proofId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Send failed');
+        if (status) {
+          status.className = data.sent ? 'text-xs mb-2 text-emerald-600' : 'text-xs mb-2 text-red-600';
+          status.textContent = data.sent ? 'Sent to the customer.' : 'Could not send: ' + data.reason;
+        }
+        loadOrderDesignProofs(orderId);
+      } catch (e) {
+        if (status) { status.className = 'text-xs mb-2 text-red-600'; status.textContent = 'Could not send: ' + e.message; }
       }
     }
 
@@ -6185,11 +6209,34 @@
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        // Any design proof attached but not yet sent goes out now too - see
+        // sendPendingDesignProof. A no-op if nothing's waiting.
+        await sendPendingDesignProof(id);
         await loadOrders();
-        if (viewingOrderId === id) loadOrderCommHistory(id);
+        if (viewingOrderId === id) { loadOrderCommHistory(id); loadOrderDesignProofs(id); }
       } catch (e) {
         alert('Could not send email: ' + e.message);
         if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      }
+    }
+
+    // Sends whichever design proof version is attached but not yet emailed
+    // for this quote, if any - called after every action that actually
+    // sends something to the customer (emailOrder above, saveOrder below),
+    // so "attach a proof" stays a pure draft step (see uploadDesignProof)
+    // until Martin does something that would normally go out to them
+    // anyway. Silent no-op if nothing's pending - never shown as an error,
+    // since "nothing to send" isn't a failure.
+    async function sendPendingDesignProof(orderId) {
+      try {
+        await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'send_pending', order_id: orderId }),
+        });
+      } catch (e) {
+        // Don't let a proof-send failure block or alarm over the thing
+        // that actually triggered this (emailing/saving the quote) -
+        // it's still visible as "not sent" in the Design Proofs card.
       }
     }
 

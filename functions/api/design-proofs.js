@@ -34,6 +34,58 @@ export async function onRequest(context) {
   const escapeHtml = (str) => String(str ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+  // Actually sends the proof email for one already-attached (but not yet
+  // sent) version - called from the "send_pending" action below, which is
+  // itself triggered from three places in the portal: the Email button on
+  // a quote, saving/updating a quote in the builder, and a manual "Send
+  // now" on the proof itself. Whichever fires first for a given order wins
+  // (sent_at gets set immediately after), so attaching several times before
+  // ever sending just replaces which version goes out, never sends more
+  // than one proof email per attach.
+  async function sendProofEmail(env, db, origin, order, proof) {
+    if (!env.RESEND_API_KEY) return { sent: false, reason: "Email isn't set up yet - the RESEND_API_KEY secret is missing." };
+    const to = (order.customer_email || "").trim();
+    if (!to) return { sent: false, reason: "No email address on file for this customer" };
+
+    const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
+    const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
+    const docLabel = order.doc_type === "invoice" ? "Invoice" : "Quote";
+    const docNumber = order.doc_type === "invoice" ? order.invoice_number : order.quote_number;
+    const proofUrl = `${origin}/proof.html?token=${proof.token}`;
+    const imageUrl = /^image\//.test(proof.content_type || "") ? `${origin}/api/design-proofs?view_token=${proof.token}` : null;
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
+        <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
+        <div style="color:#64748b;margin-bottom:20px;">Design proof for ${escapeHtml(docLabel)} ${escapeHtml(docNumber)}${proof.version > 1 ? ` (version ${proof.version})` : ""}</div>
+        <p>Hi ${escapeHtml(order.customer_name)},</p>
+        <p>Here's the design proof for your order - please take a look and let us know if it's good to go.</p>
+        ${imageUrl ? `<img src="${imageUrl}" alt="${escapeHtml(proof.filename)}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:8px;margin:16px 0;" />` : `<p><a href="${proofUrl}" style="color:#4f46e5;">View the attached file</a></p>`}
+        <div style="margin-top:20px;">
+          <a href="${proofUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;">Review &amp; Respond</a>
+        </div>
+        <p style="margin-top:24px;color:#64748b;font-size:13px;">Clicking through lets you approve it as-is, or let us know what needs changing.</p>
+        <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
+      </div>`;
+
+    try {
+      const resendRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: fromAddress, to: [to], reply_to: replyToAddress,
+          subject: `Design proof for your ${docLabel.toLowerCase()} ${docNumber} - please review`,
+          html,
+        }),
+      });
+      if (!resendRes.ok) return { sent: false, reason: "Resend rejected the email" };
+      await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(proof.id).run();
+      return { sent: true };
+    } catch (e) {
+      return { sent: false, reason: e.message };
+    }
+  }
+
   if (!bucket) {
     return json({ error: "File storage isn't set up yet - the DESIGN_FILES R2 bucket binding is missing from this Pages project." }, 500);
   }
@@ -132,6 +184,42 @@ export async function onRequest(context) {
 
       if (contentType.includes("application/json")) {
         const data = await request.json();
+
+        // Sends whichever version is attached-but-not-yet-sent for this
+        // order, if any - a no-op if everything's already gone out (or
+        // nothing's been attached at all). Called automatically whenever
+        // the portal actually sends something to this customer (the Email
+        // button on a quote, or Save/Update in the builder - see
+        // admin.html's emailOrder/saveOrder), plus a manual "Send now" on
+        // the proof itself for sending it on its own without touching the
+        // rest of the quote.
+        if (data.action === "send_pending") {
+          if (!data.order_id) return json({ error: "order_id is required" }, 400);
+          const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.order_id).first();
+          if (!order) return json({ error: "Quote/invoice not found" }, 404);
+          const proof = await db.prepare(
+            "SELECT * FROM design_proofs WHERE order_id = ? AND sent_at IS NULL ORDER BY version DESC LIMIT 1"
+          ).bind(data.order_id).first();
+          if (!proof) return json({ success: true, sent: false, reason: "Nothing pending to send" });
+
+          const result = await sendProofEmail(env, db, url.origin, order, proof);
+          return json({ success: true, ...result, id: proof.id, version: proof.version });
+        }
+
+        // Sends one specific version regardless of order - the "Send now"
+        // button on a particular proof row.
+        if (data.action === "send") {
+          if (!data.id) return json({ error: "id is required" }, 400);
+          const proof = await db.prepare("SELECT * FROM design_proofs WHERE id = ?").bind(data.id).first();
+          if (!proof) return json({ error: "Proof not found" }, 404);
+          if (proof.sent_at) return json({ success: true, sent: false, reason: "Already sent" });
+          const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(proof.order_id).first();
+          if (!order) return json({ error: "Quote/invoice not found" }, 404);
+
+          const result = await sendProofEmail(env, db, url.origin, order, proof);
+          return json({ success: true, ...result, id: proof.id, version: proof.version });
+        }
+
         if (!data.token) return json({ error: "token is required" }, 400);
         if (data.decision !== "approved" && data.decision !== "declined") {
           return json({ error: "decision must be 'approved' or 'declined'" }, 400);
@@ -152,6 +240,40 @@ export async function onRequest(context) {
           "UPDATE design_proofs SET status = ?, decision_notes = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).bind(data.decision, notes, proof.id).run();
 
+        // Approving a proof on a quote (not already an invoice) converts it
+        // straight to an invoice and emails that invoice out - the same
+        // "convert" and "email" actions Martin would otherwise click by
+        // hand, just triggered by the customer's own approval instead of
+        // him having to come back and do it. Reuses the exact same
+        // endpoints (internal same-origin calls) rather than duplicating
+        // their logic, so this can never drift from what a manual
+        // conversion/send actually does. Wrapped so a failure here never
+        // undoes the approval itself, which is already safely recorded.
+        let invoiceNumber = null;
+        let invoiced = false;
+        let invoiceEmailed = false;
+        if (data.decision === "approved" && proof.doc_type === "quote") {
+          try {
+            const convertRes = await fetch(`${url.origin}/api/orders`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: proof.order_id, action: "convert_to_invoice" }),
+            });
+            const convertData = await convertRes.json();
+            if (convertRes.ok && convertData.success) {
+              invoiced = true;
+              invoiceNumber = convertData.invoice_number;
+              const emailRes = await fetch(`${url.origin}/api/send-email`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ order_id: proof.order_id }),
+              });
+              invoiceEmailed = emailRes.ok;
+            }
+          } catch (e) {
+            // Approval is still recorded either way - Martin can convert/
+            // send by hand from the portal if this automation failed.
+          }
+        }
+
         // Notify the portal - same pattern as the Inbox's new-mail
         // notification (a plain email via Resend, since a phone's Mail app
         // already pushes new-mail notifications natively).
@@ -160,6 +282,9 @@ export async function onRequest(context) {
           const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
           const docNumber = proof.doc_type === "invoice" ? proof.invoice_number : proof.quote_number;
           const verb = data.decision === "approved" ? "Approved" : "Declined";
+          const invoiceNote = invoiced
+            ? `<p><strong>${escapeHtml(invoiceNumber)}</strong> was created automatically and ${invoiceEmailed ? "emailed to the customer" : "could not be emailed - send it from the portal"}.</p>`
+            : "";
           try {
             await fetch("https://api.resend.com/emails", {
               method: "POST",
@@ -167,9 +292,9 @@ export async function onRequest(context) {
               body: JSON.stringify({
                 from: fromAddress,
                 to: [notifyTo],
-                subject: `Design proof ${verb}: ${proof.filename} - ${proof.customer_name} (${docNumber})`,
+                subject: `Design proof ${verb}: ${proof.filename} - ${proof.customer_name} (${docNumber})${invoiced ? " - now " + invoiceNumber : ""}`,
                 html: `<p><strong>${escapeHtml(proof.customer_name)}</strong> has <strong>${verb.toLowerCase()}</strong> version ${proof.version} of the design proof "${escapeHtml(proof.filename)}" on ${escapeHtml(docNumber)}.</p>` +
-                  (notes ? `<p><strong>Their note:</strong> ${escapeHtml(notes)}</p>` : ""),
+                  (notes ? `<p><strong>Their note:</strong> ${escapeHtml(notes)}</p>` : "") + invoiceNote,
               }),
             });
           } catch (e) {
@@ -178,7 +303,7 @@ export async function onRequest(context) {
           }
         }
 
-        return json({ success: true, status: data.decision });
+        return json({ success: true, status: data.decision, invoiced, invoice_number: invoiceNumber, invoice_emailed: invoiceEmailed });
       }
 
       // Multipart upload - a new proof version on a quote.
@@ -211,55 +336,14 @@ export async function onRequest(context) {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(id, orderId, customerId, version, file.name, file.type || "application/octet-stream", file.size || 0, key, token).run();
 
-      // Email the customer straight away - "attach a proof" and "send the
-      // proof" are the same action from Martin's side, so there's no
-      // separate draft state that could be forgotten about.
-      let emailed = false;
-      const to = (order.customer_email || "").trim();
-      if (env.RESEND_API_KEY && to) {
-        const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
-        const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
-        const docLabel = order.doc_type === "invoice" ? "Invoice" : "Quote";
-        const docNumber = order.doc_type === "invoice" ? order.invoice_number : order.quote_number;
-        const origin = url.origin;
-        const proofUrl = `${origin}/proof.html?token=${token}`;
-        const imageUrl = /^image\//.test(file.type || "") ? `${origin}/api/design-proofs?view_token=${token}` : null;
-
-        const html = `
-          <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
-            <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
-            <div style="color:#64748b;margin-bottom:20px;">Design proof for ${escapeHtml(docLabel)} ${escapeHtml(docNumber)}${version > 1 ? ` (version ${version})` : ""}</div>
-            <p>Hi ${escapeHtml(order.customer_name)},</p>
-            <p>Here's the design proof for your order - please take a look and let us know if it's good to go.</p>
-            ${imageUrl ? `<img src="${imageUrl}" alt="${escapeHtml(file.name)}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:8px;margin:16px 0;" />` : `<p><a href="${proofUrl}" style="color:#4f46e5;">View the attached file</a></p>`}
-            <div style="margin-top:20px;">
-              <a href="${proofUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;">Review &amp; Respond</a>
-            </div>
-            <p style="margin-top:24px;color:#64748b;font-size:13px;">Clicking through lets you approve it as-is, or let us know what needs changing.</p>
-            <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
-          </div>`;
-
-        try {
-          const resendRes = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              from: fromAddress, to: [to], reply_to: replyToAddress,
-              subject: `Design proof for your ${docLabel.toLowerCase()} ${docNumber} - please review`,
-              html,
-            }),
-          });
-          if (resendRes.ok) {
-            emailed = true;
-            await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
-          }
-        } catch (e) {
-          // Upload already succeeded and is saved regardless - Martin can
-          // still see/resend it from the portal even if this send failed.
-        }
-      }
-
-      return json({ success: true, id, version, emailed, reason: emailed ? null : (to ? "Resend rejected the email" : "No email address on file for this customer") });
+      // Deliberately NOT emailed yet - attaching is just staging it on the
+      // quote so Martin can check everything's right first. It goes out
+      // the next time he actually sends something to this customer (the
+      // Email button, or Save/Update on the quote - see the sendPendingProof
+      // action below, called from all three), or via the "Send now" button
+      // if he wants it to go immediately without touching the rest of the
+      // quote.
+      return json({ success: true, id, version });
     }
 
     if (request.method === "DELETE") {
