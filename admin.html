@@ -4819,19 +4819,48 @@
     // any - see groupCatalogItemsByProduct) is folded into the displayed
     // title so it's clear on the quote which one was picked, e.g.
     // "BARTON SEAGRAVE - Main + Tag Line".
+    // A customer's saved item is either a real garment (has a supplier_code
+    // - saved via the Custom Price List's "Add from Garment Catalog"
+    // picker, one specific colour/size at their special price) or a flat
+    // fee/service (no code, nothing to vary). Only the latter is locked to
+    // a fixed qty-only line - a garment picked here still gets the full
+    // colour/size breakdown grid, pre-filled with the colour/size actually
+    // saved but freely changeable, so quoting a different size for the same
+    // customer never means going back to their record to save that size
+    // too first (see loadOrderLineVariantOptionsForCustomerItem below).
     function selectOrderLineCustomerItem(idx, id) {
       const p = orderCustomerItems.find((x) => x.id === id);
       if (!p) return;
+      const isGarment = !!p.supplier_code;
       Object.assign(orderLines[idx], {
         product_id: p.id, supplier_code: p.supplier_code,
-        title: p.size ? (p.title + ' - ' + p.size) : p.title,
+        title: isGarment ? p.title : (p.size ? (p.title + ' - ' + p.size) : p.title),
         colour: '', size: '', unit_price: Number(p.sell_price) || 0,
-        breakdown: [{ colour: '', size: '', qty: 1 }],
+        breakdown: [{ colour: p.colour || '', size: p.size || '', qty: 1 }],
         colourOptions: [], sizeOptions: [],
-        customer_item: true,
+        customer_item: !isGarment,
       });
       orderLineOpenVariantPicker = null;
       delete orderCustomerItemQuery[idx];
+      renderOrderLines();
+      if (isGarment) loadOrderLineVariantOptionsForCustomerItem(idx, p.supplier_code);
+    }
+
+    // Same as loadOrderLineVariantOptions (shared-catalog scraped colours/
+    // sizes for this code), but a customer's saved garment can carry a code
+    // that only ever existed on their own price list (never imported into
+    // the shared catalog, e.g. a hand-typed one-off) - in that case the
+    // shared-catalog lookup comes back empty, so this falls back to
+    // whatever colours/sizes this customer already has saved under that
+    // same code, at minimum offering those to choose between.
+    async function loadOrderLineVariantOptionsForCustomerItem(idx, code) {
+      await loadOrderLineVariantOptions(idx, code);
+      if (!orderLines[idx] || orderLines[idx].supplier_code !== code) return;
+      if (orderLines[idx].colourOptions.length && orderLines[idx].sizeOptions.length) return;
+      const ownColours = [...new Set(orderCustomerItems.filter((p) => p.supplier_code === code).map((p) => p.colour).filter(Boolean))];
+      const ownSizes = [...new Set(orderCustomerItems.filter((p) => p.supplier_code === code).map((p) => p.size).filter(Boolean))];
+      if (!orderLines[idx].colourOptions.length) orderLines[idx].colourOptions = ownColours;
+      if (!orderLines[idx].sizeOptions.length) orderLines[idx].sizeOptions = ownSizes;
       renderOrderLines();
     }
 
