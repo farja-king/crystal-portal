@@ -799,24 +799,35 @@
            the quote itself is already saved regardless of this dialog. -->
       <div id="new-quote-proof-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
-          <h3 class="text-lg font-bold text-slate-900 mb-1">Attach a design proof?</h3>
-          <p id="nq-proof-subtitle" class="text-sm text-slate-500 mb-4"></p>
+          <div id="nq-proof-form">
+            <h3 class="text-lg font-bold text-slate-900 mb-1">Attach a design proof?</h3>
+            <p id="nq-proof-subtitle" class="text-sm text-slate-500 mb-4"></p>
 
-          <label class="block text-center border-2 border-dashed border-slate-300 rounded-lg p-6 mb-3 cursor-pointer hover:bg-slate-50" id="nq-proof-dropzone">
-            <span id="nq-proof-placeholder" class="text-sm text-slate-500">Click to choose an image or PDF…</span>
-            <img id="nq-proof-preview" class="hidden max-h-48 mx-auto rounded-lg border border-slate-200" />
-            <input id="nq-proof-file" type="file" accept="image/*,.pdf" class="hidden" onchange="previewNewQuoteProofFile()" />
-          </label>
-          <p id="nq-proof-filename" class="text-xs text-slate-500 mb-4 text-center"></p>
-          <p id="nq-proof-msg" class="text-sm text-red-600 mb-3"></p>
+            <label class="block text-center border-2 border-dashed border-slate-300 rounded-lg p-6 mb-3 cursor-pointer hover:bg-slate-50" id="nq-proof-dropzone">
+              <span id="nq-proof-placeholder" class="text-sm text-slate-500">Click to choose an image or PDF…</span>
+              <img id="nq-proof-preview" class="hidden max-h-48 mx-auto rounded-lg border border-slate-200" />
+              <input id="nq-proof-file" type="file" accept="image/*,.pdf" class="hidden" onchange="previewNewQuoteProofFile()" />
+            </label>
+            <p id="nq-proof-filename" class="text-xs text-slate-500 mb-4 text-center"></p>
+            <p id="nq-proof-msg" class="text-sm text-red-600 mb-3"></p>
 
-          <div class="flex gap-2">
-            <button type="button" id="nq-proof-send-btn" onclick="saveAndSendNewQuoteProof()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">
-              Save &amp; Send
-            </button>
-            <button type="button" onclick="closeNewQuoteProofModal()" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
-              Not now
-            </button>
+            <div class="flex gap-2">
+              <button type="button" id="nq-proof-send-btn" onclick="saveAndSendNewQuoteProof()" disabled class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">
+                Save &amp; Send
+              </button>
+              <button type="button" onclick="notNowNewQuoteProof()" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+                Not now
+              </button>
+            </div>
+          </div>
+
+          <!-- Swapped in briefly in place of the form above before the
+               dialog auto-closes - see notNowNewQuoteProof/
+               saveAndSendNewQuoteProof - so there's a clear moment of
+               confirmation instead of the window just vanishing. -->
+          <div id="nq-proof-confirm" class="hidden text-center py-6">
+            <div id="nq-proof-confirm-icon" class="text-4xl mb-3"></div>
+            <p id="nq-proof-confirm-text" class="text-base font-semibold text-slate-900"></p>
           </div>
         </div>
       </div>
@@ -6159,7 +6170,8 @@
               </div>
               <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not sent yet - will go out with your next email, or hit Send now'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
               ${p.decision_notes ? `<div class="text-xs text-slate-600 mt-0.5"><strong>Note:</strong> ${escapeHtml(p.decision_notes)}</div>` : ''}
-              ${!p.sent_at ? `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Send now</button>` : ''}
+              ${!p.sent_at ? `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Send now</button>
+              <button type="button" onclick="deleteDesignProof('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-rose-500 hover:text-rose-700 font-semibold mt-1 ml-3">Delete</button>` : ''}
             </div>
           </div>`).join('');
       } catch (e) {
@@ -6253,6 +6265,27 @@
       }
     }
 
+    // Only ever offered for a still-unsent draft (see the !p.sent_at guard
+    // in loadOrderDesignProofs) - once a customer's actually seen a version
+    // and decided on it, it stays in the history permanently, same as
+    // everywhere else this app treats a recorded decision as a record, not
+    // just a working draft. Deleting a wrong upload before it's gone
+    // anywhere is the one case that's always safe to just remove outright.
+    async function deleteDesignProof(proofId, orderId, containerId) {
+      if (!confirm('Delete this draft? It was never sent to the customer, so this just removes it.')) return;
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: proofId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Delete failed');
+        loadOrderDesignProofs(orderId, containerId);
+      } catch (e) {
+        alert('Could not delete: ' + e.message);
+      }
+    }
+
     // The "attach a proof?" prompt offered right after the first save of a
     // brand-new quote - see saveOrder(). newQuoteProofOrderId is set while
     // this is open so previewNewQuoteProofFile/saveAndSendNewQuoteProof
@@ -6265,9 +6298,12 @@
       document.getElementById('nq-proof-file').value = '';
       document.getElementById('nq-proof-preview').classList.add('hidden');
       document.getElementById('nq-proof-placeholder').classList.remove('hidden');
+      document.getElementById('nq-proof-placeholder').textContent = 'Click to choose an image or PDF…';
       document.getElementById('nq-proof-filename').textContent = '';
       document.getElementById('nq-proof-msg').textContent = '';
       document.getElementById('nq-proof-send-btn').disabled = true;
+      document.getElementById('nq-proof-form').classList.remove('hidden');
+      document.getElementById('nq-proof-confirm').classList.add('hidden');
       document.getElementById('new-quote-proof-modal').classList.remove('hidden');
     }
 
@@ -6275,6 +6311,22 @@
       newQuoteProofOrderId = null;
       document.getElementById('new-quote-proof-modal').classList.add('hidden');
       loadOrders();
+    }
+
+    // Swaps the dialog's form for a plain confirmation message for a couple
+    // seconds, then closes it on its own - a click just vanishing gives no
+    // feedback that anything actually happened, so this makes the outcome
+    // ("saved, nothing sent" / "sent") explicit before it goes away.
+    function showNewQuoteProofConfirmation(icon, text) {
+      document.getElementById('nq-proof-form').classList.add('hidden');
+      document.getElementById('nq-proof-confirm-icon').textContent = icon;
+      document.getElementById('nq-proof-confirm-text').textContent = text;
+      document.getElementById('nq-proof-confirm').classList.remove('hidden');
+      setTimeout(closeNewQuoteProofModal, 2200);
+    }
+
+    function notNowNewQuoteProof() {
+      showNewQuoteProofConfirmation('✓', 'Order saved. Nothing to send.');
     }
 
     function previewNewQuoteProofFile() {
@@ -6331,10 +6383,18 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
 
-        document.getElementById('new-quote-proof-modal').classList.add('hidden');
-        newQuoteProofOrderId = null;
-        await loadOrders();
-        await emailOrder(orderId);
+        const sent = await emailOrder(orderId);
+        if (sent) {
+          showNewQuoteProofConfirmation('✓', 'Quote and digital mockup sent to customer via email.');
+        } else {
+          // emailOrder already alerted why (cancelled address prompt, send
+          // failure, etc) - the proof itself is still safely attached as a
+          // draft either way, so this isn't an error state, just "not sent
+          // yet after all".
+          msg.className = 'text-sm text-slate-500 mb-3';
+          msg.textContent = 'Attached as a draft - not sent. You can send it from this quote\'s Design Proofs card.';
+          btn.disabled = false;
+        }
       } catch (e) {
         msg.className = 'text-sm text-red-600 mb-3';
         msg.textContent = 'Could not attach: ' + e.message;
@@ -6480,14 +6540,18 @@
     // Sends the quote/invoice to the customer's email on file via Resend -
     // see functions/api/send-email.js. Confirms the address first since
     // this is a real outgoing message, not a local edit.
+    // Returns true once the email has actually gone out, false for every
+    // other outcome (cancelled prompt, blank address, send failure) - lets
+    // a caller like saveAndSendNewQuoteProof tell the difference between
+    // "sent" and "not sent" instead of just firing-and-forgetting this.
     async function emailOrder(id) {
       const o = ordersById[id];
-      if (!o) return;
+      if (!o) return false;
       const docLabel = o.doc_type === 'invoice' ? 'invoice' : 'quote';
       const defaultTo = o.customer_email || '';
       const to = prompt(`Send this ${docLabel} to which email address?`, defaultTo);
-      if (to === null) return; // cancelled
-      if (!to.trim()) { alert('An email address is required.'); return; }
+      if (to === null) return false; // cancelled
+      if (!to.trim()) { alert('An email address is required.'); return false; }
 
       const btn = document.getElementById('email-order-btn-' + id);
       const originalText = btn ? btn.textContent : '';
@@ -6505,9 +6569,11 @@
         await sendPendingDesignProof(id);
         await loadOrders();
         if (viewingOrderId === id) { loadOrderCommHistory(id); loadOrderDesignProofs(id); }
+        return true;
       } catch (e) {
         alert('Could not send email: ' + e.message);
         if (btn) { btn.disabled = false; btn.textContent = originalText; }
+        return false;
       }
     }
 
