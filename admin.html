@@ -1135,6 +1135,25 @@
         </div>
       </div>
 
+      <!-- Every design proof ever sent to this customer, across every one
+           of their quotes/invoices, newest first - approved/declined status
+           and any note they left when declining. See loadOrderDesignProofs
+           on the quote's own View panel for attaching a new one; this card
+           is read-only history pulled together across all their orders
+           (functions/api/design-proofs.js's ?customer_id= query). -->
+      <div class="border-t border-slate-200 pt-4 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="font-bold text-slate-900">Design Proofs</h4>
+          <button type="button" onclick="closeCustomerViewModal()" title="Everything here is already saved - this just closes the window" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+            ✓ Done
+          </button>
+        </div>
+        <p class="text-xs text-slate-500 mb-2">Every mockup sent for approval on any of this customer's quotes/invoices, and what they decided.</p>
+        <div id="cv-design-proofs" class="border border-slate-200 rounded-lg divide-y divide-slate-100">
+          <p class="p-3 text-center text-slate-400 text-sm">Loading…</p>
+        </div>
+      </div>
+
       <!-- Emails explicitly saved to this customer's record from the
            built-in Inbox - see "+ Add to Customer" there. Deliberately not
            every email that's ever matched their address, just what was
@@ -1875,6 +1894,7 @@
 
       loadCustomerCatalogItems(id);
       loadCustomerDesignFiles(id);
+      loadCustomerDesignProofsHistory(id);
       loadCustomerInboxEmails(id);
 
       try {
@@ -2043,6 +2063,43 @@
         renderCustomerDesignFiles();
       } catch (e) {
         alert('Could not delete: ' + e.message);
+      }
+    }
+
+    // Every design proof sent across all of this customer's quotes/invoices
+    // (not just one) - read-only history, cross-referencing which doc each
+    // version belongs to since a repeat customer's proofs otherwise have no
+    // obvious grouping when viewed from their profile instead of one quote.
+    async function loadCustomerDesignProofsHistory(customerId) {
+      const el = document.getElementById('cv-design-proofs');
+      if (!el) return;
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL + '?customer_id=' + encodeURIComponent(customerId), { cache: 'no-store' });
+        const rows = await res.json();
+        if (!el.isConnected) return;
+        if (!Array.isArray(rows) || !rows.length) {
+          el.innerHTML = '<p class="p-3 text-center text-slate-400 text-sm">No design proofs sent yet.</p>';
+          return;
+        }
+        el.innerHTML = rows.map((p) => {
+          const docNumber = p.doc_type === 'invoice' ? p.invoice_number : p.quote_number;
+          return `
+          <div class="flex items-start gap-3 p-3">
+            ${/^image\//.test(p.content_type || '')
+              ? `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank"><img src="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" class="w-12 h-12 object-cover rounded-lg border border-slate-200 shrink-0" /></a>`
+              : `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank" class="w-12 h-12 flex items-center justify-center rounded-lg border border-slate-200 shrink-0 text-slate-400 text-xs">File</a>`}
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-sm font-medium text-slate-900">${escapeHtml(docNumber)} - v${p.version} ${escapeHtml(p.filename)}</span>
+                ${designProofStatusBadge(p.status)}
+              </div>
+              <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not emailed yet'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
+              ${p.decision_notes ? `<div class="text-xs text-slate-600 mt-0.5"><strong>Note:</strong> ${escapeHtml(p.decision_notes)}</div>` : ''}
+            </div>
+          </div>`;
+        }).join('');
+      } catch (e) {
+        if (el.isConnected) el.innerHTML = '<p class="p-3 text-center text-red-500 text-sm">Could not load design proofs.</p>';
       }
     }
 
@@ -5886,12 +5943,24 @@
           <p class="text-xs text-slate-500 font-medium mb-1">Notes</p>
           <p class="text-slate-700 text-sm">${escapeHtml(o.notes)}</p>
         </div>` : ''}
+        <div class="py-4 border-b border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs text-slate-500 font-medium">Design Proofs <span class="font-normal text-slate-400">(customer approves/declines by email, no login needed)</span></p>
+            <label class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer">
+              + Attach &amp; email proof
+              <input id="proof-file-input-${escapeAttr(id)}" type="file" accept="image/*,.pdf" class="hidden" onchange="uploadDesignProof('${escapeAttr(id)}')" />
+            </label>
+          </div>
+          <p id="proof-upload-status-${escapeAttr(id)}" class="text-xs mb-2 hidden"></p>
+          <div id="order-design-proofs">Loading…</div>
+        </div>
         <div class="py-4">
           <p class="text-xs text-slate-500 font-medium mb-2">Communication History <span class="font-normal text-slate-400">(internal only - never shown to the customer)</span></p>
           <div id="order-comm-history">Loading…</div>
         </div>
       `;
       loadOrderCommHistory(id);
+      loadOrderDesignProofs(id);
 
       actions.innerHTML = `
         <button onclick="editOrderInBuilder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
@@ -5928,6 +5997,83 @@
           </div>`).join('');
       } catch (e) {
         if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load communication history.</p>';
+      }
+    }
+
+    const API_DESIGN_PROOFS_URL = '/api/design-proofs';
+
+    function designProofStatusBadge(status) {
+      if (status === 'approved') return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">✓ Approved</span>';
+      if (status === 'declined') return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">✕ Declined</span>';
+      return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">⏳ Awaiting response</span>';
+    }
+
+    // Full version history for one quote/invoice's design proof(s) - v1, v2,
+    // v3... newest first. Only the newest is ever the "live" one a customer
+    // link points at; older ones just sit here as a permanent record of
+    // what was actually shown and what happened to it (see
+    // functions/api/design-proofs.js for why every version is kept at full
+    // quality forever, never overwritten).
+    async function loadOrderDesignProofs(orderId) {
+      const el = document.getElementById('order-design-proofs');
+      if (!el) return;
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL + '?order_id=' + encodeURIComponent(orderId), { cache: 'no-store' });
+        const rows = await res.json();
+        if (!el.isConnected) return;
+        if (!Array.isArray(rows) || !rows.length) {
+          el.innerHTML = '<p class="text-sm text-slate-400">No design proofs attached yet.</p>';
+          return;
+        }
+        el.innerHTML = rows.map((p) => `
+          <div class="flex items-start gap-3 border-b border-slate-100 last:border-0 py-2">
+            ${/^image\//.test(p.content_type || '')
+              ? `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank"><img src="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" class="w-14 h-14 object-cover rounded-lg border border-slate-200 shrink-0" /></a>`
+              : `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank" class="w-14 h-14 flex items-center justify-center rounded-lg border border-slate-200 shrink-0 text-slate-400 text-xs">File</a>`}
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-sm font-medium text-slate-900">Version ${p.version} - ${escapeHtml(p.filename)}</span>
+                ${designProofStatusBadge(p.status)}
+              </div>
+              <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not emailed yet'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
+              ${p.decision_notes ? `<div class="text-xs text-slate-600 mt-0.5"><strong>Note:</strong> ${escapeHtml(p.decision_notes)}</div>` : ''}
+            </div>
+          </div>`).join('');
+      } catch (e) {
+        if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load design proofs.</p>';
+      }
+    }
+
+    async function uploadDesignProof(orderId) {
+      const input = document.getElementById('proof-file-input-' + orderId);
+      const status = document.getElementById('proof-upload-status-' + orderId);
+      const file = input.files[0];
+      if (!file) return;
+
+      status.classList.remove('hidden');
+      status.className = 'text-xs mb-2 text-slate-500';
+      status.textContent = 'Uploading and emailing…';
+
+      const o = ordersById[orderId];
+      const form = new FormData();
+      form.append('order_id', orderId);
+      if (o && o.customer_id) form.append('customer_id', o.customer_id);
+      form.append('file', file);
+
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
+
+        status.className = data.emailed ? 'text-xs mb-2 text-emerald-600' : 'text-xs mb-2 text-amber-600';
+        status.textContent = data.emailed
+          ? `Version ${data.version} attached and emailed to the customer.`
+          : `Version ${data.version} attached, but could not be emailed (${data.reason}). It's saved - you can still show it to them another way.`;
+        input.value = '';
+        loadOrderDesignProofs(orderId);
+      } catch (e) {
+        status.className = 'text-xs mb-2 text-red-600';
+        status.textContent = 'Could not attach proof: ' + e.message;
       }
     }
 

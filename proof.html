@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design Proof - Crystal Custom Embroidery</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen flex items-center justify-center p-4">
+  <div class="max-w-lg w-full">
+    <div class="flex items-center gap-3 mb-6 justify-center">
+      <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-lg text-white">C</div>
+      <h1 class="text-lg font-bold text-slate-900">Crystal Custom Embroidery</h1>
+    </div>
+
+    <div id="proof-card" class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+      <p class="text-center text-slate-400">Loading…</p>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = '/api/design-proofs';
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token');
+    const card = document.getElementById('proof-card');
+
+    function escapeHtml(str) {
+      return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function load() {
+      if (!token) {
+        card.innerHTML = '<p class="text-center text-red-600">This link is missing its proof reference - please use the link exactly as sent in the email.</p>';
+        return;
+      }
+      try {
+        const res = await fetch(API_URL + '?token=' + encodeURIComponent(token), { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not load this proof.');
+        render(data);
+      } catch (e) {
+        card.innerHTML = `<p class="text-center text-red-600">${escapeHtml(e.message)}</p>`;
+      }
+    }
+
+    function render(p) {
+      const versionLabel = p.version > 1 ? ` (version ${p.version})` : '';
+      const imageBlock = p.is_image
+        ? `<img src="${API_URL}?view_token=${encodeURIComponent(token)}" alt="${escapeHtml(p.filename)}" class="w-full rounded-lg border border-slate-200 mb-4" />`
+        : `<a href="${API_URL}?view_token=${encodeURIComponent(token)}" target="_blank" class="block text-center bg-slate-50 border border-slate-200 rounded-lg p-6 mb-4 text-indigo-600 hover:underline">View ${escapeHtml(p.filename)}</a>`;
+
+      if (p.status !== 'pending') {
+        const isApproved = p.status === 'approved';
+        card.innerHTML = `
+          <p class="text-sm text-slate-500 mb-1">${escapeHtml(p.doc_number)}${versionLabel}</p>
+          <h2 class="text-lg font-bold text-slate-900 mb-4">${escapeHtml(p.filename)}</h2>
+          ${imageBlock}
+          <div class="text-center py-4 rounded-lg ${isApproved ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'} font-semibold">
+            ${isApproved ? '✓ You already approved this proof' : '✕ You already declined this proof'}
+          </div>
+          ${p.decision_notes ? `<p class="text-sm text-slate-500 mt-3"><strong>Your note:</strong> ${escapeHtml(p.decision_notes)}</p>` : ''}
+        `;
+        return;
+      }
+
+      card.innerHTML = `
+        <p class="text-sm text-slate-500 mb-1">${escapeHtml(p.doc_number)}${versionLabel}</p>
+        <h2 class="text-lg font-bold text-slate-900 mb-4">${escapeHtml(p.filename)}</h2>
+        ${imageBlock}
+        <p class="text-sm text-slate-600 mb-4">Hi ${escapeHtml(p.customer_name)}, please take a look and let us know if this is good to go.</p>
+        <div id="proof-actions" class="flex gap-3">
+          <button id="approve-btn" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-lg font-semibold">✓ Approve</button>
+          <button id="decline-btn" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-3 rounded-lg font-semibold">✕ Request changes</button>
+        </div>
+        <div id="decline-form" class="hidden mt-3">
+          <textarea id="decline-notes" rows="3" placeholder="What would you like changed? (optional)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2"></textarea>
+          <div class="flex gap-2">
+            <button id="decline-submit" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg font-semibold text-sm">Submit</button>
+            <button id="decline-cancel" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg font-semibold text-sm">Cancel</button>
+          </div>
+        </div>
+        <p id="proof-msg" class="text-sm text-red-600 mt-3"></p>
+      `;
+
+      document.getElementById('approve-btn').onclick = () => submitDecision('approved', '');
+      document.getElementById('decline-btn').onclick = () => {
+        document.getElementById('proof-actions').classList.add('hidden');
+        document.getElementById('decline-form').classList.remove('hidden');
+      };
+      document.getElementById('decline-cancel').onclick = () => {
+        document.getElementById('decline-form').classList.add('hidden');
+        document.getElementById('proof-actions').classList.remove('hidden');
+      };
+      document.getElementById('decline-submit').onclick = () => {
+        submitDecision('declined', document.getElementById('decline-notes').value.trim());
+      };
+    }
+
+    async function submitDecision(decision, notes) {
+      const msg = document.getElementById('proof-msg');
+      const buttons = card.querySelectorAll('button');
+      buttons.forEach((b) => { b.disabled = true; });
+      if (msg) msg.textContent = '';
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, decision, notes }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not record your response.');
+        load();
+      } catch (e) {
+        if (msg) msg.textContent = e.message;
+        buttons.forEach((b) => { b.disabled = false; });
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
