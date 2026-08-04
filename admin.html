@@ -2464,6 +2464,16 @@
     // Per-tier "price for this customer" input, index-matched to
     // cvCatalogPickerVariants - see loadCvCatalogPickerVariants/updateCvPickerTierPrice.
     let cvCatalogPickerPrices = [];
+    // Every tier's colour/size dropdowns offer the same full list (the
+    // scraped available_colours/available_sizes covers the whole code, not
+    // just one tier - see loadCvCatalogPickerVariants), so picking e.g. 7XL
+    // from the standard tier already works fine; the only reason to open a
+    // second/third tier at all is to charge a different price for its
+    // larger sizes. Only the first tier starts expanded - the rest collapse
+    // to a one-line summary until explicitly opened, so a code with several
+    // large-size surcharge tiers doesn't turn into a wall of near-identical
+    // dropdown blocks.
+    let cvCatalogPickerExpandedTiers = new Set();
 
     async function loadCvCatalogPickerVariants(code) {
       const wrap = document.getElementById('cv-catalog-picker-variants');
@@ -2506,6 +2516,7 @@
         // price Martin already typed in.
         cvCatalogPickerBreakdown = cvCatalogPickerVariants.map(() => [{ colour: '', size: '' }]);
         cvCatalogPickerPrices = cvCatalogPickerVariants.map((v) => (v.sell_price === null || v.sell_price === undefined ? '' : Number(v.sell_price).toFixed(2)));
+        cvCatalogPickerExpandedTiers = new Set(cvCatalogPickerVariants.length ? [0] : []);
         renderCvCatalogPickerTiers();
       } catch (e) {
         tiersEl.innerHTML = '<p class="p-3 text-center text-red-500 text-sm">Could not load this product.</p>';
@@ -2522,6 +2533,19 @@
       tiersEl.innerHTML = cvCatalogPickerVariants.map((v, tierIdx) => {
         const tierLabel = [v.colour, v.size].filter(Boolean).join(' / ') || 'Standard';
         const rows = cvCatalogPickerBreakdown[tierIdx] || [];
+        const isExpanded = cvCatalogPickerExpandedTiers.has(tierIdx);
+        const filledCount = rows.filter((r) => r.colour && r.size).length;
+
+        if (!isExpanded) {
+          // Collapsed to one line - every tier's colour/size dropdowns offer
+          // the same full list, so there's nothing to see here unless this
+          // tier's price actually needs to differ from the first one.
+          return `<button type="button" onclick="expandCvPickerTier(${tierIdx})" class="w-full flex items-center justify-between gap-2 border border-slate-200 rounded-lg p-3 bg-white hover:bg-slate-50 text-left">
+            <span class="text-xs text-slate-500">Price tier: <span class="font-medium text-slate-700">${escapeHtml(tierLabel)}</span> <span class="text-slate-400">· catalog ${v.sell_price === null || v.sell_price === undefined ? '-' : money(v.sell_price)}</span>${filledCount ? ` <span class="text-emerald-600 font-medium">· ${filledCount} item${filledCount === 1 ? '' : 's'} added</span>` : ''}</span>
+            <span class="text-xs text-indigo-600 font-medium shrink-0">${filledCount ? 'Edit price for this tier ▾' : 'Only needed if this size range costs more ▾'}</span>
+          </button>`;
+        }
+
         return `<div class="border border-slate-200 rounded-lg p-3 bg-white">
           <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
             <span class="text-xs text-slate-500">Price tier: <span class="font-medium text-slate-700">${escapeHtml(tierLabel)}</span></span>
@@ -2530,6 +2554,7 @@
               Price for this customer
               <input type="number" step="0.01" min="0" data-tier-price-idx="${tierIdx}" value="${cvCatalogPickerPrices[tierIdx] ?? ''}" oninput="updateCvPickerTierPrice(${tierIdx}, this.value)" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900 text-sm" />
             </label>
+            ${tierIdx > 0 ? `<button type="button" onclick="collapseCvPickerTier(${tierIdx})" class="text-xs text-slate-400 hover:text-slate-600 font-medium">Collapse ▴</button>` : ''}
           </div>
           ${noColourSizeData ? `<p class="text-xs text-slate-400 italic">No colour/size list on file for this code - this tier will be added as-is (${escapeHtml(tierLabel)}).</p>` : `
           <div class="space-y-1.5">
@@ -2556,6 +2581,16 @@
 
     function updateCvPickerBreakdownField(tierIdx, rowIdx, field, value) {
       cvCatalogPickerBreakdown[tierIdx][rowIdx][field] = value;
+    }
+
+    function expandCvPickerTier(tierIdx) {
+      cvCatalogPickerExpandedTiers.add(tierIdx);
+      renderCvCatalogPickerTiers();
+    }
+
+    function collapseCvPickerTier(tierIdx) {
+      cvCatalogPickerExpandedTiers.delete(tierIdx);
+      renderCvCatalogPickerTiers();
     }
 
     function updateCvPickerTierPrice(tierIdx, value) {
