@@ -5816,6 +5816,10 @@
             actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
           }
           actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold">View</button>`);
+          actions.push(`<label title="Attach a design proof - saved as a draft, nothing sent until you email/save this quote or hit Send now" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold cursor-pointer">
+            Add Image
+            <input type="file" accept="image/*,.pdf" class="hidden" onchange="quickUploadDesignProof('${escapeAttr(o.id)}', this)" />
+          </label>`);
           actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
           actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
           actions.push(`<button id="email-order-btn-${o.id}" onclick="emailOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Email</button>`);
@@ -6139,6 +6143,38 @@
       } catch (e) {
         status.className = 'text-xs mb-2 text-red-600';
         status.textContent = 'Could not attach proof: ' + e.message;
+      }
+    }
+
+    // "Add Image" on a quote row in the main list - the same draft-only
+    // attach as uploadDesignProof, just without a status/history card next
+    // to it (there's nowhere to put one in a table row), so this just
+    // disables the label briefly and alerts the outcome. View or Edit on
+    // this quote afterward shows the usual Design Proofs card with the
+    // attached draft and a Send now button.
+    async function quickUploadDesignProof(orderId, inputEl) {
+      const file = inputEl.files[0];
+      if (!file) return;
+      const label = inputEl.closest('label');
+      const originalText = label ? label.firstChild.textContent : '';
+      if (label) { label.style.pointerEvents = 'none'; label.style.opacity = '0.6'; label.firstChild.textContent = 'Uploading…'; }
+
+      const o = ordersById[orderId];
+      const form = new FormData();
+      form.append('order_id', orderId);
+      if (o && o.customer_id) form.append('customer_id', o.customer_id);
+      form.append('file', file);
+
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
+        alert(`Version ${data.version} attached as a draft on ${o ? (o.invoice_number || o.quote_number) : 'this quote'} - nothing sent yet. Open View or Edit to send it, or use Send now there.`);
+      } catch (e) {
+        alert('Could not attach proof: ' + e.message);
+      } finally {
+        inputEl.value = '';
+        if (label) { label.style.pointerEvents = ''; label.style.opacity = ''; label.firstChild.textContent = originalText; }
       }
     }
 
