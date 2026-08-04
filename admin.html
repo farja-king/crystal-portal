@@ -750,9 +750,40 @@
           <button id="ord-sync-btn" onclick="syncDataFromWebsite()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🌐 Sync Data
           </button>
+          <button onclick="openOrderArchive()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🗄️ Archived
+          </button>
           <button onclick="loadOrders()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
+        </div>
+      </div>
+
+      <!-- Quotes nobody ever responded to, tucked out of the way without
+           deleting them - see openOrderArchive/restoreOrder. -->
+      <div id="order-archive-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6">
+          <div class="flex justify-between items-start mb-4">
+            <div>
+              <h3 class="text-lg font-bold text-slate-900">Archived Quotes &amp; Invoices</h3>
+              <p class="text-sm text-slate-500">Tucked out of the main list, not deleted - restore any of these back to the active list any time.</p>
+            </div>
+            <button onclick="closeOrderArchive()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
+          </div>
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th class="p-2">Number</th>
+                  <th class="p-2">Customer</th>
+                  <th class="p-2">Total</th>
+                  <th class="p-2">Archived</th>
+                  <th class="p-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="order-archive-body" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
         </div>
       </div>
       <p id="ord-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
@@ -5762,6 +5793,7 @@
           actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
           actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
           actions.push(`<button id="email-order-btn-${o.id}" onclick="emailOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Email</button>`);
+          actions.push(`<button onclick="archiveOrder('${o.id}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Archive</button>`);
           actions.push(`<button onclick="deleteOrder('${o.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold">Delete</button>`);
 
           return `
@@ -6124,6 +6156,56 @@
       await fetch(API_ORDERS_URL, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
       });
+      loadOrders();
+    }
+
+    async function archiveOrder(id) {
+      await fetch(API_ORDERS_URL, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action: 'archive' }),
+      });
+      loadOrders();
+    }
+
+    async function openOrderArchive() {
+      const modal = document.getElementById('order-archive-modal');
+      const tbody = document.getElementById('order-archive-body');
+      tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      modal.classList.remove('hidden');
+      try {
+        const res = await fetch(API_ORDERS_URL + '?archived=1', { cache: 'no-store' });
+        const rows = await res.json();
+        if (!Array.isArray(rows) || !rows.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing archived.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = rows.map((o) => {
+          const number = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
+          return `<tr>
+            <td class="p-2 font-semibold text-slate-900">${escapeHtml(number)}</td>
+            <td class="p-2">${escapeHtml(o.customer_name)}</td>
+            <td class="p-2">${money(o.total)}</td>
+            <td class="p-2 text-xs text-slate-500">${escapeHtml(ukDate(o.archived_at))}</td>
+            <td class="p-2 text-right">
+              <button onclick="restoreOrder('${escapeAttr(o.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Restore</button>
+            </td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-500 text-sm">Could not load archived items.</td></tr>';
+      }
+    }
+
+    function closeOrderArchive() {
+      document.getElementById('order-archive-modal').classList.add('hidden');
+    }
+
+    async function restoreOrder(id) {
+      await fetch(API_ORDERS_URL, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action: 'unarchive' }),
+      });
+      openOrderArchive();
       loadOrders();
     }
 

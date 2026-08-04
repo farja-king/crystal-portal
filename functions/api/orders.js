@@ -190,6 +190,17 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // archived_at - a quote nobody ever responded to, tucked out of the way
+    // without deleting it (still fully retrievable, unlike Delete). Only
+    // affects the main pipeline list (the default GET, no id/customer_id) -
+    // a customer's own profile history and a direct ?id= lookup show an
+    // archived order exactly as normal, since archiving is about
+    // decluttering the working list, not hiding it from their record.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN archived_at TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
@@ -205,10 +216,20 @@ export async function onRequest(context) {
       // the Customer Directory's View button.
       const docType = url.searchParams.get("doc_type");
       const customerId = url.searchParams.get("customer_id");
+      const archived = url.searchParams.get("archived");
       const where = [];
       const binds = [];
       if (docType) { where.push("doc_type = ?"); binds.push(docType); }
       if (customerId) { where.push("customer_id = ?"); binds.push(customerId); }
+      // The main Quotes & Invoices list (no customer_id, no explicit
+      // ?archived=) only ever shows what's still active - archived rows are
+      // a separate, deliberate lookup via ?archived=1, not folded into the
+      // default view.
+      if (archived) {
+        where.push("archived_at IS NOT NULL");
+      } else if (!customerId) {
+        where.push("archived_at IS NULL");
+      }
       const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
       const { results } = await db.prepare(
         `SELECT * FROM orders ${clause} ORDER BY created_at DESC`
@@ -255,6 +276,16 @@ export async function onRequest(context) {
       const data = await request.json();
       const existing = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.id).first();
       if (!existing) return json({ error: "Order not found" }, 404);
+
+      if (data.action === "archive") {
+        await db.prepare("UPDATE orders SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
+        return json({ success: true });
+      }
+
+      if (data.action === "unarchive") {
+        await db.prepare("UPDATE orders SET archived_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
+        return json({ success: true });
+      }
 
       if (data.action === "convert_to_invoice") {
         if (existing.doc_type === "invoice") return json({ error: "Already an invoice" }, 409);
