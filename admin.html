@@ -841,7 +841,19 @@
 
       <!-- Builder -->
       <div id="ord-builder" class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
-        <h3 id="ord-builder-heading" class="font-bold text-slate-900 mb-4">New Quote</h3>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h3 id="ord-builder-heading" class="font-bold text-slate-900">New Quote</h3>
+          <!-- Only shown while creating something new (hidden the moment an
+               existing quote/invoice is opened for editing - see
+               editOrderInBuilder/cancelOrderEdit) - a quote can still become
+               an invoice later via Convert, this is purely for skipping the
+               quote stage entirely when the job's already agreed and just
+               needs invoicing. -->
+          <div id="ord-doctype-toggle" class="inline-flex bg-slate-100 rounded-lg p-1 text-sm font-semibold">
+            <button type="button" id="ord-doctype-quote-btn" onclick="setNewOrderDocType('quote')" class="px-3 py-1.5 rounded-md bg-white text-slate-900 shadow-sm transition">New Quote</button>
+            <button type="button" id="ord-doctype-invoice-btn" onclick="setNewOrderDocType('invoice')" class="px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-800 transition">New Invoice</button>
+          </div>
+        </div>
 
         <div class="grid gap-3 md:grid-cols-3 mb-4">
           <label class="text-sm">
@@ -5718,6 +5730,24 @@
     // instead of POSTing a brand new quote.
     let editingExistingOrderId = null;
 
+    // Which kind of brand-new document the builder is about to create -
+    // only meaningful while editingExistingOrderId is null (the toggle is
+    // hidden entirely once an existing quote/invoice is being edited, see
+    // editOrderInBuilder/cancelOrderEdit). Lets Martin skip the quote stage
+    // entirely and invoice a job directly, without first creating then
+    // converting a quote he never needed.
+    let newOrderDocType = 'quote';
+
+    function setNewOrderDocType(type) {
+      newOrderDocType = type;
+      const activeCls = 'px-3 py-1.5 rounded-md bg-white text-slate-900 shadow-sm transition';
+      const idleCls = 'px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-800 transition';
+      document.getElementById('ord-doctype-quote-btn').className = type === 'quote' ? activeCls : idleCls;
+      document.getElementById('ord-doctype-invoice-btn').className = type === 'invoice' ? activeCls : idleCls;
+      document.getElementById('ord-builder-heading').textContent = type === 'invoice' ? 'New Invoice' : 'New Quote';
+      document.getElementById('ord-save-btn').textContent = type === 'invoice' ? '💾 Save as Invoice' : '💾 Save as Quote';
+    }
+
     async function saveOrder() {
       const msg = document.getElementById('ord-save-msg');
       const customerId = document.getElementById('ord-customer').value;
@@ -5733,6 +5763,7 @@
         discount_flat: Number(document.getElementById('ord-discount-flat').value) || 0,
         notes: document.getElementById('ord-notes').value,
         due_date: document.getElementById('ord-due-date').value,
+        doc_type: newOrderDocType,
         items: orderLines.map((l) => ({
           source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
           title: l.title, colour: l.colour, size: l.size, description: l.description,
@@ -5777,8 +5808,9 @@
           const data = await res.json();
           if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
 
+          const docNumber = data.quote_number || data.invoice_number;
           msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
-          msg.textContent = 'Saved as ' + data.quote_number + '.';
+          msg.textContent = 'Saved as ' + docNumber + '.';
           orderLines = [];
           document.getElementById('ord-notes').value = '';
           document.getElementById('ord-due-date').value = '';
@@ -5792,12 +5824,13 @@
           orderCustomerItemQuery = {};
           orderLineAddFormOpen = new Set();
           renderOrderLines();
+          setNewOrderDocType('quote');
 
-          // First save of a brand-new quote is the first moment it actually
-          // has an id to attach a proof to - offer it right here instead of
-          // making Martin go find this quote again afterward just to attach
-          // one. See openNewQuoteProofModal.
-          openNewQuoteProofModal(data.id, data.quote_number, customer.name);
+          // First save of a brand-new quote/invoice is the first moment it
+          // actually has an id to attach a proof to - offer it right here
+          // instead of making Martin go find this document again afterward
+          // just to attach one. See openNewQuoteProofModal.
+          openNewQuoteProofModal(data.id, docNumber, customer.name);
         }
         loadOrders();
       } catch (e) {
@@ -5858,6 +5891,7 @@
 
       const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
       document.getElementById('ord-builder-heading').textContent = 'Editing ' + docNumber;
+      document.getElementById('ord-doctype-toggle').classList.add('hidden');
       document.getElementById('ord-customer').value = o.customer_id || '';
       renderOrderCustomerPicker();
       onOrderCustomerChange();
@@ -5903,7 +5937,8 @@
     function cancelOrderEdit() {
       editingExistingOrderId = null;
       orderLines = [];
-      document.getElementById('ord-builder-heading').textContent = 'New Quote';
+      document.getElementById('ord-doctype-toggle').classList.remove('hidden');
+      setNewOrderDocType('quote');
       document.getElementById('ord-customer').value = '';
       renderOrderCustomerPicker();
       document.getElementById('ord-discount').value = 0;

@@ -255,22 +255,29 @@ export async function onRequest(context) {
     }
 
     // ----------------------------------------------------------------- POST --
-    // Always creates a new quote (invoices are only ever produced by
-    // converting one - see the "convert_to_invoice" PUT action below).
+    // Usually creates a new quote (invoices are otherwise only ever
+    // produced by converting one - see the "convert_to_invoice" PUT action
+    // below), but data.doc_type === 'invoice' skips the quote stage
+    // entirely - for a job that's already agreed and just needs invoicing,
+    // not a proposal that needs approving first (see the New Quote/New
+    // Invoice toggle in the builder).
     if (request.method === "POST") {
       const data = await request.json();
       const id = crypto.randomUUID();
       const priced = priceItems(data.items, data.discount_pct, data.discount_flat);
-      const quote_number = await nextNumber("quote");
+      const isInvoice = data.doc_type === "invoice";
+      const docNumber = await nextNumber(isInvoice ? "invoice" : "quote");
 
       await db.prepare(`
         INSERT INTO orders (
-          id, doc_type, quote_number, customer_id, customer_name, customer_email,
-          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, notes, due_date
-        ) VALUES (?, 'quote', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, doc_type, quote_number, invoice_number, customer_id, customer_name, customer_email,
+          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, invoiced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
-        quote_number,
+        isInvoice ? "invoice" : "quote",
+        isInvoice ? "" : docNumber,
+        isInvoice ? docNumber : "",
         data.customer_id || "",
         data.customer_name || "",
         data.customer_email || "",
@@ -281,11 +288,17 @@ export async function onRequest(context) {
         priced.discount_amount,
         priced.total,
         data.status || "draft",
+        isInvoice ? "unpaid" : null,
         data.notes || "",
-        data.due_date || ""
+        data.due_date || "",
+        isInvoice ? new Date().toISOString() : null
       ).run();
 
-      return json({ success: true, id, quote_number, ...priced });
+      return json({
+        success: true, id, ...priced,
+        quote_number: isInvoice ? null : docNumber,
+        invoice_number: isInvoice ? docNumber : null,
+      });
     }
 
     // ------------------------------------------------------------------ PUT --
