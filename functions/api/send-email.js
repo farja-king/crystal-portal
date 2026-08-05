@@ -102,6 +102,22 @@ export async function onRequest(context) {
     const docLabel = o.doc_type === "invoice" ? "Invoice" : "Quote";
     const docNumber = o.doc_type === "invoice" ? o.invoice_number : o.quote_number;
 
+    // Same live-from-the-customer-record address lookup as the printed
+    // version (functions/api/orders.js) - this email is meant to read as
+    // the actual invoice, not a stripped-down summary of it, so it needs
+    // the same trading/billing address block, bank details and due date
+    // that appear on the print/PDF version.
+    const customerAddr = o.customer_id
+      ? await db.prepare("SELECT address_1, address_2, city, county, postcode FROM customers WHERE id = ?").bind(o.customer_id).first()
+      : null;
+    const addressLines = (addr) => !addr ? "" : [addr.address_1, addr.address_2, addr.city, addr.county, addr.postcode]
+      .filter(Boolean).map(escapeHtml).join("<br>");
+    const ukDate = (raw) => {
+      if (!raw) return "";
+      const d = new Date(raw);
+      return isNaN(d) ? "" : String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0") + "/" + d.getFullYear();
+    };
+
     const rows = items.map((item) => {
       const baseLabel = item.source === "catalog"
         ? `${escapeHtml(item.supplier_code)} ${escapeHtml(item.title)}`
@@ -140,16 +156,40 @@ export async function onRequest(context) {
       </tr>`;
     }).join("");
 
-    const discountLine = o.discount_amount
-      ? `<div>Discount: -${money(o.discount_amount)}</div>`
-      : "";
+    const discountLine = o.discount_amount ? `Discount: -${money(o.discount_amount)}` : "";
+
+    const isUnpaidInvoice = o.doc_type === "invoice" && o.paid_status !== "paid";
+    const bankBlock = isUnpaidInvoice ? `
+        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-top:16px;font-size:14px;line-height:1.6;">
+          <div style="font-weight:600;">We appreciate your business. Please pay via Bank Transfer</div>
+          <div>Banking Details: Crystal Custom Embroidery,</div>
+          <div>Sort Code: 04-03-33, Account Number: 55185130</div>
+        </div>` : "";
 
     const html = `
       <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
         <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
-        <div style="color:#64748b;margin-bottom:20px;">${docLabel} - ${escapeHtml(docNumber)}${o.doc_type === "invoice" ? " (from " + escapeHtml(o.quote_number) + ")" : ""}</div>
+        <div style="color:#64748b;font-size:13px;line-height:1.5;">26 Grove Street, Raunds, NN9 6DS<br>hello@embroidery.click | 07530 576197</div>
+        <div style="color:#64748b;margin-top:8px;margin-bottom:20px;">${docLabel} - ${escapeHtml(docNumber)}${o.doc_type === "invoice" ? " (from " + escapeHtml(o.quote_number) + ")" : ""}</div>
         <p>Hi ${escapeHtml(o.customer_name)},</p>
         <p>Please find your ${docLabel.toLowerCase()} below${o.doc_type === "quote" ? " - let us know if you'd like to go ahead" : ""}.</p>
+
+        <div style="display:flex;gap:16px;margin-top:16px;">
+          <div style="flex:1;border:1px solid #e2e8f0;border-radius:12px;padding:14px;">
+            <div style="font-weight:600;font-size:14px;margin-bottom:6px;">Customer</div>
+            <div style="font-size:14px;">${escapeHtml(o.customer_name)}</div>
+            ${o.customer_email ? `<div style="font-size:14px;color:#64748b;">${escapeHtml(o.customer_email)}</div>` : ""}
+            ${addressLines(customerAddr) ? `<div style="font-size:14px;color:#64748b;margin-top:4px;">${addressLines(customerAddr)}</div>` : ""}
+          </div>
+          <div style="flex:1;border:1px solid #e2e8f0;border-radius:12px;padding:14px;">
+            <div style="font-weight:600;font-size:14px;margin-bottom:6px;">Details</div>
+            <div style="font-size:14px;">Date: ${ukDate(o.created_at)}</div>
+            ${o.doc_type === "invoice" ? `<div style="font-size:14px;">Status: ${o.paid_status === "paid" ? "Paid" : "Unpaid"}</div>` : ""}
+            ${o.doc_type === "invoice" && o.due_date ? `<div style="font-size:14px;">Due by: ${ukDate(o.due_date)}</div>` : ""}
+          </div>
+        </div>
+        ${bankBlock}
+
         <table style="width:100%;border-collapse:collapse;margin-top:16px;">
           <thead>
             <tr style="text-align:left;border-bottom:2px solid #0f172a;">
@@ -163,8 +203,8 @@ export async function onRequest(context) {
         </table>
         <div style="margin-top:16px;text-align:right;">
           <div>Subtotal: ${money(o.subtotal)}</div>
-          ${discountLine}
-          <div style="font-size:20px;font-weight:700;">Total: ${money(o.total)}</div>
+          ${discountLine ? `<div style="margin-top:6px;">${discountLine}</div>` : ""}
+          <div style="font-size:20px;font-weight:700;margin-top:6px;">Total: ${money(o.total)}</div>
           <div style="font-size:12px;color:#64748b;margin-top:4px;">VAT not applicable - not VAT registered.</div>
         </div>
         ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
