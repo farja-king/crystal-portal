@@ -6617,6 +6617,12 @@
             <div class="card"><strong>Customer</strong><br>${escapeHtml(o.customer_name)}${o.customer_email ? '<br>' + escapeHtml(o.customer_email) : ''}</div>
             <div class="card"><strong>Details</strong><br>Date: ${escapeHtml(ukDate(o.created_at))}${o.doc_type === 'invoice' ? '<br>Status: ' + (o.paid_status === 'paid' ? 'Paid' : 'Unpaid') : ''}</div>
           </div>
+          ${o.doc_type === 'invoice' && o.paid_status !== 'paid' ? `
+          <div class="card" style="margin-top:16px;">
+            <strong>We appreciate your business. Please pay via Bank Transfer</strong><br>
+            Banking Details: Crystal Custom Embroidery,<br>
+            Sort Code: 04-03-33, Account Number: 55185130
+          </div>` : ''}
           <table>
             <thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
             <tbody>${rows}</tbody>
