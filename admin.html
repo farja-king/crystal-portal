@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -38,6 +38,9 @@
           <button id="tab-inbox" onclick="switchTab('inbox')" class="relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Inbox
             <span id="inbox-unread-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
+          </button>
+          <button id="tab-proofs" onclick="switchTab('proofs')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            Design Proofs
           </button>
         </div>
         <button id="logout-btn" onclick="logout()" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
@@ -1052,6 +1055,45 @@
       </div>
     </section>
 
+    <!-- DESIGN PROOFS TAB -->
+    <section id="section-proofs" class="hidden">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Design Proofs</h2>
+          <p class="text-slate-500 text-sm">Every quote/invoice's latest mockup version, across every customer, in one place.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <select id="proofs-filter" onchange="loadProofsDashboard()" class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            <option value="">All statuses</option>
+            <option value="pending">Awaiting response</option>
+            <option value="approved">Approved</option>
+            <option value="declined">Declined</option>
+          </select>
+          <button onclick="loadProofsDashboard()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+            <tr>
+              <th class="text-left px-4 py-3">Image</th>
+              <th class="text-left px-4 py-3">Customer</th>
+              <th class="text-left px-4 py-3">Quote/Invoice</th>
+              <th class="text-left px-4 py-3">Version</th>
+              <th class="text-left px-4 py-3">Status</th>
+              <th class="text-left px-4 py-3">Sent</th>
+              <th class="text-left px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="proofs-dashboard-body">
+            <tr><td colspan="7" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 
   <!-- Reusable Yes/No confirm overlay - see confirmModal() - replaces the
@@ -1433,7 +1475,7 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'orders', 'inbox'];
+    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'orders', 'inbox', 'proofs'];
     function switchTab(tab) {
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
@@ -1463,6 +1505,7 @@
       }
       if (tab === 'inbox') loadInbox();
       if (tab === 'dashboard') loadDashboard();
+      if (tab === 'proofs') loadProofsDashboard();
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
@@ -1680,7 +1723,7 @@
       const ids = [...selectedCustomerIds];
       if (!ids.length) return;
       const names = ids.map((id) => (customersById[id] ? customersById[id].name : id)).join(', ');
-      if (!confirm(`Delete ${ids.length} customer(s)?\n\n${names}\n\nYou can restore them from Trash afterward if needed.`)) return;
+      if (!(await confirmModal(`Delete ${ids.length} customer(s)?\n\n${names}\n\nYou can restore them from Trash afterward if needed.`))) return;
 
       let failed = 0;
       for (const id of ids) {
@@ -1766,7 +1809,7 @@
       const survivor = customersById[survivorId];
       const loser = customersById[loserId];
       if (!survivor || !loser) return;
-      if (!confirm(`Merge "${loser.name}" into "${survivor.name}"? All of "${loser.name}"'s quotes/invoices, price list items, contact details and Square activity move to "${survivor.name}", then "${loser.name}" is deleted (recoverable from Trash, but the moved quotes/items stay with "${survivor.name}").`)) return;
+      if (!(await confirmModal(`Merge "${loser.name}" into "${survivor.name}"? All of "${loser.name}"'s quotes/invoices, price list items, contact details and Square activity move to "${survivor.name}", then "${loser.name}" is deleted (recoverable from Trash, but the moved quotes/items stay with "${survivor.name}").`))) return;
 
       const msg = document.getElementById('cust-merge-msg');
       msg.className = 'text-sm mb-3 text-slate-500';
@@ -2169,7 +2212,7 @@
     }
 
     async function deleteCustomerDesignFile(id) {
-      if (!confirm('Delete this design file? This cannot be undone.')) return;
+      if (!(await confirmModal('Delete this design file? This cannot be undone.'))) return;
       try {
         await fetch(API_DESIGN_FILES_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
@@ -2290,7 +2333,7 @@
     }
 
     async function removeInboxEmailFromCustomerRecord(id) {
-      if (!confirm("Remove this email from the customer's record? It'll stay in the main Inbox, just unlinked from here.")) return;
+      if (!(await confirmModal("Remove this email from the customer's record? It'll stay in the main Inbox, just unlinked from here."))) return;
       await fetch('/api/inbox', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, saved_to_customer: false }),
       });
@@ -2303,7 +2346,7 @@
     // Inbox tab) rather than just unlinking it from this customer - it's
     // gone from the portal entirely, not just this record.
     async function deleteCvInboxEmail(id) {
-      if (!confirm('Delete this email? This only removes it from the portal - your real mailbox is untouched.')) return;
+      if (!(await confirmModal('Delete this email? This only removes it from the portal - your real mailbox is untouched.'))) return;
       // The main Inbox tab's detail panel (and its own list) has no idea
       // this just got deleted from here - if the message's conversation
       // happens to be the one currently open there, refresh/clear it too,
@@ -2484,7 +2527,7 @@
     }
 
     async function deleteCustomerCatalogItem(id) {
-      if (!confirm('Remove this item from the price list?')) return;
+      if (!(await confirmModal('Remove this item from the price list?'))) return;
       await fetch(API_PRODUCTS_URL, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
       });
@@ -3158,7 +3201,7 @@
     // everyone above the one just deleted to get back to where you were.
     async function deleteCustomerRow(id) {
       const c = customersById[id];
-      if (!confirm(`Delete customer "${c ? c.name : id}"? You can restore it from Trash afterward if needed.`)) return;
+      if (!(await confirmModal(`Delete customer "${c ? c.name : id}"? You can restore it from Trash afterward if needed.`))) return;
 
       try {
         await fetch(API_CUSTOMERS_URL, {
@@ -3230,7 +3273,7 @@
     }
 
     async function permanentlyDeleteCustomer(id, name) {
-      if (!confirm(`Permanently delete "${name}"? This cannot be undone - there is no further recovery after this.`)) return;
+      if (!(await confirmModal(`Permanently delete "${name}"? This cannot be undone - there is no further recovery after this.`))) return;
       try {
         await fetch(API_CUSTOMERS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' },
@@ -3342,7 +3385,7 @@
     // Delete a quote from Cloudflare D1
     async function deleteQuoteRow(id) {
       const q = quotesById[id];
-      if (!confirm(`Delete quote "${q ? (q.quote_number || q.id) : id}"? This cannot be undone.`)) return;
+      if (!(await confirmModal(`Delete quote "${q ? (q.quote_number || q.id) : id}"? This cannot be undone.`))) return;
 
       try {
         await fetch(API_URL, {
@@ -3443,7 +3486,7 @@
     async function bulkDeleteCatalog() {
       const ids = [...selectedCatalogIds];
       if (!ids.length) return;
-      if (!confirm(`Delete ${ids.length} product(s) from the catalog? This cannot be undone.`)) return;
+      if (!(await confirmModal(`Delete ${ids.length} product(s) from the catalog? This cannot be undone.`))) return;
       try {
         const res = await fetch(API_PRODUCTS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
@@ -3831,7 +3874,7 @@
 
     async function deleteService(id) {
       const s = servicesById[id];
-      if (!confirm(`Delete "${s ? s.title : id}"? This cannot be undone.`)) return;
+      if (!(await confirmModal(`Delete "${s ? s.title : id}"? This cannot be undone.`))) return;
       try {
         await fetch(API_PRODUCTS_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
         loadServices();
@@ -3871,7 +3914,7 @@
     async function bulkDeleteServices() {
       const ids = [...selectedServiceIds];
       if (!ids.length) return;
-      if (!confirm(`Delete ${ids.length} service(s)? This cannot be undone.`)) return;
+      if (!(await confirmModal(`Delete ${ids.length} service(s)? This cannot be undone.`))) return;
       try {
         const res = await fetch(API_PRODUCTS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
@@ -5978,7 +6021,7 @@
     async function bulkDeleteOrders() {
       const ids = [...selectedOrderIds];
       if (!ids.length) return;
-      if (!confirm(`Delete ${ids.length} quote(s)/invoice(s)? This cannot be undone.`)) return;
+      if (!(await confirmModal(`Delete ${ids.length} quote(s)/invoice(s)? This cannot be undone.`))) return;
       try {
         const res = await fetch(API_ORDERS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
@@ -6174,6 +6217,53 @@
       return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">⏳ Awaiting response</span>';
     }
 
+    // Master cross-customer list - one row per order's latest proof
+    // version, so there's a single place to see everything currently
+    // awaiting a response (or find any version to resend) without already
+    // knowing which quote it lives on.
+    async function loadProofsDashboard() {
+      const tbody = document.getElementById('proofs-dashboard-body');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL + '?all=1', { cache: 'no-store' });
+        let rows = await res.json();
+        if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
+
+        const filter = document.getElementById('proofs-filter').value;
+        if (filter) rows = rows.filter((p) => p.status === filter);
+
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400 text-sm">Nothing to show.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = rows.map((p) => {
+          const docNumber = p.doc_type === 'invoice' ? p.invoice_number : p.quote_number;
+          const thumb = !p.has_file
+            ? `<div class="w-12 h-12 flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300 text-[10px] text-center leading-tight">Removed</div>`
+            : /^image\//.test(p.content_type || '')
+            ? `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank"><img src="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" class="w-12 h-12 object-cover rounded-lg border border-slate-200" /></a>`
+            : `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" target="_blank" class="w-12 h-12 flex items-center justify-center rounded-lg border border-slate-200 text-slate-400 text-xs">File</a>`;
+          return `
+          <tr class="border-t border-slate-100">
+            <td class="px-4 py-3">${thumb}</td>
+            <td class="px-4 py-3 font-medium text-slate-900">${escapeHtml(p.customer_name)}</td>
+            <td class="px-4 py-3"><button type="button" onclick="viewOrder('${escapeAttr(p.order_id)}')" class="text-indigo-600 hover:text-indigo-800 font-semibold">${escapeHtml(docNumber)}</button></td>
+            <td class="px-4 py-3">v${p.version}</td>
+            <td class="px-4 py-3">${designProofStatusBadge(p.status, p.sent_at)}</td>
+            <td class="px-4 py-3 text-slate-500">${p.sent_at ? escapeHtml(ukDate(p.sent_at)) : '-'}</td>
+            <td class="px-4 py-3">${p.sent_at
+              ? `<button type="button" onclick="resendDesignProof('${escapeAttr(p.id)}', '${escapeAttr(p.order_id)}', null, 'proofs-dashboard-status')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Resend</button>`
+              : `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(p.order_id)}', null, 'proofs-dashboard-status')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Send now</button>`}
+            </td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-red-500 text-sm">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
     // Full version history for one quote/invoice's design proof(s) - v1, v2,
     // v3... newest first. Only the newest is ever the "live" one a customer
     // link points at; older ones just sit here as a permanent record of
@@ -6338,7 +6428,7 @@
     // just a working draft. Deleting a wrong upload before it's gone
     // anywhere is the one case that's always safe to just remove outright.
     async function deleteDesignProof(proofId, orderId, containerId) {
-      if (!confirm('Delete this draft? It was never sent to the customer, so this just removes it.')) return;
+      if (!(await confirmModal('Delete this draft? It was never sent to the customer, so this just removes it.'))) return;
       try {
         const res = await fetch(API_DESIGN_PROOFS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' },
@@ -6517,7 +6607,7 @@
     }
 
     async function convertOrderToInvoice(id) {
-      if (!confirm('Convert this quote to an invoice? It will get its own invoice number.')) return;
+      if (!(await confirmModal('Convert this quote to an invoice? It will get its own invoice number.'))) return;
       await fetch(API_ORDERS_URL, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, action: 'convert_to_invoice' }),
@@ -6535,7 +6625,7 @@
 
     async function deleteOrder(id) {
       const o = ordersById[id];
-      if (!confirm(`Delete ${o ? (o.invoice_number || o.quote_number) : id}? This cannot be undone.`)) return;
+      if (!(await confirmModal(`Delete ${o ? (o.invoice_number || o.quote_number) : id}? This cannot be undone.`))) return;
       await fetch(API_ORDERS_URL, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
       });
@@ -6591,7 +6681,7 @@
     // separate from Delete's automatic cleanup - an archived quote is being
     // kept on purpose, so nothing here happens unless explicitly asked for.
     async function removeArchivedProofImages(orderId) {
-      if (!confirm('Remove the design proof image(s) for this quote to free up storage?\n\nThe record of what was attached and what the customer decided stays - only the actual file(s) are deleted.')) return;
+      if (!(await confirmModal('Remove the design proof image(s) for this quote to free up storage?\n\nThe record of what was attached and what the customer decided stays - only the actual file(s) are deleted.'))) return;
       try {
         const res = await fetch(API_DESIGN_PROOFS_URL, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -6623,7 +6713,7 @@
         const totalSize = rows.reduce((sum, r) => sum + (Number(r.size_bytes) || 0), 0);
         const sizeLabel = totalSize > 1024 * 1024 ? (totalSize / (1024 * 1024)).toFixed(1) + ' MB' : (totalSize / 1024).toFixed(0) + ' KB';
         const names = rows.slice(0, 10).map((r) => `- ${r.filename} (v${r.version})`).join('\n') + (rows.length > 10 ? `\n...and ${rows.length - 10} more` : '');
-        if (!confirm(`Found ${rows.length} design proof/mockup file(s) left over from deleted quotes (~${sizeLabel}):\n\n${names}\n\nThese are only ever mockup images attached to quotes - never a customer's own design file backups (those are a completely separate system and are not touched here).\n\nDelete them permanently to free up storage?`)) return;
+        if (!(await confirmModal(`Found ${rows.length} design proof/mockup file(s) left over from deleted quotes (~${sizeLabel}):\n\n${names}\n\nThese are only ever mockup images attached to quotes - never a customer's own design file backups (those are a completely separate system and are not touched here).\n\nDelete them permanently to free up storage?`))) return;
 
         const delRes = await fetch(API_DESIGN_PROOFS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' },
@@ -6926,7 +7016,7 @@
       const threadIds = [...selectedInboxThreadIds];
       if (!threadIds.length) return;
       const messageCount = lastInboxThreads.filter((t) => selectedInboxThreadIds.has(t.threadId)).reduce((sum, t) => sum + t.messages.length, 0);
-      if (!confirm(`Delete ${threadIds.length} conversation(s) (${messageCount} email(s) total)? This only removes them from the portal.`)) return;
+      if (!(await confirmModal(`Delete ${threadIds.length} conversation(s) (${messageCount} email(s) total)? This only removes them from the portal.`))) return;
       try {
         const res = await fetch(API_INBOX_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ thread_ids: threadIds }),
@@ -7085,7 +7175,7 @@
     }
 
     async function deleteInboxEmail(id) {
-      if (!confirm('Delete this email? This only removes it from the portal - your real mailbox is untouched.')) return;
+      if (!(await confirmModal('Delete this email? This only removes it from the portal - your real mailbox is untouched.'))) return;
       await fetch(API_INBOX_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
       delete inboxById[id];
       if (viewingInboxThreadId) viewInboxThread(viewingInboxThreadId);

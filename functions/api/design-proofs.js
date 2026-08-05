@@ -199,6 +199,25 @@ export async function onRequest(context) {
       return json(results);
     }
 
+    // GET ?all=1 - every proof across every customer, latest version per
+    // order only (older superseded versions would just be noise here),
+    // newest-sent-or-created first. Backs the master Design Proofs
+    // dashboard - the one place to see everything currently awaiting a
+    // customer's response, or find a specific version to resend, without
+    // having to already know which quote it's on.
+    if (request.method === "GET" && url.searchParams.get("all")) {
+      const { results } = await db.prepare(`
+        SELECT p.id, p.order_id, p.customer_id, p.version, p.filename, p.content_type, p.status,
+               p.decision_notes, p.created_at, p.sent_at, p.decided_at, (p.r2_key <> '') AS has_file,
+               o.quote_number, o.invoice_number, o.doc_type, o.customer_name
+        FROM design_proofs p
+        JOIN orders o ON o.id = p.order_id
+        WHERE p.version = (SELECT MAX(version) FROM design_proofs WHERE order_id = p.order_id)
+        ORDER BY COALESCE(p.sent_at, p.created_at) DESC
+      `).all();
+      return json(results);
+    }
+
     // GET ?order_id=X or ?customer_id=X - version history, newest first, for
     // the internal Quote View panel and the Customer View modal.
     if (request.method === "GET") {
