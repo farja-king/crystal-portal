@@ -6209,7 +6209,7 @@
               <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not sent yet - will go out with your next email, or hit Send now'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
               ${p.decision_notes ? `<div class="text-xs text-slate-600 mt-0.5"><strong>Note:</strong> ${escapeHtml(p.decision_notes)}</div>` : ''}
               ${!p.sent_at ? `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Send now</button>
-              <button type="button" onclick="deleteDesignProof('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-rose-500 hover:text-rose-700 font-semibold mt-1 ml-3">Delete</button>` : ''}
+              <button type="button" onclick="deleteDesignProof('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-rose-500 hover:text-rose-700 font-semibold mt-1 ml-3">Delete</button>` : `<button type="button" title="Email this version again - works whether it's pending, approved or declined" onclick="resendDesignProof('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Resend</button>`}
             </div>
           </div>`).join('');
       } catch (e) {
@@ -6300,6 +6300,34 @@
         loadOrderDesignProofs(orderId, containerId);
       } catch (e) {
         if (status) { status.className = 'text-xs mb-2 text-red-600'; status.textContent = 'Could not send: ' + e.message; }
+      }
+    }
+
+    // Offered on every already-sent version regardless of status - a
+    // second copy of the same email (see the "resend" action in
+    // design-proofs.js), for a customer who never got the original, lost
+    // it, or whose email client clipped the approve/decline link out of
+    // the message before they could use it.
+    async function resendDesignProof(proofId, orderId, containerId, statusId) {
+      statusId = statusId || ('proof-upload-status-' + orderId);
+      const status = document.getElementById(statusId);
+      if (status) { status.classList.remove('hidden'); status.className = 'text-xs mb-2 text-slate-500'; status.textContent = 'Resending…'; }
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'resend', id: proofId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Resend failed');
+        if (status) {
+          status.className = data.sent ? 'text-xs mb-2 text-emerald-600' : 'text-xs mb-2 text-red-600';
+          status.textContent = data.sent ? 'Resent to the customer.' : 'Could not resend: ' + data.reason;
+        }
+        showActionToast(data.sent ? '✓' : '⚠', data.sent ? `Version ${data.version} resent to the customer.` : `Could not resend: ${data.reason}`);
+        loadOrderDesignProofs(orderId, containerId);
+      } catch (e) {
+        if (status) { status.className = 'text-xs mb-2 text-red-600'; status.textContent = 'Could not resend: ' + e.message; }
+        showActionToast('⚠', 'Could not resend: ' + e.message);
       }
     }
 

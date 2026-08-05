@@ -261,6 +261,25 @@ export async function onRequest(context) {
           return json({ success: true, ...result, id: proof.id, version: proof.version });
         }
 
+        // Resends a specific version regardless of its status or whether
+        // it's gone out before - the "Resend" button offered on every
+        // version, not just unsent drafts. Covers a customer who never got
+        // (or lost) the original email, wants another copy of something
+        // already decided, or an email client that clipped the approve/
+        // decline link out of the message before they could use it.
+        // sendProofEmail bumps sent_at to now either way, same as a first
+        // send, so the proof list always shows "when was this last emailed".
+        if (data.action === "resend") {
+          if (!data.id) return json({ error: "id is required" }, 400);
+          const proof = await db.prepare("SELECT * FROM design_proofs WHERE id = ?").bind(data.id).first();
+          if (!proof) return json({ error: "Proof not found" }, 404);
+          const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(proof.order_id).first();
+          if (!order) return json({ error: "Quote/invoice not found" }, 404);
+
+          const result = await sendProofEmail(env, db, bucket, url.origin, order, proof);
+          return json({ success: true, ...result, id: proof.id, version: proof.version });
+        }
+
         // Manual "Remove image from database" (offered on an Archived
         // quote) - frees the actual file bytes in R2 for every proof
         // version on this order, but keeps the design_proofs rows exactly
