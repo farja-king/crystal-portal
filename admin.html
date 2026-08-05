@@ -1133,6 +1133,30 @@
     </div>
   </div>
 
+  <!-- Send-a-quote/invoice compose dialog - see emailComposeModal() - the
+       address field plus an optional personalized note that's inserted at
+       the top of the email, above the standard quote/invoice content. A
+       PDF copy is always attached automatically (see functions/api/
+       send-email.js), no separate control for that here. -->
+  <div id="email-compose-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
+      <h3 class="font-bold text-slate-900 mb-3">Send <span id="email-compose-doclabel">quote</span></h3>
+      <label class="text-sm block mb-3">
+        <span class="block font-medium text-slate-700 mb-1">To</span>
+        <input id="email-compose-to" type="email" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+      </label>
+      <label class="text-sm block mb-1">
+        <span class="block font-medium text-slate-700 mb-1">Personal message <span class="text-slate-400 font-normal">(optional)</span></span>
+        <textarea id="email-compose-message" rows="4" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" placeholder="Shown at the top of the email, above the quote/invoice details…"></textarea>
+      </label>
+      <p class="text-xs text-slate-400 mb-4">A PDF copy is attached automatically.</p>
+      <div class="flex justify-end gap-3">
+        <button id="email-compose-cancel" type="button" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancel</button>
+        <button id="email-compose-send" type="button" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Send</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Reusable "here's what just happened" confirmation overlay - see
        showActionToast() - a visual confirmation after actions like saving a
        quote that also emails a new design proof version to the customer,
@@ -4579,6 +4603,37 @@
       });
     }
 
+    // Resolves to { to, message } or null if cancelled - the send dialog
+    // offered from emailOrder(), with an optional personal note that gets
+    // inserted at the top of the email (see functions/api/send-email.js).
+    function emailComposeModal(defaultTo, docLabel) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('email-compose-modal');
+        const toInput = document.getElementById('email-compose-to');
+        const msgInput = document.getElementById('email-compose-message');
+        document.getElementById('email-compose-doclabel').textContent = docLabel;
+        toInput.value = defaultTo || '';
+        msgInput.value = '';
+        const sendBtn = document.getElementById('email-compose-send');
+        const cancelBtn = document.getElementById('email-compose-cancel');
+        const cleanup = (result) => {
+          modal.classList.add('hidden');
+          sendBtn.removeEventListener('click', onSend);
+          cancelBtn.removeEventListener('click', onCancel);
+          modal.removeEventListener('keydown', onKeydown);
+          resolve(result);
+        };
+        const onSend = () => cleanup({ to: toInput.value, message: msgInput.value });
+        const onCancel = () => cleanup(null);
+        const onKeydown = (e) => { if (e.key === 'Escape') onCancel(); };
+        sendBtn.addEventListener('click', onSend);
+        cancelBtn.addEventListener('click', onCancel);
+        modal.addEventListener('keydown', onKeydown);
+        modal.classList.remove('hidden');
+        toInput.focus();
+      });
+    }
+
     async function applyBulkPricing() {
       const f = catalogFilters();
       const mode = document.getElementById('cat-bulk-mode').value;
@@ -6916,8 +6971,21 @@
       const docLabel = o.doc_type === 'invoice' ? 'invoice' : 'quote';
       const docNumber = o.invoice_number || o.quote_number;
       const defaultTo = o.customer_email || '';
-      const to = await promptModal(`Send this ${docLabel} to which email address?`, defaultTo, 'email');
-      if (to === null) return false; // cancelled
+      // The silent path (saveAndSendNewQuoteProof's "Save & Send", right
+      // after that dialog's own image-attach step) skips this second
+      // dialog - stacking a compose prompt on top of one already-open
+      // dialog is more friction than the automated flow should add. The
+      // ordinary Email button always asks.
+      let to, message;
+      if (silent) {
+        to = defaultTo;
+        message = '';
+      } else {
+        const compose = await emailComposeModal(defaultTo, docLabel);
+        if (compose === null) return false; // cancelled
+        to = compose.to;
+        message = compose.message;
+      }
       if (!to.trim()) { showActionToast('⚠', 'An email address is required.'); return false; }
 
       const btn = document.getElementById('email-order-btn-' + id);
@@ -6927,7 +6995,7 @@
       try {
         const res = await fetch('/api/send-email', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_id: id, to: to.trim() }),
+          body: JSON.stringify({ order_id: id, to: to.trim(), message }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);

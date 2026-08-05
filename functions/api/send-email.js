@@ -100,6 +100,13 @@ export async function onRequest(context) {
     const to = (data.to || o.customer_email || "").trim();
     if (!to) return json({ error: "No email address on file for this customer" }, 400);
 
+    // Optional personal note from the send dialog - shown at the very top
+    // of the email, above the standard quote/invoice content, so it reads
+    // like something Martin actually typed to this customer rather than a
+    // generic template. Never touches the PDF attachment - that's always
+    // the plain document.
+    const personalMessage = (data.message || "").trim().slice(0, 2000);
+
     const items = JSON.parse(o.items || "[]");
     const docLabel = o.doc_type === "invoice" ? "Invoice" : "Quote";
     const docNumber = o.doc_type === "invoice" ? o.invoice_number : o.quote_number;
@@ -173,6 +180,7 @@ export async function onRequest(context) {
         <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
         <div style="color:#64748b;font-size:13px;line-height:1.5;">26 Grove Street, Raunds, NN9 6DS<br>hello@embroidery.click | 07530 576197</div>
         <div style="color:#64748b;margin-top:8px;margin-bottom:20px;">${docLabel} - ${escapeHtml(docNumber)}${o.doc_type === "invoice" ? " (from " + escapeHtml(o.quote_number) + ")" : ""}</div>
+        ${personalMessage ? `<div style="background:#f8fafc;border-left:3px solid #4f46e5;border-radius:6px;padding:12px 16px;margin-bottom:20px;white-space:pre-line;">${escapeHtml(personalMessage)}</div>` : ""}
         <p>Hi ${escapeHtml(o.customer_name)},</p>
         <p>Please find your ${docLabel.toLowerCase()} below${o.doc_type === "quote" ? " - let us know if you'd like to go ahead" : ""}.</p>
 

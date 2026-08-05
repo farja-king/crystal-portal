@@ -135,6 +135,7 @@ export function buildOrderPdf(o, customerAddr) {
   doc.gap(4);
   doc.line("Subtotal: " + money(o.subtotal), { x: 400, size: 10, gap: 13 });
   if (o.discount_amount) doc.line("Discount: -" + money(o.discount_amount), { x: 400, size: 10, gap: 13 });
+  doc.gap(6);
   doc.line("Total: " + money(o.total), { x: 400, font: "F2", size: 14, gap: 18 });
   doc.line("VAT not applicable - not VAT registered.", { x: 400, size: 8, gray: 0.5, gap: 13 });
 
