@@ -5814,6 +5814,7 @@
           if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
 
           const docNumber = data.quote_number || data.invoice_number;
+          const savedDocType = newOrderDocType;
           msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
           msg.textContent = 'Saved as ' + docNumber + '.';
           orderLines = [];
@@ -5835,7 +5836,7 @@
           // actually has an id to attach a proof to - offer it right here
           // instead of making Martin go find this document again afterward
           // just to attach one. See openNewQuoteProofModal.
-          openNewQuoteProofModal(data.id, docNumber, customer.name);
+          openNewQuoteProofModal(data.id, docNumber, customer.name, savedDocType);
         }
         loadOrders();
       } catch (e) {
@@ -6487,9 +6488,11 @@
     // this is open so previewNewQuoteProofFile/saveAndSendNewQuoteProof
     // know which quote it belongs to.
     let newQuoteProofOrderId = null;
+    let newQuoteProofDocLabel = 'Quote';
 
-    function openNewQuoteProofModal(orderId, quoteNumber, customerName) {
+    function openNewQuoteProofModal(orderId, quoteNumber, customerName, docType) {
       newQuoteProofOrderId = orderId;
+      newQuoteProofDocLabel = docType === 'invoice' ? 'Invoice' : 'Quote';
       document.getElementById('nq-proof-subtitle').textContent = `${quoteNumber} for ${customerName} - optional, you can always attach one later.`;
       document.getElementById('nq-proof-file').value = '';
       document.getElementById('nq-proof-preview').classList.add('hidden');
@@ -6629,7 +6632,7 @@
 
         const sent = await emailOrder(orderId, true);
         if (sent) {
-          showNewQuoteProofConfirmation('✓', 'Quote and digital mockup sent to customer via email.');
+          showNewQuoteProofConfirmation('✓', `${newQuoteProofDocLabel} and digital mockup sent to customer via email.`);
         } else {
           // emailOrder already alerted why (cancelled address prompt, send
           // failure, etc) - the proof itself is still safely attached as a
