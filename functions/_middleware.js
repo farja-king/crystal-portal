@@ -20,6 +20,30 @@ export async function onRequest(context) {
 
   if (request.method === "OPTIONS") return pass("preflight");
   if (url.pathname === "/api/auth") return pass("auth-endpoint");
+
+  // proof.html and its token-scoped API calls are the customer-facing
+  // approval flow - the customer never logs in, so the portal password
+  // gate must not sit in front of them (see functions/api/design-proofs.js
+  // header: access is instead controlled by the unguessable per-version
+  // token in the URL, not a session).
+  if (url.pathname === "/proof.html") return pass("public-proof-page");
+  if (url.pathname === "/api/design-proofs" && (url.searchParams.get("token") || url.searchParams.get("view_token"))) {
+    return pass("public-proof-token");
+  }
+  if (url.pathname === "/api/design-proofs" && request.method === "POST"
+      && (request.headers.get("content-type") || "").includes("application/json")) {
+    // The only unauthenticated POST shape is the customer's decision -
+    // { token, decision, notes }, no "action" field (that's how admin-only
+    // JSON actions like send_pending/send/remove_storage are distinguished
+    // in design-proofs.js). Everything else - including multipart file
+    // attaches - still needs the portal login, same as before.
+    let body = null;
+    try { body = await request.clone().json(); } catch { /* not JSON, fall through to auth */ }
+    if (body && !body.action && body.token && body.decision) {
+      return pass("public-proof-decision");
+    }
+  }
+
   if (!env.DB) return pass("no-db");
 
   let cfg = null;
