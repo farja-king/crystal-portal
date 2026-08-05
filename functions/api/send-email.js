@@ -4,6 +4,8 @@
 // D1 - and needs its own two secrets that orders.js has no reason to touch:
 // RESEND_API_KEY and RESEND_FROM_EMAIL (e.g. "Crystal Custom Embroidery
 // <quotes@embroidery.click>" - must be on a domain verified in Resend).
+import { buildOrderPdf } from "../_lib/document-pdf.js";
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -213,6 +215,25 @@ export async function onRequest(context) {
 
     const subject = `${docLabel} ${docNumber} from Crystal Custom Embroidery`;
 
+    // A real PDF copy attached to every send - the HTML above is for
+    // reading in an email client, this is what a customer actually saves/
+    // prints for their own records (see functions/_lib/document-pdf.js and
+    // functions/api/order-pdf.js, which serves the same file for direct
+    // download from the portal).
+    let pdfAttachment = null;
+    try {
+      const pdfBytes = buildOrderPdf(o, customerAddr);
+      let binary = "";
+      const CHUNK = 8192; // avoid blowing the call stack on String.fromCharCode(...bigArray)
+      for (let i = 0; i < pdfBytes.length; i += CHUNK) {
+        binary += String.fromCharCode(...pdfBytes.subarray(i, i + CHUNK));
+      }
+      pdfAttachment = { filename: `${docNumber || "document"}.pdf`, content: btoa(binary) };
+    } catch (e) {
+      // A broken PDF build shouldn't block the email itself going out -
+      // the HTML body alone is still a complete, readable copy.
+    }
+
     const resendRes = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -225,6 +246,7 @@ export async function onRequest(context) {
         reply_to: replyToAddress,
         subject,
         html,
+        ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
       }),
     });
 

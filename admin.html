@@ -4740,6 +4740,7 @@
 
     // ============================== Quotes & Invoices (garment orders) ==============================
     const API_ORDERS_URL = '/api/orders';
+    const API_ORDER_PDF_URL = '/api/order-pdf';
     let orderLines = [];
     let ordersLoaded = false;
     let ordersById = {};
@@ -6051,6 +6052,7 @@
             <input type="file" accept="image/*,.pdf" class="hidden" onchange="quickUploadDesignProof('${escapeAttr(o.id)}', this)" />
           </label>`);
           actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
+          actions.push(`<a href="${API_ORDER_PDF_URL}?id=${escapeAttr(o.id)}" target="_blank" title="Download a PDF copy - the same file that goes out with the emailed copy" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">PDF</a>`);
           actions.push(`<button id="email-order-btn-${o.id}" onclick="emailOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Email</button>`);
           actions.push(`<button onclick="archiveOrder('${o.id}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Archive</button>`);
           actions.push(`<button onclick="deleteOrder('${o.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold">Delete</button>`);
