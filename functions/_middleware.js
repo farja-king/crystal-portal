@@ -26,7 +26,10 @@ export async function onRequest(context) {
   // gate must not sit in front of them (see functions/api/design-proofs.js
   // header: access is instead controlled by the unguessable per-version
   // token in the URL, not a session).
-  if (url.pathname === "/proof.html") return pass("public-proof-page");
+  // Cloudflare Pages 308-redirects /proof.html to /proof (clean URLs) and
+  // that redirected request re-enters this middleware, so both the real
+  // filename and its extension-less alias need to be exempted.
+  if (url.pathname === "/proof.html" || url.pathname === "/proof") return pass("public-proof-page");
   if (url.pathname === "/api/design-proofs" && (url.searchParams.get("token") || url.searchParams.get("view_token"))) {
     return pass("public-proof-token");
   }
