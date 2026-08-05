@@ -5746,6 +5746,11 @@
       document.getElementById('ord-doctype-invoice-btn').className = type === 'invoice' ? activeCls : idleCls;
       document.getElementById('ord-builder-heading').textContent = type === 'invoice' ? 'New Invoice' : 'New Quote';
       document.getElementById('ord-save-btn').textContent = type === 'invoice' ? '💾 Save as Invoice' : '💾 Save as Quote';
+      // Only ever relevant to a brand-new quote, which needs saving once
+      // before it has an id to attach anything to - an invoice is created
+      // with one already, so there's nothing to warn about there (see the
+      // "Save & Send" prompt that fires right after either kind's first save).
+      document.getElementById('ord-design-proofs-hint').classList.toggle('hidden', type === 'invoice');
     }
 
     async function saveOrder() {
