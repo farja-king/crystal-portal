@@ -82,11 +82,11 @@ export async function onRequest(context) {
         <div style="color:#64748b;margin-bottom:20px;">Design proof for ${escapeHtml(docLabel)} ${escapeHtml(docNumber)}${proof.version > 1 ? ` (version ${proof.version})` : ""}</div>
         <p>Hi ${escapeHtml(order.customer_name)},</p>
         <p>Here's the design proof for your order - please take a look and let us know if it's good to go.</p>
-        ${imageTag || `<p><a href="${proofUrl}" style="color:#4f46e5;">View the attached file</a></p>`}
-        <div style="margin-top:20px;">
+        <div style="margin:20px 0;">
           <a href="${proofUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;">Review &amp; Respond</a>
         </div>
-        <p style="margin-top:24px;color:#64748b;font-size:13px;">Clicking through lets you approve it as-is, or let us know what needs changing.</p>
+        <p style="color:#64748b;font-size:13px;">Clicking through lets you approve it as-is, or let us know what needs changing.</p>
+        ${imageTag || `<p><a href="${proofUrl}" style="color:#4f46e5;">View the attached file</a></p>`}
         <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
       </div>`;
 

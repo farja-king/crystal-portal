@@ -1066,6 +1066,17 @@
     </div>
   </div>
 
+  <!-- Reusable "here's what just happened" confirmation overlay - see
+       showActionToast() - a visual confirmation after actions like saving a
+       quote that also emails a new design proof version to the customer,
+       so it's obvious something actually went out, not just silently saved. -->
+  <div id="action-toast" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-6 text-center">
+      <div id="action-toast-icon" class="text-4xl mb-3">✓</div>
+      <p id="action-toast-text" class="text-sm text-slate-800 whitespace-pre-line"></p>
+    </div>
+  </div>
+
   <!-- Read-only customer view - contact/address plus full quote/invoice
        history, filterable by date and amount. See viewCustomerHistory(). -->
   <div id="customer-view-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -5700,11 +5711,22 @@
           });
           const data = await res.json();
           if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
-          await sendPendingDesignProof(editingExistingOrderId);
+          const docNumber = ordersById[editingExistingOrderId]
+            ? (ordersById[editingExistingOrderId].invoice_number || ordersById[editingExistingOrderId].quote_number)
+            : '';
+          const proofResult = await sendPendingDesignProof(editingExistingOrderId);
 
           msg.className = 'text-sm mt-3 text-emerald-600 font-semibold';
           msg.textContent = 'Updated.';
           cancelOrderEdit();
+
+          if (proofResult && proofResult.sent) {
+            showActionToast('✓', `Updated${docNumber ? ' ' + docNumber : ''} - version ${proofResult.version} mockup emailed to the customer.`);
+          } else if (proofResult && proofResult.reason && proofResult.reason !== 'Nothing pending to send') {
+            showActionToast('⚠', `Updated${docNumber ? ' ' + docNumber : ''}, but the mockup wasn't emailed: ${proofResult.reason}`);
+          } else {
+            showActionToast('✓', `Updated${docNumber ? ' ' + docNumber : ''}.`);
+          }
         } else {
           const res = await fetch(API_ORDERS_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -6329,6 +6351,18 @@
       loadOrders();
     }
 
+    // Generic visual confirmation for actions elsewhere that quietly email
+    // something as a side effect (e.g. updating a quote with a new design
+    // proof version) - a plain success message in a form field is easy to
+    // miss, this makes "yes, that really did just go out" unmissable.
+    function showActionToast(icon, text) {
+      document.getElementById('action-toast-icon').textContent = icon;
+      document.getElementById('action-toast-text').textContent = text;
+      const el = document.getElementById('action-toast');
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 2600);
+    }
+
     // Swaps the dialog's form for a plain confirmation message for a couple
     // seconds, then closes it on its own - a click just vanishing gives no
     // feedback that anything actually happened, so this makes the outcome
@@ -6435,7 +6469,7 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
 
-        const sent = await emailOrder(orderId);
+        const sent = await emailOrder(orderId, true);
         if (sent) {
           showNewQuoteProofConfirmation('✓', 'Quote and digital mockup sent to customer via email.');
         } else {
@@ -6669,10 +6703,11 @@
     // other outcome (cancelled prompt, blank address, send failure) - lets
     // a caller like saveAndSendNewQuoteProof tell the difference between
     // "sent" and "not sent" instead of just firing-and-forgetting this.
-    async function emailOrder(id) {
+    async function emailOrder(id, silent) {
       const o = ordersById[id];
       if (!o) return false;
       const docLabel = o.doc_type === 'invoice' ? 'invoice' : 'quote';
+      const docNumber = o.invoice_number || o.quote_number;
       const defaultTo = o.customer_email || '';
       const to = prompt(`Send this ${docLabel} to which email address?`, defaultTo);
       if (to === null) return false; // cancelled
@@ -6691,9 +6726,16 @@
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
         // Any design proof attached but not yet sent goes out now too - see
         // sendPendingDesignProof. A no-op if nothing's waiting.
-        await sendPendingDesignProof(id);
+        const proofResult = await sendPendingDesignProof(id);
         await loadOrders();
         if (viewingOrderId === id) { loadOrderCommHistory(id); loadOrderDesignProofs(id); }
+        if (!silent) {
+          if (proofResult && proofResult.sent) {
+            showActionToast('✓', `${docNumber} emailed to ${to.trim()} - version ${proofResult.version} mockup included.`);
+          } else {
+            showActionToast('✓', `${docNumber} emailed to ${to.trim()}.`);
+          }
+        }
         return true;
       } catch (e) {
         alert('Could not send email: ' + e.message);
@@ -6711,14 +6753,17 @@
     // since "nothing to send" isn't a failure.
     async function sendPendingDesignProof(orderId) {
       try {
-        await fetch(API_DESIGN_PROOFS_URL, {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'send_pending', order_id: orderId }),
         });
+        const data = await res.json();
+        return res.ok ? data : null;
       } catch (e) {
         // Don't let a proof-send failure block or alarm over the thing
         // that actually triggered this (emailing/saving the quote) -
         // it's still visible as "not sent" in the Design Proofs card.
+        return null;
       }
     }
 
