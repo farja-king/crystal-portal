@@ -6575,6 +6575,16 @@
       loadOrders();
     }
 
+    // Renders a customer's invoicing address as extra <br>-separated lines
+    // for the printed Customer card - UK invoices need the full billing
+    // address on the document itself, not just name/email.
+    function customerAddressLines(addr) {
+      if (!addr) return '';
+      const lines = [addr.address_1, addr.address_2, addr.city, addr.county, addr.postcode]
+        .filter(Boolean).map(escapeHtml);
+      return lines.length ? '<br>' + lines.join('<br>') : '';
+    }
+
     async function printOrder(id) {
       const res = await fetch(API_ORDERS_URL + '?id=' + encodeURIComponent(id));
       const o = await res.json();
@@ -6614,9 +6624,10 @@
         </style></head>
         <body>
           <h1>Crystal Custom Embroidery</h1>
-          <div class="muted">${docLabel} - ${escapeHtml(docNumber)}${o.doc_type === 'invoice' ? ' (from ' + escapeHtml(o.quote_number) + ')' : ''}</div>
+          <div class="muted">26 Grove Street, Raunds, NN9 6DS, United Kingdom<br>crystal.embroidery@icloud.com | 07530 576197</div>
+          <div class="muted" style="margin-top:8px;">${docLabel} - ${escapeHtml(docNumber)}${o.doc_type === 'invoice' ? ' (from ' + escapeHtml(o.quote_number) + ')' : ''}</div>
           <div class="grid">
-            <div class="card"><strong>Customer</strong><br>${escapeHtml(o.customer_name)}${o.customer_email ? '<br>' + escapeHtml(o.customer_email) : ''}</div>
+            <div class="card"><strong>Customer</strong><br>${escapeHtml(o.customer_name)}${o.customer_email ? '<br>' + escapeHtml(o.customer_email) : ''}${customerAddressLines(o.customer_address)}</div>
             <div class="card"><strong>Details</strong><br>Date: ${escapeHtml(ukDate(o.created_at))}${o.doc_type === 'invoice' ? '<br>Status: ' + (o.paid_status === 'paid' ? 'Paid' : 'Unpaid') : ''}</div>
           </div>
           ${o.doc_type === 'invoice' && o.paid_status !== 'paid' ? `

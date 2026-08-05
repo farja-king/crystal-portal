@@ -209,7 +209,14 @@ export async function onRequest(context) {
       if (id) {
         const row = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(id).first();
         if (!row) return json({ error: "Not found" }, 404);
-        return json({ ...row, items: JSON.parse(row.items || "[]") });
+        // The order itself only snapshots customer_name/customer_email (set
+        // once, at creation) - the current invoicing address always comes
+        // live from the customer record, so an address edited after the
+        // quote was raised still prints correctly.
+        const customer = row.customer_id
+          ? await db.prepare("SELECT address_1, address_2, city, county, postcode FROM customers WHERE id = ?").bind(row.customer_id).first()
+          : null;
+        return json({ ...row, items: JSON.parse(row.items || "[]"), customer_address: customer || null });
       }
 
       // ?customer_id=X -> a customer's full quote/invoice history, used by
