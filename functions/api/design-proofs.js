@@ -183,6 +183,22 @@ export async function onRequest(context) {
       });
     }
 
+    // GET ?orphaned=1 - design proof rows whose order was deleted before
+    // this file's DELETE handler learned to clean them up too (see
+    // functions/api/orders.js). Those rows/files are otherwise invisible
+    // forever - every other lookup here requires a valid order_id,
+    // customer_id, or token, none of which still resolve to anything once
+    // the order itself is gone. A one-off maintenance list/purge for
+    // exactly that backlog, not something normal day-to-day use ever needs.
+    if (request.method === "GET" && url.searchParams.get("orphaned")) {
+      const { results } = await db.prepare(`
+        SELECT p.id, p.filename, p.version, p.size_bytes, p.created_at, (p.r2_key <> '') AS has_file
+        FROM design_proofs p LEFT JOIN orders o ON o.id = p.order_id
+        WHERE o.id IS NULL ORDER BY p.created_at DESC
+      `).all();
+      return json(results);
+    }
+
     // GET ?order_id=X or ?customer_id=X - version history, newest first, for
     // the internal Quote View panel and the Customer View modal.
     if (request.method === "GET") {
@@ -404,10 +420,27 @@ export async function onRequest(context) {
 
     if (request.method === "DELETE") {
       const data = await request.json();
+
+      // One-off cleanup for the backlog of proofs whose order was deleted
+      // before orders.js learned to clean these up too - see the
+      // ?orphaned=1 GET above. Removes every orphaned row's file from R2
+      // and the row itself, in one go.
+      if (data.action === "purge_orphaned") {
+        const { results: orphaned } = await db.prepare(`
+          SELECT p.id, p.r2_key FROM design_proofs p LEFT JOIN orders o ON o.id = p.order_id WHERE o.id IS NULL
+        `).all();
+        if (!orphaned.length) return json({ success: true, purged: 0 });
+        await Promise.all(orphaned.filter((p) => p.r2_key).map((p) => bucket.delete(p.r2_key).catch(() => {})));
+        const ids = orphaned.map((p) => p.id);
+        const placeholders = ids.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM design_proofs WHERE id IN (${placeholders})`).bind(...ids).run();
+        return json({ success: true, purged: orphaned.length });
+      }
+
       if (!data.id) return json({ error: "id is required" }, 400);
       const row = await db.prepare("SELECT r2_key FROM design_proofs WHERE id = ?").bind(data.id).first();
       if (row) {
-        await bucket.delete(row.r2_key);
+        if (row.r2_key) await bucket.delete(row.r2_key);
         await db.prepare("DELETE FROM design_proofs WHERE id = ?").bind(data.id).run();
       }
       return json({ success: true });

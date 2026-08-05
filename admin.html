@@ -756,6 +756,9 @@
           <button onclick="loadOrders()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
+          <button onclick="cleanUpOrphanedProofs()" title="Design proof files left over from quotes deleted before this cleanup existed - a one-off backlog, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🧹 Clean Up Old Files
+          </button>
         </div>
       </div>
 
@@ -6528,6 +6531,38 @@
         alert(data.removed ? `Removed ${data.removed} image file(s). The record stays on this quote.` : 'No image files to remove for this quote.');
       } catch (e) {
         alert('Could not remove: ' + e.message);
+      }
+    }
+
+    // One-off maintenance for design_proofs rows left over from a quote
+    // deleted before orders.js knew to clean those up too - see the
+    // ?orphaned=1 GET / "purge_orphaned" DELETE in design-proofs.js. This
+    // ONLY ever touches design_proofs (mockup/proof images attached to a
+    // quote, R2 keys under "design-proofs/") - it has no code path anywhere
+    // near design_files (a customer's own permanent DST/EMB/PDF backups,
+    // R2 keys under "customer-designs/", functions/api/design-files.js) -
+    // entirely separate table, separate API, separate storage prefix, never
+    // touched by anything in this function.
+    async function cleanUpOrphanedProofs() {
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL + '?orphaned=1', { cache: 'no-store' });
+        const rows = await res.json();
+        if (!Array.isArray(rows) || !rows.length) { alert('No leftover mockup files found - nothing to clean up.'); return; }
+
+        const totalSize = rows.reduce((sum, r) => sum + (Number(r.size_bytes) || 0), 0);
+        const sizeLabel = totalSize > 1024 * 1024 ? (totalSize / (1024 * 1024)).toFixed(1) + ' MB' : (totalSize / 1024).toFixed(0) + ' KB';
+        const names = rows.slice(0, 10).map((r) => `- ${r.filename} (v${r.version})`).join('\n') + (rows.length > 10 ? `\n...and ${rows.length - 10} more` : '');
+        if (!confirm(`Found ${rows.length} design proof/mockup file(s) left over from deleted quotes (~${sizeLabel}):\n\n${names}\n\nThese are only ever mockup images attached to quotes - never a customer's own design file backups (those are a completely separate system and are not touched here).\n\nDelete them permanently to free up storage?`)) return;
+
+        const delRes = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'purge_orphaned' }),
+        });
+        const delData = await delRes.json();
+        if (!delRes.ok || !delData.success) throw new Error(delData.error || 'Failed');
+        alert(`Cleaned up ${delData.purged} leftover mockup file(s).`);
+      } catch (e) {
+        alert('Could not clean up: ' + e.message);
       }
     }
 
