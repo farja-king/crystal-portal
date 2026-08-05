@@ -1120,6 +1120,19 @@
     </div>
   </div>
 
+  <!-- Reusable single-field text input overlay - see promptModal() - replaces
+       the native browser prompt() (password setup, "send to which email"). -->
+  <div id="prompt-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
+      <p id="prompt-modal-msg" class="text-sm text-slate-800 whitespace-pre-line mb-3"></p>
+      <input id="prompt-modal-input" type="text" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 mb-5" />
+      <div class="flex justify-end gap-3">
+        <button id="prompt-modal-cancel" type="button" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancel</button>
+        <button id="prompt-modal-ok" type="button" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">OK</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Reusable "here's what just happened" confirmation overlay - see
        showActionToast() - a visual confirmation after actions like saving a
        quote that also emails a new design proof version to the customer,
@@ -1751,7 +1764,7 @@
         }
       }
       filterCustomers();
-      if (failed) alert(failed + ' customer(s) could not be deleted.');
+      if (failed) showActionToast('⚠', failed + ' customer(s) could not be deleted.');
     }
 
     // Shows both selected customers side by side so Martin can pick which
@@ -1891,7 +1904,7 @@
 
         closeMergeCustomersDialog();
         filterCustomers();
-        alert(`Merged. ${orders.length} quote(s)/invoice(s) and ${products.length} price list item(s) moved to "${survivor.name}", contact details and Square activity combined.`);
+        showActionToast('✓', `Merged. ${orders.length} quote(s)/invoice(s) and ${products.length} price list item(s) moved to "${survivor.name}", contact details and Square activity combined.`);
       } catch (e) {
         msg.className = 'text-sm mb-3 text-red-600';
         msg.textContent = 'Merge failed partway through: ' + e.message + '. Check both records before retrying - some items may have already moved.';
@@ -2002,7 +2015,7 @@
 
     function exportCustomersCsv() {
       const customers = Object.values(customersById);
-      if (!customers.length) { alert('No customers loaded yet.'); return; }
+      if (!customers.length) { showActionToast('⚠', 'No customers loaded yet.'); return; }
 
       const header = ['Name', 'Company', 'Email', 'Phone', 'Address Line 1', 'Address Line 2', 'City', 'County', 'Postcode', 'Type', 'Discount %', 'Notes', 'Lifetime Spend', 'Order Count', 'Last Visit', 'Square Customer ID'];
       const lines = [header.map(csvField).join(',')];
@@ -2232,7 +2245,7 @@
         cvDesignFiles = cvDesignFiles.filter((f) => f.id !== id);
         renderCustomerDesignFiles();
       } catch (e) {
-        alert('Could not delete: ' + e.message);
+        showActionToast('⚠', 'Could not delete: ' + e.message);
       }
     }
 
@@ -3165,7 +3178,7 @@
       const phone = document.getElementById('edit-phone').value.trim();
 
       if (addingNewCustomer) {
-        if (!name) { alert('Name is required.'); return; }
+        if (!name) { showActionToast('⚠', 'Name is required.'); return; }
         if (!forceCreate) {
           const matches = findPotentialDuplicateCustomers({ name, company, email, phone });
           if (matches.length) { renderCustomerEditDupeWarning(matches); return; }
@@ -3201,7 +3214,7 @@
         closeCustomerEditForm();
         loadCustomers();
       } catch (err) {
-        alert('Failed to save customer: ' + err.message);
+        showActionToast('⚠', 'Failed to save customer: ' + err.message);
       }
     }
 
@@ -3231,7 +3244,7 @@
         if (row) row.remove();
         if (!tbody.children.length) filterCustomers();
       } catch (err) {
-        alert('Failed to delete customer: ' + err.message);
+        showActionToast('⚠', 'Failed to delete customer: ' + err.message);
       }
     }
 
@@ -3280,7 +3293,7 @@
         openCustomerTrash();
         loadCustomers();
       } catch (e) {
-        alert('Could not restore: ' + e.message);
+        showActionToast('⚠', 'Could not restore: ' + e.message);
       }
     }
 
@@ -3293,7 +3306,7 @@
         });
         openCustomerTrash();
       } catch (e) {
-        alert('Could not delete: ' + e.message);
+        showActionToast('⚠', 'Could not delete: ' + e.message);
       }
     }
 
@@ -3307,7 +3320,7 @@
         });
         loadQuotes(); // Refresh view
       } catch (err) {
-        alert('Failed to update status: ' + err.message);
+        showActionToast('⚠', 'Failed to update status: ' + err.message);
       }
     }
 
@@ -3390,7 +3403,7 @@
         closeQuoteEditForm();
         loadQuotes();
       } catch (err) {
-        alert('Failed to save quote: ' + err.message);
+        showActionToast('⚠', 'Failed to save quote: ' + err.message);
       }
     }
 
@@ -3407,7 +3420,7 @@
         });
         loadQuotes();
       } catch (err) {
-        alert('Failed to delete quote: ' + err.message);
+        showActionToast('⚠', 'Failed to delete quote: ' + err.message);
       }
     }
 
@@ -3507,7 +3520,7 @@
         selectedCatalogIds = new Set();
         loadCatalog(catalogOffset);
       } catch (e) {
-        alert('Some products could not be deleted: ' + e.message);
+        showActionToast('⚠', 'Some products could not be deleted: ' + e.message);
       }
     }
 
@@ -3857,7 +3870,7 @@
 
     async function saveServiceRowEdit(id) {
       const title = document.getElementById('svc-edit-title-' + id).value.trim();
-      if (!title) { alert('Service name is required.'); return; }
+      if (!title) { showActionToast('⚠', 'Service name is required.'); return; }
       const cost = Number(document.getElementById('svc-edit-cost-' + id).value) || 0;
       const sellRaw = document.getElementById('svc-edit-sell-' + id).value;
       const sell = sellRaw === '' ? null : Number(sellRaw);
@@ -3880,7 +3893,7 @@
         serviceEditingIds.delete(id);
         loadServices();
       } catch (e) {
-        alert('Could not save: ' + e.message);
+        showActionToast('⚠', 'Could not save: ' + e.message);
       }
     }
 
@@ -3891,7 +3904,7 @@
         await fetch(API_PRODUCTS_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
         loadServices();
       } catch (e) {
-        alert('Could not delete: ' + e.message);
+        showActionToast('⚠', 'Could not delete: ' + e.message);
       }
     }
 
@@ -3935,7 +3948,7 @@
         selectedServiceIds = new Set();
         loadServices();
       } catch (e) {
-        alert('Some services could not be deleted: ' + e.message);
+        showActionToast('⚠', 'Some services could not be deleted: ' + e.message);
       }
     }
 
@@ -4457,7 +4470,7 @@
         loadFacets();
       } catch (e) {
         input.classList.add('border-red-400');
-        alert('Could not save that sell price: ' + e.message);
+        showActionToast('⚠', 'Could not save that sell price: ' + e.message);
       } finally {
         input.disabled = false;
       }
@@ -4494,7 +4507,7 @@
         await loadCatalog(catalogOffset);
         loadFacets();
       } catch (e) {
-        alert('Could not save changes: ' + e.message);
+        showActionToast('⚠', 'Could not save changes: ' + e.message);
       }
     }
 
@@ -4508,7 +4521,7 @@
         await loadCatalog(catalogOffset);
         loadFacets();
       } catch (e) {
-        alert('Could not delete: ' + e.message);
+        showActionToast('⚠', 'Could not delete: ' + e.message);
       }
     }
 
@@ -4532,6 +4545,37 @@
         yesBtn.addEventListener('click', onYes);
         noBtn.addEventListener('click', onNo);
         modal.classList.remove('hidden');
+      });
+    }
+
+    // Text-input counterpart to confirmModal() - resolves to the entered
+    // string, or null if cancelled, same contract as the native prompt()
+    // it replaces (password setup, "send this to which email address").
+    function promptModal(message, defaultValue, inputType) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('prompt-modal');
+        const input = document.getElementById('prompt-modal-input');
+        document.getElementById('prompt-modal-msg').textContent = message;
+        input.type = inputType || 'text';
+        input.value = defaultValue || '';
+        const okBtn = document.getElementById('prompt-modal-ok');
+        const cancelBtn = document.getElementById('prompt-modal-cancel');
+        const cleanup = (result) => {
+          modal.classList.add('hidden');
+          okBtn.removeEventListener('click', onOk);
+          cancelBtn.removeEventListener('click', onCancel);
+          input.removeEventListener('keydown', onKeydown);
+          resolve(result);
+        };
+        const onOk = () => cleanup(input.value);
+        const onCancel = () => cleanup(null);
+        const onKeydown = (e) => { if (e.key === 'Enter') onOk(); if (e.key === 'Escape') onCancel(); };
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        input.addEventListener('keydown', onKeydown);
+        modal.classList.remove('hidden');
+        input.focus();
+        input.select();
       });
     }
 
@@ -4592,7 +4636,7 @@
       const msg = document.getElementById('cat-bulk-msg');
 
       const priceNum = Number(price);
-      if (!isFinite(priceNum) || priceNum < 0) { alert('Enter a valid price'); return; }
+      if (!isFinite(priceNum) || priceNum < 0) { showActionToast('✓', 'Enter a valid price'); return; }
 
       const hasFilter = !!(f.q || f.supplier || f.brand || f.category);
       const scope = hasFilter ? 'the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
@@ -4661,12 +4705,12 @@
     }
 
     async function openPasswordSetup() {
-      const pw = prompt('Choose a password for the portal (at least 8 characters).\n\nYou will need it on every device that opens this site.');
+      const pw = await promptModal('Choose a password for the portal (at least 8 characters).\n\nYou will need it on every device that opens this site.', '', 'password');
       if (pw === null) return;
-      if (pw.length < 8) { alert('That password is too short - it needs at least 8 characters.'); return; }
-      const again = prompt('Type the same password once more to confirm.');
+      if (pw.length < 8) { showActionToast('⚠', 'That password is too short - it needs at least 8 characters.'); return; }
+      const again = await promptModal('Type the same password once more to confirm.', '', 'password');
       if (again === null) return;
-      if (again !== pw) { alert('Those two passwords did not match. Nothing has been changed.'); return; }
+      if (again !== pw) { showActionToast('⚠', 'Those two passwords did not match. Nothing has been changed.'); return; }
 
       try {
         const res = await fetch('/api/auth', {
@@ -4676,10 +4720,10 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
-        alert('Password set. The portal is now protected - keep this password safe, there is no reset link.');
+        showActionToast('✓', 'Password set. The portal is now protected - keep this password safe, there is no reset link.');
         refreshAuthState();
       } catch (e) {
-        alert('Could not set the password: ' + e.message);
+        showActionToast('⚠', 'Could not set the password: ' + e.message);
       }
     }
 
@@ -6071,7 +6115,7 @@
         selectedOrderIds = new Set();
         loadOrders();
       } catch (e) {
-        alert('Some items could not be deleted: ' + e.message);
+        showActionToast('⚠', 'Some items could not be deleted: ' + e.message);
       }
     }
 
@@ -6404,9 +6448,9 @@
         const res = await fetch(API_DESIGN_PROOFS_URL, { method: 'POST', body: form });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
-        alert(`Version ${data.version} attached as a draft on ${o ? (o.invoice_number || o.quote_number) : 'this quote'} - nothing sent yet. Open View or Edit to send it, or use Send now there.`);
+        showActionToast('✓', `Version ${data.version} attached as a draft on ${o ? (o.invoice_number || o.quote_number) : 'this document'} - nothing sent yet. Open View or Edit to send it, or use Send now there.`);
       } catch (e) {
-        alert('Could not attach proof: ' + e.message);
+        showActionToast('⚠', 'Could not attach proof: ' + e.message);
       } finally {
         inputEl.value = '';
         if (label) { label.style.pointerEvents = ''; label.style.opacity = ''; label.firstChild.textContent = originalText; }
@@ -6479,7 +6523,7 @@
         if (!res.ok || !data.success) throw new Error(data.error || 'Delete failed');
         loadOrderDesignProofs(orderId, containerId);
       } catch (e) {
-        alert('Could not delete: ' + e.message);
+        showActionToast('⚠', 'Could not delete: ' + e.message);
       }
     }
 
@@ -6732,9 +6776,9 @@
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
-        alert(data.removed ? `Removed ${data.removed} image file(s). The record stays on this quote.` : 'No image files to remove for this quote.');
+        showActionToast('⚠', data.removed ? `Removed ${data.removed} image file(s). The record stays on this quote.` : 'No image files to remove for this quote.');
       } catch (e) {
-        alert('Could not remove: ' + e.message);
+        showActionToast('⚠', 'Could not remove: ' + e.message);
       }
     }
 
@@ -6751,7 +6795,7 @@
       try {
         const res = await fetch(API_DESIGN_PROOFS_URL + '?orphaned=1', { cache: 'no-store' });
         const rows = await res.json();
-        if (!Array.isArray(rows) || !rows.length) { alert('No leftover mockup files found - nothing to clean up.'); return; }
+        if (!Array.isArray(rows) || !rows.length) { showActionToast('⚠', 'No leftover mockup files found - nothing to clean up.'); return; }
 
         const totalSize = rows.reduce((sum, r) => sum + (Number(r.size_bytes) || 0), 0);
         const sizeLabel = totalSize > 1024 * 1024 ? (totalSize / (1024 * 1024)).toFixed(1) + ' MB' : (totalSize / 1024).toFixed(0) + ' KB';
@@ -6764,9 +6808,9 @@
         });
         const delData = await delRes.json();
         if (!delRes.ok || !delData.success) throw new Error(delData.error || 'Failed');
-        alert(`Cleaned up ${delData.purged} leftover mockup file(s).`);
+        showActionToast('✓', `Cleaned up ${delData.purged} leftover mockup file(s).`);
       } catch (e) {
-        alert('Could not clean up: ' + e.message);
+        showActionToast('⚠', 'Could not clean up: ' + e.message);
       }
     }
 
@@ -6870,9 +6914,9 @@
       const docLabel = o.doc_type === 'invoice' ? 'invoice' : 'quote';
       const docNumber = o.invoice_number || o.quote_number;
       const defaultTo = o.customer_email || '';
-      const to = prompt(`Send this ${docLabel} to which email address?`, defaultTo);
+      const to = await promptModal(`Send this ${docLabel} to which email address?`, defaultTo, 'email');
       if (to === null) return false; // cancelled
-      if (!to.trim()) { alert('An email address is required.'); return false; }
+      if (!to.trim()) { showActionToast('⚠', 'An email address is required.'); return false; }
 
       const btn = document.getElementById('email-order-btn-' + id);
       const originalText = btn ? btn.textContent : '';
@@ -6899,7 +6943,7 @@
         }
         return true;
       } catch (e) {
-        alert('Could not send email: ' + e.message);
+        showActionToast('⚠', 'Could not send email: ' + e.message);
         if (btn) { btn.disabled = false; btn.textContent = originalText; }
         return false;
       }
@@ -7072,7 +7116,7 @@
         }
         loadInbox();
       } catch (e) {
-        alert('Some conversations could not be deleted: ' + e.message);
+        showActionToast('⚠', 'Some conversations could not be deleted: ' + e.message);
       }
     }
 
@@ -7275,7 +7319,7 @@
     function selectInboxComposeToCustomer(customerId) {
       const c = customersById[customerId];
       if (!c) return;
-      if (!c.email) { alert(c.name + ' has no email address on file.'); return; }
+      if (!c.email) { showActionToast('⚠', c.name + ' has no email address on file.'); return; }
       const input = document.getElementById('inbox-compose-to');
       input.value = c.email;
       document.getElementById('inbox-compose-to-results').innerHTML = '';
