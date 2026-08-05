@@ -119,9 +119,14 @@ export class PdfDoc {
       2,
       `<< /Type /Pages /Kids [${pageObjNums.map((n) => `${n} 0 R`).join(" ")}] /Count ${numPages} >>`
     );
-    addObj(3, `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`);
-    addObj(4, `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>`);
-    addObj(5, `<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>`);
+    // /Encoding /WinAnsiEncoding is what makes byte 0xA3 render as "£" and
+    // 0xE9 as "é" - without it a viewer falls back to the font's built-in
+    // StandardEncoding, which doesn't have £ at all and maps 0xE9 to a
+    // different glyph entirely (that's why "Piqué" was coming out as
+    // "PiquØ" and £ as a blank/wrong character before this).
+    addObj(3, `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>`);
+    addObj(4, `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>`);
+    addObj(5, `<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>`);
 
     for (let i = 0; i < numPages; i++) {
       addObj(

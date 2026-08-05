@@ -9,7 +9,7 @@ import { PdfDoc, MARGIN, PAGE_WIDTH } from "./pdf.js";
 const METHOD_LABELS = { embroidery: "Embroidery", dtf: "DTF", sublimation: "Sublimation", other: "Other" };
 const PLACEMENT_LABELS = { left_chest: "Left chest", right_chest: "Right chest", sleeve: "Sleeve", back: "Back", name: "Name", other: "Other" };
 
-const money = (n) => "GBP " + Number(n || 0).toFixed(2);
+const money = (n) => "£" + Number(n || 0).toFixed(2);
 
 function ukDate(raw) {
   if (!raw) return "";
