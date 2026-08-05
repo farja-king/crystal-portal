@@ -201,6 +201,15 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // due_date - the date an invoice is due by, picked by hand in the
+    // builder (not auto-calculated from a payment-terms setting, since
+    // Martin sets terms per-customer/per-job). Quotes leave it blank; it's
+    // only ever shown/used once something becomes an invoice.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN due_date TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
@@ -257,8 +266,8 @@ export async function onRequest(context) {
       await db.prepare(`
         INSERT INTO orders (
           id, doc_type, quote_number, customer_id, customer_name, customer_email,
-          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, notes
-        ) VALUES (?, 'quote', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, notes, due_date
+        ) VALUES (?, 'quote', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         quote_number,
@@ -272,7 +281,8 @@ export async function onRequest(context) {
         priced.discount_amount,
         priced.total,
         data.status || "draft",
-        data.notes || ""
+        data.notes || "",
+        data.due_date || ""
       ).run();
 
       return json({ success: true, id, quote_number, ...priced });
@@ -335,7 +345,7 @@ export async function onRequest(context) {
         UPDATE orders SET
           customer_id = ?, customer_name = ?, customer_email = ?,
           items = ?, subtotal = ?, discount_pct = ?, discount_flat = ?, discount_amount = ?, total = ?,
-          notes = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+          notes = ?, status = ?, due_date = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         data.customer_id ?? existing.customer_id,
@@ -349,6 +359,7 @@ export async function onRequest(context) {
         priced.total,
         data.notes ?? existing.notes,
         data.status !== undefined ? String(data.status).slice(0, 30) : existing.status,
+        data.due_date ?? existing.due_date,
         data.id
       ).run();
 

@@ -897,6 +897,11 @@
           </button>
         </div>
 
+        <label class="text-sm block mb-4 max-w-xs">
+          <span class="block font-medium text-slate-700 mb-1">Due by</span>
+          <input type="date" id="ord-due-date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+        </label>
+
         <label class="text-sm block mb-4">
           <span class="block font-medium text-slate-700 mb-1">Notes</span>
           <textarea id="ord-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" placeholder="Artwork notes, turnaround, special instructions…"></textarea>
@@ -5673,6 +5678,7 @@
         discount_pct: Number(document.getElementById('ord-discount').value) || 0,
         discount_flat: Number(document.getElementById('ord-discount-flat').value) || 0,
         notes: document.getElementById('ord-notes').value,
+        due_date: document.getElementById('ord-due-date').value,
         items: orderLines.map((l) => ({
           source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
           title: l.title, colour: l.colour, size: l.size, description: l.description,
@@ -5710,6 +5716,7 @@
           msg.textContent = 'Saved as ' + data.quote_number + '.';
           orderLines = [];
           document.getElementById('ord-notes').value = '';
+          document.getElementById('ord-due-date').value = '';
           document.getElementById('ord-customer').value = '';
           renderOrderCustomerPicker();
           document.getElementById('ord-discount').value = 0;
@@ -5792,6 +5799,7 @@
       document.getElementById('ord-discount').value = o.discount_pct || 0;
       document.getElementById('ord-discount-flat').value = o.discount_flat || 0;
       document.getElementById('ord-notes').value = o.notes || '';
+      document.getElementById('ord-due-date').value = o.due_date || '';
       document.getElementById('ord-status').value = o.status || 'draft';
       document.getElementById('ord-status-field').classList.remove('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Update ' + (o.doc_type === 'invoice' ? 'Invoice' : 'Quote');
@@ -5836,6 +5844,7 @@
       document.getElementById('ord-discount').value = 0;
       document.getElementById('ord-discount-flat').value = 0;
       document.getElementById('ord-notes').value = '';
+      document.getElementById('ord-due-date').value = '';
       orderCustomerItems = [];
       orderCustomerName = '';
       orderLineOpenVariantPicker = null;
@@ -6624,11 +6633,11 @@
         </style></head>
         <body>
           <h1>Crystal Custom Embroidery</h1>
-          <div class="muted">26 Grove Street, Raunds, NN9 6DS, United Kingdom<br>crystal.embroidery@icloud.com | 07530 576197</div>
+          <div class="muted">26 Grove Street, Raunds, NN9 6DS<br>hello@embroidery.click | 07530 576197</div>
           <div class="muted" style="margin-top:8px;">${docLabel} - ${escapeHtml(docNumber)}${o.doc_type === 'invoice' ? ' (from ' + escapeHtml(o.quote_number) + ')' : ''}</div>
           <div class="grid">
             <div class="card"><strong>Customer</strong><br>${escapeHtml(o.customer_name)}${o.customer_email ? '<br>' + escapeHtml(o.customer_email) : ''}${customerAddressLines(o.customer_address)}</div>
-            <div class="card"><strong>Details</strong><br>Date: ${escapeHtml(ukDate(o.created_at))}${o.doc_type === 'invoice' ? '<br>Status: ' + (o.paid_status === 'paid' ? 'Paid' : 'Unpaid') : ''}</div>
+            <div class="card"><strong>Details</strong><br>Date: ${escapeHtml(ukDate(o.created_at))}${o.doc_type === 'invoice' ? '<br>Status: ' + (o.paid_status === 'paid' ? 'Paid' : 'Unpaid') : ''}${o.doc_type === 'invoice' && o.due_date ? '<br>Due by: ' + escapeHtml(ukDate(o.due_date)) : ''}</div>
           </div>
           ${o.doc_type === 'invoice' && o.paid_status !== 'paid' ? `
           <div class="card" style="margin-top:16px;">
