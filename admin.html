@@ -6517,6 +6517,13 @@
           </div>
         </div>
         <div class="py-4 border-b border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs text-slate-500 font-medium">Production Tracker <span class="font-normal text-slate-400">(where this job actually is, separate from payment/quote status)</span></p>
+            <button type="button" onclick="addProductionStep('${escapeAttr(id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">+ Add step</button>
+          </div>
+          <div id="production-tracker">Loading…</div>
+        </div>
+        <div class="py-4 border-b border-slate-200">
           <p class="text-xs text-slate-500 font-medium mb-2">Items</p>
           ${itemsHtml}
         </div>
@@ -6556,6 +6563,7 @@
       `;
       loadOrderCommHistory(id);
       loadOrderDesignProofs(id);
+      loadProductionSteps(id);
 
       actions.innerHTML = `
         <button onclick="editOrderInBuilder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
@@ -6594,6 +6602,184 @@
           </div>`).join('');
       } catch (e) {
         if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load communication history.</p>';
+      }
+    }
+
+    const API_PRODUCTION_STEPS_URL = '/api/production-steps';
+
+    // Visual per-order production tracker - separate from payment/quote
+    // status, this is "where the physical job actually is" (see
+    // functions/api/production-steps.js, which seeds a default 5-step
+    // pipeline the first time an order's tracker is opened). Rendered as a
+    // vertical stepper: done steps get a green check, the first still-
+    // pending step is highlighted as "current", everything after it is
+    // greyed out as "still to come".
+    async function loadProductionSteps(orderId) {
+      const el = document.getElementById('production-tracker');
+      if (!el) return;
+      try {
+        const res = await fetch(API_PRODUCTION_STEPS_URL + '?order_id=' + encodeURIComponent(orderId), { cache: 'no-store' });
+        const steps = await res.json();
+        if (!el.isConnected) return;
+        if (!Array.isArray(steps)) throw new Error(steps.error || 'Could not load');
+        renderProductionSteps(orderId, steps);
+      } catch (e) {
+        if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load the production tracker.</p>';
+      }
+    }
+
+    function renderProductionSteps(orderId, steps) {
+      const el = document.getElementById('production-tracker');
+      if (!el) return;
+      if (!steps.length) {
+        el.innerHTML = '<p class="text-sm text-slate-400">No steps yet.</p>';
+        return;
+      }
+      const firstPendingIdx = steps.findIndex((s) => s.status !== 'done');
+
+      el.innerHTML = steps.map((s, idx) => {
+        const isDone = s.status === 'done';
+        const isCurrent = !isDone && idx === firstPendingIdx;
+        const marker = isDone
+          ? '<div class="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold shrink-0">✓</div>'
+          : isCurrent
+          ? '<div class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold shrink-0">●</div>'
+          : '<div class="w-6 h-6 rounded-full border-2 border-slate-300 shrink-0"></div>';
+        const titleCls = isDone ? 'text-slate-400 line-through' : isCurrent ? 'text-slate-900 font-semibold' : 'text-slate-500';
+        const imagesHtml = (s.images || []).map((img) => `
+          <div class="relative inline-block mr-2 mb-2">
+            <a href="${API_PRODUCTION_STEPS_URL}?view=${escapeAttr(img.id)}" target="_blank"><img src="${API_PRODUCTION_STEPS_URL}?view=${escapeAttr(img.id)}" class="w-14 h-14 object-cover rounded-lg border border-slate-200" /></a>
+            <button type="button" onclick="deleteStepImage('${escapeAttr(img.id)}', '${escapeAttr(orderId)}')" title="Remove photo" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-600 text-white rounded-full text-[10px] leading-none flex items-center justify-center">✕</button>
+          </div>`).join('');
+
+        return `
+        <div class="flex gap-3 ${idx < steps.length - 1 ? 'pb-4' : ''}">
+          <div class="flex flex-col items-center">
+            ${marker}
+            ${idx < steps.length - 1 ? '<div class="w-0.5 flex-1 bg-slate-200 mt-1"></div>' : ''}
+          </div>
+          <div class="flex-1 min-w-0 pb-1">
+            <div class="flex items-center justify-between gap-2 flex-wrap">
+              <input type="text" value="${escapeAttr(s.title)}" onblur="saveStepTitle('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" class="text-sm bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 ${titleCls}" />
+              <div class="flex items-center gap-1 shrink-0">
+                <button type="button" onclick="toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone})" title="${isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">${isDone ? '↺' : '✓'}</button>
+                <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'up')" title="Move up" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▲</button>
+                <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'down')" title="Move down" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▼</button>
+                <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold cursor-pointer">
+                  + Photo
+                  <input type="file" accept="image/*" class="hidden" onchange="uploadStepImage('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this)" />
+                </label>
+                <button type="button" onclick="deleteProductionStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}')" title="Delete step" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-2 py-1 rounded font-semibold">🗑</button>
+              </div>
+            </div>
+            <textarea placeholder="Notes…" onblur="saveStepNotes('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" rows="1" class="w-full text-xs text-slate-600 bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 mt-1 resize-y">${escapeHtml(s.notes || '')}</textarea>
+            ${imagesHtml ? `<div class="mt-1">${imagesHtml}</div>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    async function addProductionStep(orderId) {
+      const title = await promptModal('Name for the new step:', '', 'text');
+      if (!title) return;
+      try {
+        const res = await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: orderId, title }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        loadProductionSteps(orderId);
+      } catch (e) {
+        showActionToast('⚠', 'Could not add step: ' + e.message);
+      }
+    }
+
+    async function toggleStepDone(id, orderId, wasDone) {
+      try {
+        await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, status: wasDone ? 'pending' : 'done' }),
+        });
+        loadProductionSteps(orderId);
+      } catch (e) {
+        showActionToast('⚠', 'Could not update step: ' + e.message);
+      }
+    }
+
+    async function moveStep(id, orderId, direction) {
+      try {
+        await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, action: 'move', direction }),
+        });
+        loadProductionSteps(orderId);
+      } catch (e) {
+        showActionToast('⚠', 'Could not reorder: ' + e.message);
+      }
+    }
+
+    async function saveStepTitle(id, orderId, title) {
+      try {
+        await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, title }),
+        });
+      } catch (e) {
+        showActionToast('⚠', 'Could not save: ' + e.message);
+      }
+    }
+
+    async function saveStepNotes(id, orderId, notes) {
+      try {
+        await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, notes }),
+        });
+      } catch (e) {
+        showActionToast('⚠', 'Could not save note: ' + e.message);
+      }
+    }
+
+    async function deleteProductionStep(id, orderId) {
+      if (!(await confirmModal('Delete this step and any photos attached to it?'))) return;
+      try {
+        await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        });
+        loadProductionSteps(orderId);
+      } catch (e) {
+        showActionToast('⚠', 'Could not delete step: ' + e.message);
+      }
+    }
+
+    async function uploadStepImage(stepId, orderId, inputEl) {
+      const file = inputEl.files[0];
+      if (!file) return;
+      const form = new FormData();
+      form.append('step_id', stepId);
+      form.append('order_id', orderId);
+      form.append('file', file);
+      try {
+        const res = await fetch(API_PRODUCTION_STEPS_URL, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
+        loadProductionSteps(orderId);
+      } catch (e) {
+        showActionToast('⚠', 'Could not attach photo: ' + e.message);
+      }
+    }
+
+    async function deleteStepImage(imageId, orderId) {
+      try {
+        await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_id: imageId }),
+        });
+        loadProductionSteps(orderId);
+      } catch (e) {
+        showActionToast('⚠', 'Could not remove photo: ' + e.message);
       }
     }
 
