@@ -3530,6 +3530,7 @@
         case 'view-customer': viewCustomerHistory(id); break;
         case 'view-order': viewOrder(id); break;
         case 'edit-order': editOrderInBuilder(id); break;
+        case 'reorder-order': reorderOrder(id); break;
       }
     });
 
@@ -6036,14 +6037,11 @@
     // Loads an existing quote/invoice's items into the same builder used to
     // create new ones, so every field (garments, colour/size breakdown,
     // decorations, qty) is actually editable - not just customer/status/notes.
-    function editOrderInBuilder(id) {
-      const o = ordersById[id];
-      if (!o) return;
-      closeOrderPanel();
-      openOrderBuilderModal();
-      editingExistingOrderId = id;
-
-      orderLines = (o.items || []).map((item) => {
+    // Shared by editOrderInBuilder (loading an existing quote/invoice back
+    // into the builder) and reorderOrder (prefilling a brand-new one from a
+    // past order) - both need the exact same items->builder-lines shape.
+    function mapOrderItemsToBuilderLines(items) {
+      return (items || []).map((item) => {
         const breakdown = (item.breakdown || []).map((b) => ({
           colour: b.colour || '', size: b.size || '', qty: b.qty || 1,
           decorations: (b.decorations || []).map((d) => ({
@@ -6083,6 +6081,16 @@
           customer_item: !!item.customer_item,
         };
       });
+    }
+
+    function editOrderInBuilder(id) {
+      const o = ordersById[id];
+      if (!o) return;
+      closeOrderPanel();
+      openOrderBuilderModal();
+      editingExistingOrderId = id;
+
+      orderLines = mapOrderItemsToBuilderLines(o.items);
 
       const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
       document.getElementById('ord-builder-heading').textContent = 'Editing ' + docNumber;
@@ -6127,6 +6135,52 @@
       });
 
       document.getElementById('ord-builder').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // Prefills a brand-new quote/invoice from a past one - same customer and
+    // garment lines, fully editable (add/remove/change anything) before
+    // saving, and saved as its own new document rather than overwriting the
+    // original (contrast with editOrderInBuilder, which updates in place).
+    function reorderOrder(id) {
+      const o = ordersById[id];
+      if (!o) return;
+      closeOrderPanel();
+      openOrderBuilderModal();
+      editingExistingOrderId = null;
+
+      orderLines = mapOrderItemsToBuilderLines(o.items);
+
+      document.getElementById('ord-doctype-toggle').classList.remove('hidden');
+      document.getElementById('ord-customer').value = o.customer_id || '';
+      renderOrderCustomerPicker();
+      onOrderCustomerChange();
+      document.getElementById('ord-discount').value = o.discount_pct || 0;
+      document.getElementById('ord-discount-flat').value = o.discount_flat || 0;
+      // Notes and due-by are specific to the original job, not carried
+      // forward onto a new one.
+      document.getElementById('ord-notes').value = '';
+      document.getElementById('ord-due-date').value = '';
+      document.getElementById('ord-status-field').classList.add('hidden');
+      document.getElementById('ord-cancel-edit-btn').textContent = 'Cancel';
+      document.getElementById('ord-save-msg').textContent = '';
+      setNewOrderDocType(o.doc_type === 'invoice' ? 'invoice' : 'quote');
+      document.getElementById('ord-builder-heading').textContent = 'Reorder for ' + (o.customer_name || 'customer');
+
+      // No id yet (this is a brand-new, unsaved document) - same as the
+      // ordinary New Quote/Invoice flow, a proof can only be attached after
+      // the first save.
+      document.getElementById('ord-design-proofs-section').classList.add('hidden');
+      const proofUploadStatus = document.getElementById('ord-proof-upload-status');
+      proofUploadStatus.textContent = '';
+      proofUploadStatus.classList.add('hidden');
+      document.getElementById('ord-proof-file-input').value = '';
+
+      renderOrderLines();
+      orderLines.forEach((line, idx) => {
+        if (line.source === 'catalog' && line.supplier_code) {
+          loadOrderLineVariantOptions(idx, line.supplier_code);
+        }
+      });
     }
 
     function cancelOrderEdit() {
@@ -6192,6 +6246,7 @@
           }
           actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold">View</button>`);
           actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
+          actions.push(`<button data-action="reorder-order" data-id="${escapeAttr(o.id)}" title="Start a new quote/invoice prefilled with this customer and these garments - fully editable before saving" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Reorder</button>`);
           actions.push(`<label title="Attach a design proof - saved as a draft, nothing sent until you email/save this quote or hit Send now" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold cursor-pointer">
             Add Image
             <input type="file" accept="image/*,.pdf" class="hidden" onchange="quickUploadDesignProof('${escapeAttr(o.id)}', this)" />
@@ -6405,6 +6460,9 @@
       actions.innerHTML = `
         <button onclick="editOrderInBuilder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
           Edit
+        </button>
+        <button onclick="reorderOrder('${escapeAttr(id)}')" title="Start a new quote/invoice prefilled with this customer and these garments - fully editable before saving" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">
+          Reorder
         </button>
         <button onclick="closeOrderPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">
           Close
