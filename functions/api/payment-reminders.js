@@ -12,6 +12,8 @@
 // D1's CURRENT_TIMESTAMP is "YYYY-MM-DD HH:MM:SS" (UTC, space-separated) -
 // not reliably parsed as UTC by `new Date(...)` across runtimes, so
 // normalize to a real ISO string first.
+import { emailShell } from "../_lib/email-template.js";
+
 function parseSqlTimestamp(s) {
   if (!s) return NaN;
   return new Date(s.includes("T") ? s : s.replace(" ", "T") + "Z").getTime();
@@ -100,16 +102,14 @@ export async function onRequest(context) {
       const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
       const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
       const subject = `Payment reminder: ${order.invoice_number}`;
-      const html = `
-        <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
-          <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
-          <div style="color:#64748b;margin-bottom:20px;">Payment reminder for Invoice ${escapeHtml(order.invoice_number)}</div>
-          <p>Hi ${escapeHtml(order.customer_name)},</p>
+      const html = emailShell({
+        heading: "Payment reminder",
+        bodyHtml: `<p>Hi ${escapeHtml(order.customer_name)},</p>
           <p>Just a friendly reminder that invoice <strong>${escapeHtml(order.invoice_number)}</strong> for <strong>${money(order.total)}</strong>
              ${order.due_date ? `was due on ${escapeHtml(order.due_date)}` : "is now overdue"} and still shows as unpaid on our records.</p>
-          <p>If you've already paid this, please let us know so we can update it - otherwise we'd appreciate payment at your earliest convenience.</p>
-          <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
-        </div>`;
+          <p>If you've already paid this, please let us know so we can update it - otherwise we'd appreciate payment at your earliest convenience.</p>`,
+        ctaColor: "#d97706",
+      });
 
       try {
         const res = await fetch("https://api.resend.com/emails", {

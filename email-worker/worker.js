@@ -22,10 +22,21 @@
 //      limited across everyone hitting it from Cloudflare's IPs, not
 //      practical to rely on without a paid plan)
 //
-// Also runs the daily payment-reminder chase (see scheduled() below) - the
-// Pages project itself (functions/api/payment-reminders.js) has no
-// cron/scheduler of its own, so this Worker's Cron Trigger is what actually
-// fires it once a day.
+// Also runs two scheduled sweeps against the portal (see scheduled() below) -
+// the Pages project itself has no cron/scheduler of its own, so this
+// Worker's Cron Trigger is what actually fires them:
+//   - functions/api/payment-reminders.js action:'run' - the daily overdue-
+//     invoice chase. Fine to check once a day.
+//   - functions/api/review-requests.js action:'run' - sends the "hope you
+//     enjoyed it, please leave a review" email once its scheduled time
+//     (chosen via the portal's "Confirmed Pickup?" popup - Now/in a couple
+//     hours/tomorrow midday/custom) arrives. A "couple hours" or "midday"
+//     choice only lands close to the actual time if this cron runs more
+//     often than once a day - IMPORTANT: set the Cron Trigger to something
+//     like every 15-30 minutes (e.g. "*/15 * * * *"), not once daily, or
+//     review requests will sit for up to a day before going out. Running
+//     the payment-reminder check that often too is harmless - it already
+//     only ever sends when an invoice is actually due for a nudge.
 //
 // Bindings this Worker needs (Settings -> Variables and Bindings, on the
 // Worker itself - separate from the Pages project's bindings):
@@ -40,11 +51,10 @@
 //   Text var      PORTAL_ORIGIN  -> e.g. "https://portal.embroidery.click"
 //   Secret        PORTAL_API_KEY -> generated from the portal's "API Key"
 //                                    button (admin.html), lets this Worker
-//                                    call payment-reminders.js without the
-//                                    portal password - see
-//                                    functions/_middleware.js's X-API-Key check
-// Plus a Cron Trigger (Settings -> Triggers) for the schedule itself, e.g.
-// "0 8 * * *" for once daily at 8am.
+//                                    call the portal without the portal
+//                                    password - see functions/_middleware.js's
+//                                    X-API-Key check
+// Plus a Cron Trigger (Settings -> Triggers) - see the frequency note above.
 
 export default {
   async email(message, env, ctx) {
@@ -223,24 +233,28 @@ export default {
   // around to type one in - see functions/_middleware.js.
   async scheduled(event, env, ctx) {
     if (!env.PORTAL_ORIGIN || !env.PORTAL_API_KEY) {
-      console.log("Skipping payment-reminder run: PORTAL_ORIGIN or PORTAL_API_KEY isn't set on this Worker.");
+      console.log("Skipping scheduled sweeps: PORTAL_ORIGIN or PORTAL_API_KEY isn't set on this Worker.");
       return;
     }
-    ctx.waitUntil(
-      (async () => {
-        try {
-          const res = await fetch(`${env.PORTAL_ORIGIN}/api/payment-reminders`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-API-Key": env.PORTAL_API_KEY },
-            body: JSON.stringify({ action: "run" }),
-          });
-          const bodyText = await res.text();
-          console.log(`Payment reminder run: ${res.status} ${res.statusText} - ${bodyText}`);
-        } catch (e) {
-          console.log(`Payment reminder run failed: ${e.message}`);
-        }
-      })()
-    );
+
+    async function sweep(path) {
+      try {
+        const res = await fetch(`${env.PORTAL_ORIGIN}${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-API-Key": env.PORTAL_API_KEY },
+          body: JSON.stringify({ action: "run" }),
+        });
+        const bodyText = await res.text();
+        console.log(`${path} run: ${res.status} ${res.statusText} - ${bodyText}`);
+      } catch (e) {
+        console.log(`${path} run failed: ${e.message}`);
+      }
+    }
+
+    ctx.waitUntil(Promise.all([
+      sweep("/api/payment-reminders"),
+      sweep("/api/review-requests"),
+    ]));
   },
 };
 

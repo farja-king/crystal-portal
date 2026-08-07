@@ -4,6 +4,8 @@
 // steps (seeded with a sensible default the first time it's opened, then
 // freely editable - add/rename/reorder/delete), each with optional notes
 // and photos.
+import { emailShell, googleMapsDirectionsUrl } from "../_lib/email-template.js";
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -31,6 +33,11 @@ export async function onRequest(context) {
     { title: "In production", notify: false },
     { title: "Quality check", notify: false },
     { title: "Ready for collection/dispatch", notify: true },
+    // Not notify-enabled itself - the customer-facing "hope you enjoyed it,
+    // please leave a review" follow-up is a separate, schedulable flow (the
+    // "Confirmed Pickup?" checkbox on the main list - see
+    // functions/api/review-requests.js), not this step's own tick.
+    { title: "Order collected", notify: false },
   ];
 
   if (!bucket) {
@@ -54,16 +61,51 @@ export async function onRequest(context) {
     const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
     const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
     const docNumber = order.doc_type === "invoice" ? order.invoice_number : order.quote_number;
-    const subject = `Order update: ${stepTitle} - ${docNumber}`;
-    const html = `
-      <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
-        <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
-        <div style="color:#64748b;margin-bottom:20px;">Update on your order ${escapeHtml(docNumber)}</div>
-        <p>Hi ${escapeHtml(order.customer_name)},</p>
-        <p>Good news - your order has reached the next stage: <strong>${escapeHtml(stepTitle)}</strong>.</p>
-        <p>We'll keep you updated as it progresses.</p>
-        <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
-      </div>`;
+    const name = escapeHtml(order.customer_name);
+    const lowerTitle = stepTitle.toLowerCase();
+
+    // Genuinely different wording per milestone rather than one generic
+    // "reached the next stage" line for everything - a step whose title
+    // wasn't anticipated (a custom one Martin typed in) still gets a
+    // sensible fallback.
+    let subject, heading, bodyHtml, ctaText, ctaUrl;
+    if (/collection|dispatch|ready/.test(lowerTitle)) {
+      subject = `Your order's ready! - ${docNumber}`;
+      heading = "Your collection's ready! 🎉";
+      bodyHtml = `<p>Hi ${name},</p>
+        <p>Great news - order <strong>${escapeHtml(docNumber)}</strong> is finished and ready for you to collect whenever suits.</p>
+        <p>We're at <strong>26 Grove Street, Raunds, NN9 6DS</strong> - tap below for directions if you need them.</p>`;
+      ctaText = "Get Directions";
+      ctaUrl = googleMapsDirectionsUrl();
+    } else if (/artwork/.test(lowerTitle)) {
+      subject = `Artwork approved - ${docNumber}`;
+      heading = "Your artwork's approved ✓";
+      bodyHtml = `<p>Hi ${name},</p>
+        <p>Just a quick update - the artwork for order <strong>${escapeHtml(docNumber)}</strong> has been approved and we're moving ahead with production.</p>
+        <p>We'll let you know as it progresses.</p>`;
+    } else if (/order|garment/.test(lowerTitle)) {
+      subject = `Garments ordered - ${docNumber}`;
+      heading = "Your garments are on order";
+      bodyHtml = `<p>Hi ${name},</p>
+        <p>Order <strong>${escapeHtml(docNumber)}</strong> has moved forward - the garments have now been ordered in ahead of decoration.</p>`;
+    } else if (/production/.test(lowerTitle)) {
+      subject = `Now in production - ${docNumber}`;
+      heading = "Your order's in production";
+      bodyHtml = `<p>Hi ${name},</p>
+        <p>Order <strong>${escapeHtml(docNumber)}</strong> is now being decorated on the machines. Not long to go!</p>`;
+    } else if (/quality|check/.test(lowerTitle)) {
+      subject = `Quality checked - ${docNumber}`;
+      heading = "Passed quality check ✓";
+      bodyHtml = `<p>Hi ${name},</p>
+        <p>Order <strong>${escapeHtml(docNumber)}</strong> has been through our quality check and is looking great.</p>`;
+    } else {
+      subject = `Order update: ${stepTitle} - ${docNumber}`;
+      heading = "An update on your order";
+      bodyHtml = `<p>Hi ${name},</p>
+        <p>Order <strong>${escapeHtml(docNumber)}</strong> has reached the next stage: <strong>${escapeHtml(stepTitle)}</strong>.</p>
+        <p>We'll keep you updated as it progresses.</p>`;
+    }
+    const html = emailShell({ heading, bodyHtml, ctaText, ctaUrl });
 
     try {
       const res = await fetch("https://api.resend.com/emails", {

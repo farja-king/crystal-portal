@@ -854,6 +854,25 @@
         </div>
       </div>
 
+      <!-- When should the "hope you enjoyed it, please leave a review" email
+           go out - see onConfirmedPickupChange/schedulePickupReview and
+           functions/api/review-requests.js. -->
+      <div id="pickup-schedule-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+          <h3 class="text-lg font-bold text-slate-900 mb-1">When should we send the review request?</h3>
+          <p class="text-sm text-slate-500 mb-4">Asks the customer to leave a Google review, once they've picked up their order.</p>
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <button type="button" onclick="schedulePickupReview('now')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-lg text-sm font-semibold shadow-sm">Now</button>
+            <button type="button" onclick="schedulePickupReview('2h')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-lg text-sm font-semibold shadow-sm">In a couple hours</button>
+            <button type="button" onclick="schedulePickupReview('tomorrow-midday')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-lg text-sm font-semibold shadow-sm">Tomorrow midday</button>
+            <button type="button" onclick="schedulePickupReview('custom')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-3 rounded-lg text-sm font-semibold shadow-sm">Custom…</button>
+          </div>
+          <button type="button" onclick="closePickupScheduleModal()" class="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Cancel
+          </button>
+        </div>
+      </div>
+
       <!-- Offered right after the first save of a brand-new quote - that's
            the first moment it actually has an id to attach a proof to (see
            saveOrder's POST-success branch / openNewQuoteProofModal). "Save
@@ -6309,6 +6328,76 @@
       }
     }
 
+    // "Confirmed Pickup?" checkbox on the main list - unticking is just a
+    // correction (no popup needed), ticking asks when to send the
+    // "hope you enjoyed it" review-request email (see review-requests.js).
+    let pickupScheduleOrderId = null;
+
+    async function onConfirmedPickupChange(id, checked) {
+      if (!checked) {
+        try {
+          await fetch('/api/review-requests', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'unconfirm_pickup', id }),
+          });
+          loadOrders();
+        } catch (e) {
+          showActionToast('⚠', 'Could not update: ' + e.message);
+        }
+        return;
+      }
+      pickupScheduleOrderId = id;
+      document.getElementById('pickup-schedule-modal').classList.remove('hidden');
+    }
+
+    function closePickupScheduleModal() {
+      pickupScheduleOrderId = null;
+      document.getElementById('pickup-schedule-modal').classList.add('hidden');
+      loadOrders(); // nothing was saved - reload so the checkbox reverts to unticked
+    }
+
+    async function schedulePickupReview(preset) {
+      const id = pickupScheduleOrderId;
+      if (!id) return;
+      const now = new Date();
+      let sendAt;
+      if (preset === 'now') {
+        sendAt = now;
+      } else if (preset === '2h') {
+        sendAt = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+      } else if (preset === 'tomorrow-midday') {
+        sendAt = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 12, 0, 0);
+      } else if (preset === 'custom') {
+        const val = await promptModal('Pick a date & time to send the review-request email:', '', 'datetime-local');
+        if (!val) return; // leave the picker open rather than silently cancelling
+        sendAt = new Date(val);
+        if (isNaN(sendAt.getTime())) { showActionToast('⚠', 'That date/time was not valid.'); return; }
+      } else {
+        return;
+      }
+
+      document.getElementById('pickup-schedule-modal').classList.add('hidden');
+      try {
+        const res = await fetch('/api/review-requests', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'confirm_pickup', id, send_at: sendAt.toISOString() }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        if (data.sent_now) {
+          showActionToast(data.email && data.email.sent ? '📧' : '⚠',
+            data.email && data.email.sent ? 'Review request emailed now.' : ('Could not email now: ' + (data.email && data.email.reason)));
+        } else {
+          showActionToast('🕐', 'Review request scheduled for ' + sendAt.toLocaleString('en-GB'));
+        }
+      } catch (e) {
+        showActionToast('⚠', 'Could not schedule: ' + e.message);
+      } finally {
+        pickupScheduleOrderId = null;
+        loadOrders();
+      }
+    }
+
     async function loadOrders() {
       ordersLoaded = true;
       loadReminderDays();
@@ -6392,7 +6481,13 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}${productionBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}</td>
+              <td class="p-4">${statusBadge}${productionBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}
+                <label class="flex items-center gap-1 text-xs text-slate-600 mt-1.5" title="Ticking this schedules a 'hope you enjoyed it, please leave a review' email">
+                  <input type="checkbox" ${o.pickup_confirmed_at ? 'checked' : ''} onchange="onConfirmedPickupChange('${escapeAttr(o.id)}', this.checked)" class="rounded border-slate-300" />
+                  Confirmed Pickup?
+                </label>
+                ${o.review_email_sent_at ? `<span class="block text-xs text-emerald-600 mt-0.5">Review request sent ${escapeHtml(ukDate(o.review_email_sent_at))}</span>` : (o.review_email_scheduled_at ? `<span class="block text-xs text-sky-600 mt-0.5">Review request due ${escapeHtml(new Date(o.review_email_scheduled_at).toLocaleString('en-GB'))}</span>` : '')}
+              </td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
