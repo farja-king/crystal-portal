@@ -6015,6 +6015,10 @@
           orderLineAddFormOpen = new Set();
           renderOrderLines();
           setNewOrderDocType('quote');
+          // Close straight away rather than leaving it open behind the
+          // proof-attach popup below - both are centred modals at the same
+          // z-index, so leaving this one open just covers the next step.
+          closeOrderBuilderModal();
 
           // First save of a brand-new quote/invoice is the first moment it
           // actually has an id to attach a proof to - offer it right here
