@@ -43,6 +43,9 @@
             <span id="inbox-unread-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
           </button>
         </div>
+        <button id="api-key-btn" onclick="generateApiKey()" title="Generate/reveal an API key - lets the crystal-inbox-worker call the portal's payment-reminder cron endpoint without the portal password" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
+          API Key
+        </button>
         <button id="logout-btn" onclick="logout()" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
           Sign out
         </button>
@@ -769,6 +772,18 @@
             🧹 Clean Up Old Files
           </button>
         </div>
+      </div>
+
+      <!-- Auto-chases unpaid invoices by email once their due date is this
+           many days past - repeats every N days until marked Paid. The
+           actual daily send happens outside the portal (see
+           email-worker/worker.js's cron), this just controls the N. -->
+      <div class="flex items-center gap-2 mb-4 text-sm">
+        <span class="text-slate-600">Chase unpaid invoices</span>
+        <input id="reminder-days" type="number" min="1" max="90" class="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-slate-900" />
+        <span class="text-slate-600">days after they're due, repeating until paid</span>
+        <button onclick="saveReminderDays()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">Save</button>
+        <span id="reminder-days-msg" class="text-xs"></span>
       </div>
 
       <!-- Quotes nobody ever responded to, tucked out of the way without
@@ -4824,7 +4839,31 @@
         const data = await res.json();
         document.getElementById('auth-banner').classList.toggle('hidden', !!data.configured);
         document.getElementById('logout-btn').classList.toggle('hidden', !data.configured);
+        document.getElementById('api-key-btn').classList.toggle('hidden', !data.configured);
       } catch (e) {}
+    }
+
+    // Mints (or re-mints, invalidating any previous one) an API key that
+    // lets an external caller - specifically the crystal-inbox-worker's
+    // scheduled() cron handler, see email-worker/worker.js - hit
+    // payment-reminders.js's action:'run' without knowing the portal
+    // password (functions/_middleware.js accepts a valid X-API-Key header
+    // in its place). One-off setup: run this once, paste the key into that
+    // Worker's PORTAL_API_KEY environment variable.
+    async function generateApiKey() {
+      const pw = await promptModal('Enter your portal password to generate an API key.\n\nThis replaces any previous key - if the payment-reminder Worker is already using one, it will need the new key too.', '', 'password');
+      if (pw === null) return;
+      try {
+        const res = await fetch('/api/auth', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'api_key', password: pw }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not generate a key');
+        await promptModal('New API key (selected below - copy it now with Ctrl/Cmd+C, it will not be shown again):', data.api_key, 'text');
+      } catch (e) {
+        showActionToast('⚠', 'Could not generate API key: ' + e.message);
+      }
     }
 
     async function openPasswordSetup() {
@@ -6212,8 +6251,53 @@
       renderOrderLines();
     }
 
+    async function loadReminderDays() {
+      try {
+        const res = await fetch('/api/payment-reminders');
+        const data = await res.json();
+        document.getElementById('reminder-days').value = data.days_after_due || 7;
+      } catch (e) {}
+    }
+
+    async function saveReminderDays() {
+      const msg = document.getElementById('reminder-days-msg');
+      const days = Number(document.getElementById('reminder-days').value) || 7;
+      try {
+        const res = await fetch('/api/payment-reminders', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days_after_due: days }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+        msg.className = 'text-xs text-emerald-600 font-semibold';
+        msg.textContent = 'Saved.';
+        setTimeout(() => { msg.textContent = ''; }, 2000);
+      } catch (e) {
+        msg.className = 'text-xs text-red-600';
+        msg.textContent = 'Could not save: ' + e.message;
+      }
+    }
+
+    async function sendReminderNow(id) {
+      try {
+        const res = await fetch('/api/payment-reminders', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'run_one', id }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        if (data.sent) {
+          showActionToast('✓', 'Payment reminder emailed.');
+        } else {
+          showActionToast('⚠', 'Not sent: ' + (data.reason || 'unknown reason'));
+        }
+        loadOrders();
+      } catch (e) {
+        showActionToast('⚠', 'Could not send reminder: ' + e.message);
+      }
+    }
+
     async function loadOrders() {
       ordersLoaded = true;
+      loadReminderDays();
       const tbody = document.getElementById('orders-table-body');
       tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       try {
@@ -6241,6 +6325,9 @@
           const actions = [];
           if (isInvoice) {
             actions.push(`<button onclick="setOrderPaidStatus('${o.id}', '${o.paid_status === 'paid' ? 'unpaid' : 'paid'}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Mark ${o.paid_status === 'paid' ? 'Unpaid' : 'Paid'}</button>`);
+            if (o.paid_status !== 'paid') {
+              actions.push(`<button onclick="sendReminderNow('${escapeAttr(o.id)}')" title="Emails this customer a payment reminder right now, regardless of the automatic schedule" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Send reminder now</button>`);
+            }
           } else {
             actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
           }
@@ -6264,7 +6351,7 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}</td>
+              <td class="p-4">${statusBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');

@@ -22,6 +22,11 @@
 //      limited across everyone hitting it from Cloudflare's IPs, not
 //      practical to rely on without a paid plan)
 //
+// Also runs the daily payment-reminder chase (see scheduled() below) - the
+// Pages project itself (functions/api/payment-reminders.js) has no
+// cron/scheduler of its own, so this Worker's Cron Trigger is what actually
+// fires it once a day.
+//
 // Bindings this Worker needs (Settings -> Variables and Bindings, on the
 // Worker itself - separate from the Pages project's bindings):
 //   D1 database   DB             -> crystal-portal-db (same one Pages uses)
@@ -32,6 +37,14 @@
 //                                    martinlyon@icloud.com or martinlyon70@gmail.com
 //                                    - whichever has push notifications on
 //                                    your phone already
+//   Text var      PORTAL_ORIGIN  -> e.g. "https://portal.embroidery.click"
+//   Secret        PORTAL_API_KEY -> generated from the portal's "API Key"
+//                                    button (admin.html), lets this Worker
+//                                    call payment-reminders.js without the
+//                                    portal password - see
+//                                    functions/_middleware.js's X-API-Key check
+// Plus a Cron Trigger (Settings -> Triggers) for the schedule itself, e.g.
+// "0 8 * * *" for once daily at 8am.
 
 export default {
   async email(message, env, ctx) {
@@ -200,6 +213,34 @@ export default {
         })()
       );
     }
+  },
+
+  // Fired by the Cron Trigger configured on this Worker (Settings ->
+  // Triggers) - just kicks off the actual chase logic, which lives in
+  // functions/api/payment-reminders.js so it stays next to the rest of the
+  // orders/invoices code instead of being duplicated here. Authenticated
+  // with X-API-Key rather than the portal password since there's no human
+  // around to type one in - see functions/_middleware.js.
+  async scheduled(event, env, ctx) {
+    if (!env.PORTAL_ORIGIN || !env.PORTAL_API_KEY) {
+      console.log("Skipping payment-reminder run: PORTAL_ORIGIN or PORTAL_API_KEY isn't set on this Worker.");
+      return;
+    }
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const res = await fetch(`${env.PORTAL_ORIGIN}/api/payment-reminders`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-API-Key": env.PORTAL_API_KEY },
+            body: JSON.stringify({ action: "run" }),
+          });
+          const bodyText = await res.text();
+          console.log(`Payment reminder run: ${res.status} ${res.statusText} - ${bodyText}`);
+        } catch (e) {
+          console.log(`Payment reminder run failed: ${e.message}`);
+        }
+      })()
+    );
   },
 };
 

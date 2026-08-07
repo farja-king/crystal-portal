@@ -1,0 +1,167 @@
+// Automated payment-chasing for overdue invoices.
+//
+// The portal itself (Cloudflare Pages Functions) has no cron/scheduler, so
+// the actual daily trigger lives on the separate crystal-inbox-worker (see
+// email-worker/worker.js's scheduled() handler) - it calls this file's
+// action:'run' once a day via a plain fetch, authenticated with the same
+// X-API-Key mechanism functions/_middleware.js already supports (see
+// auth.js's action:'api_key'). The admin portal itself only ever calls the
+// settings GET/PUT and action:'run_one' (the manual "Send reminder now"
+// button), both of which go through the normal password gate like
+// everything else here.
+export async function onRequest(context) {
+  const { request, env } = context;
+  const db = env.DB;
+
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+  };
+
+  if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: corsHeaders });
+  const escapeHtml = (str) => String(str ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const money = (n) => "£" + Number(n || 0).toFixed(2);
+
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS reminder_settings (
+        id TEXT PRIMARY KEY,
+        days_after_due INTEGER DEFAULT 7,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+
+    // last_reminder_sent_at - drives both "don't chase again today" and the
+    // repeat cadence (next reminder is due days_after_due after this one).
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN last_reminder_sent_at TEXT`).run();
+    } catch {
+      // already exists
+    }
+
+    // email_log already exists (created by send-email.js) - reminders are
+    // logged into the exact same table so they show up for free in a
+    // quote/invoice's existing Communication History panel, no new UI
+    // needed there. Guard the CREATE here too in case this endpoint is ever
+    // hit before send-email.js has run once on a fresh database.
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS email_log (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        sent_to TEXT NOT NULL,
+        subject TEXT,
+        sent_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+
+    async function getDaysAfterDue() {
+      const row = await db.prepare("SELECT days_after_due FROM reminder_settings WHERE id = 'default'").first();
+      return row ? Number(row.days_after_due) : 7;
+    }
+
+    if (request.method === "GET") {
+      return json({ days_after_due: await getDaysAfterDue() });
+    }
+
+    if (request.method === "PUT") {
+      const data = await request.json();
+      const days = Math.max(1, Math.min(90, Number(data.days_after_due) || 7));
+      await db.prepare(`
+        INSERT INTO reminder_settings (id, days_after_due, updated_at) VALUES ('default', ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET days_after_due = excluded.days_after_due, updated_at = CURRENT_TIMESTAMP
+      `).bind(days).run();
+      return json({ success: true, days_after_due: days });
+    }
+
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+    if (!env.RESEND_API_KEY) {
+      return json({ error: "Email isn't set up yet - the RESEND_API_KEY secret is missing." }, 500);
+    }
+
+    async function sendReminder(order) {
+      const to = (order.customer_email || "").trim();
+      if (!to) return { sent: false, reason: "No email address on file for this customer" };
+
+      const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
+      const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
+      const subject = `Payment reminder: ${order.invoice_number}`;
+      const html = `
+        <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
+          <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
+          <div style="color:#64748b;margin-bottom:20px;">Payment reminder for Invoice ${escapeHtml(order.invoice_number)}</div>
+          <p>Hi ${escapeHtml(order.customer_name)},</p>
+          <p>Just a friendly reminder that invoice <strong>${escapeHtml(order.invoice_number)}</strong> for <strong>${money(order.total)}</strong>
+             ${order.due_date ? `was due on ${escapeHtml(order.due_date)}` : "is now overdue"} and still shows as unpaid on our records.</p>
+          <p>If you've already paid this, please let us know so we can update it - otherwise we'd appreciate payment at your earliest convenience.</p>
+          <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
+        </div>`;
+
+      try {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ from: fromAddress, to: [to], reply_to: replyToAddress, subject, html }),
+        });
+        if (!res.ok) return { sent: false, reason: "Resend rejected the email" };
+
+        await db.prepare(
+          "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
+        ).bind(crypto.randomUUID(), order.id, to, subject).run();
+        await db.prepare(
+          "UPDATE orders SET last_reminder_sent_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).bind(order.id).run();
+        return { sent: true };
+      } catch (e) {
+        return { sent: false, reason: e.message };
+      }
+    }
+
+    const data = await request.json();
+
+    // Sends exactly one invoice's reminder right now, regardless of the due
+    // date/cadence check below - the admin's manual "Send reminder now"
+    // button.
+    if (data.action === "run_one") {
+      if (!data.id) return json({ error: "id is required" }, 400);
+      const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.id).first();
+      if (!order) return json({ error: "Order not found" }, 404);
+      if (order.doc_type !== "invoice") return json({ error: "Only invoices can be chased for payment" }, 400);
+      const result = await sendReminder(order);
+      return json({ success: true, ...result });
+    }
+
+    // The daily batch, called by the Worker's cron - not meant to be hit
+    // from the admin UI.
+    if (data.action === "run") {
+      const daysAfterDue = await getDaysAfterDue();
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - daysAfterDue);
+      const cutoffStr = cutoff.toISOString();
+
+      const { results: candidates } = await db.prepare(`
+        SELECT * FROM orders
+        WHERE doc_type = 'invoice' AND paid_status != 'paid'
+          AND due_date IS NOT NULL AND due_date <> '' AND due_date <= ?
+          AND (last_reminder_sent_at IS NULL OR last_reminder_sent_at <= ?)
+      `).bind(cutoffStr, cutoffStr).all();
+
+      let sent = 0;
+      for (const order of candidates) {
+        const result = await sendReminder(order);
+        if (result.sent) sent += 1;
+      }
+      return json({ success: true, checked: candidates.length, sent });
+    }
+
+    return json({ error: "Unknown action" }, 400);
+  } catch (err) {
+    return json({ error: err.message }, 500);
+  }
+}
