@@ -452,15 +452,39 @@ export async function onRequest(context) {
       await db.prepare(`DELETE FROM design_proofs WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
     }
 
+    // Same cleanup as deleteOrphanedDesignProofs above, for the Production
+    // Tracker's own steps/photos (functions/api/production-steps.js) - an
+    // order being deleted should take its whole tracker with it, not leave
+    // the photos orphaned in R2.
+    async function deleteOrphanedProductionSteps(orderIds) {
+      if (!orderIds.length) return;
+      const placeholders = orderIds.map(() => "?").join(",");
+      let images;
+      try {
+        ({ results: images } = await db.prepare(
+          `SELECT r2_key FROM production_step_images WHERE order_id IN (${placeholders}) AND r2_key <> ''`
+        ).bind(...orderIds).all());
+      } catch (e) {
+        return; // production_step_images table doesn't exist yet - nothing to clean up
+      }
+      if (env.DESIGN_FILES) {
+        await Promise.all(images.map((r) => env.DESIGN_FILES.delete(r.r2_key).catch(() => {})));
+      }
+      await db.prepare(`DELETE FROM production_step_images WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
+      await db.prepare(`DELETE FROM production_steps WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
+    }
+
     if (request.method === "DELETE") {
       const { id, ids } = await request.json();
       if (Array.isArray(ids) && ids.length) {
         await deleteOrphanedDesignProofs(ids);
+        await deleteOrphanedProductionSteps(ids);
         const placeholders = ids.map(() => "?").join(",");
         await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...ids).run();
         return json({ success: true, count: ids.length });
       }
       await deleteOrphanedDesignProofs([id]);
+      await deleteOrphanedProductionSteps([id]);
       await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
       return json({ success: true });
     }
