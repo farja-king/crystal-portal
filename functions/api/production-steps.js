@@ -115,6 +115,19 @@ export async function onRequest(context) {
       return json(summary);
     }
 
+    // GET ?orphaned=1 - steps/images whose order was deleted before
+    // orders.js's deleteOrphanedProductionSteps cleanup existed (or from any
+    // gap before this endpoint learns about a new deletion path) - same
+    // one-off maintenance pattern as design-proofs.js/design-files.js.
+    if (request.method === "GET" && url.searchParams.get("orphaned")) {
+      const { results } = await db.prepare(`
+        SELECT i.id, i.filename, i.size_bytes, i.created_at
+        FROM production_step_images i LEFT JOIN orders o ON o.id = i.order_id
+        WHERE o.id IS NULL ORDER BY i.created_at DESC
+      `).all();
+      return json(results);
+    }
+
     // GET ?order_id=X - the whole tracker for one order, seeding the
     // default pipeline the very first time it's ever opened.
     if (request.method === "GET") {
@@ -222,6 +235,28 @@ export async function onRequest(context) {
 
     if (request.method === "DELETE") {
       const data = await request.json();
+
+      if (data.action === "purge_orphaned") {
+        const { results: orphanedImages } = await db.prepare(`
+          SELECT i.id, i.r2_key FROM production_step_images i LEFT JOIN orders o ON o.id = i.order_id WHERE o.id IS NULL
+        `).all();
+        if (orphanedImages.length) {
+          await Promise.all(orphanedImages.filter((i) => i.r2_key).map((i) => bucket.delete(i.r2_key).catch(() => {})));
+          const imgIds = orphanedImages.map((i) => i.id);
+          await db.prepare(`DELETE FROM production_step_images WHERE id IN (${imgIds.map(() => "?").join(",")})`).bind(...imgIds).run();
+        }
+        // The orphaned steps themselves (an order with no steps left never
+        // shows up in the ?orphaned=1 image list above, so this needs its
+        // own lookup rather than following on from the images just purged).
+        const { results: orphanedSteps } = await db.prepare(`
+          SELECT s.id FROM production_steps s LEFT JOIN orders o ON o.id = s.order_id WHERE o.id IS NULL
+        `).all();
+        if (orphanedSteps.length) {
+          const stepIds = orphanedSteps.map((s) => s.id);
+          await db.prepare(`DELETE FROM production_steps WHERE id IN (${stepIds.map(() => "?").join(",")})`).bind(...stepIds).run();
+        }
+        return json({ success: true, purged: orphanedImages.length });
+      }
 
       if (data.image_id) {
         const row = await db.prepare("SELECT r2_key FROM production_step_images WHERE id = ?").bind(data.image_id).first();

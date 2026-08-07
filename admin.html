@@ -6805,6 +6805,7 @@
     }
 
     async function deleteStepImage(imageId, orderId) {
+      if (!(await confirmModal('Delete this photo? It will be permanently removed from storage - click the thumbnail first if you want to save a copy.'))) return;
       try {
         await fetch(API_PRODUCTION_STEPS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' },
@@ -7237,7 +7238,7 @@
 
     async function deleteOrder(id) {
       const o = ordersById[id];
-      if (!(await confirmModal(`Delete ${o ? (o.invoice_number || o.quote_number) : id}? This cannot be undone.`))) return;
+      if (!(await confirmModal(`Delete ${o ? (o.invoice_number || o.quote_number) : id}? This also permanently deletes any attached design proofs and production tracker photos. This cannot be undone.`))) return;
       await fetch(API_ORDERS_URL, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
       });
@@ -7349,33 +7350,48 @@
       }
     }
 
-    // One-off maintenance for design_proofs rows left over from a quote
-    // deleted before orders.js knew to clean those up too - see the
-    // ?orphaned=1 GET / "purge_orphaned" DELETE in design-proofs.js. This
-    // ONLY ever touches design_proofs (mockup/proof images attached to a
-    // quote, R2 keys under "design-proofs/") - it has no code path anywhere
-    // near design_files (a customer's own permanent DST/EMB/PDF backups,
-    // R2 keys under "customer-designs/", functions/api/design-files.js) -
-    // entirely separate table, separate API, separate storage prefix, never
-    // touched by anything in this function.
+    // One-off maintenance sweep across every place a file can be
+    // stranded in R2 after its owning record was deleted before that
+    // deletion path knew to clean the file up too:
+    //  - design_proofs (mockups on a quote/invoice, R2 "design-proofs/")
+    //  - production_step_images (Production Tracker photos, R2 "production-steps/")
+    //  - design_files (a customer's own DST/EMB/PDF backups, R2 "customer-designs/")
+    // Each source has its own ?orphaned=1 GET / action:'purge_orphaned'
+    // DELETE (design-proofs.js/production-steps.js/design-files.js) -
+    // entirely separate tables and storage prefixes, checked together here
+    // purely so there's one button and one report instead of three.
     async function cleanUpOrphanedProofs() {
+      const SOURCES = [
+        { label: 'design proof/mockup', url: API_DESIGN_PROOFS_URL, nameOf: (r) => `${r.filename} (v${r.version})` },
+        { label: 'production tracker photo', url: API_PRODUCTION_STEPS_URL, nameOf: (r) => r.filename },
+        { label: 'customer design file backup', url: '/api/design-files', nameOf: (r) => r.filename },
+      ];
       try {
-        const res = await fetch(API_DESIGN_PROOFS_URL + '?orphaned=1', { cache: 'no-store' });
-        const rows = await res.json();
-        if (!Array.isArray(rows) || !rows.length) { showActionToast('⚠', 'No leftover mockup files found - nothing to clean up.'); return; }
+        const found = await Promise.all(SOURCES.map(async (s) => {
+          const res = await fetch(s.url + '?orphaned=1', { cache: 'no-store' });
+          const rows = await res.json();
+          return { ...s, rows: Array.isArray(rows) ? rows : [] };
+        }));
 
-        const totalSize = rows.reduce((sum, r) => sum + (Number(r.size_bytes) || 0), 0);
+        const totalCount = found.reduce((sum, s) => sum + s.rows.length, 0);
+        if (!totalCount) { showActionToast('⚠', 'No leftover files found - nothing to clean up.'); return; }
+
+        const totalSize = found.reduce((sum, s) => sum + s.rows.reduce((a, r) => a + (Number(r.size_bytes) || 0), 0), 0);
         const sizeLabel = totalSize > 1024 * 1024 ? (totalSize / (1024 * 1024)).toFixed(1) + ' MB' : (totalSize / 1024).toFixed(0) + ' KB';
-        const names = rows.slice(0, 10).map((r) => `- ${r.filename} (v${r.version})`).join('\n') + (rows.length > 10 ? `\n...and ${rows.length - 10} more` : '');
-        if (!(await confirmModal(`Found ${rows.length} design proof/mockup file(s) left over from deleted quotes (~${sizeLabel}):\n\n${names}\n\nThese are only ever mockup images attached to quotes - never a customer's own design file backups (those are a completely separate system and are not touched here).\n\nDelete them permanently to free up storage?`))) return;
+        const summaryLines = found.filter((s) => s.rows.length).map((s) => `- ${s.rows.length} ${s.label}(s)`).join('\n');
+        if (!(await confirmModal(`Found ${totalCount} leftover file(s) left over from deleted quotes/orders/customers (~${sizeLabel}):\n\n${summaryLines}\n\nDelete them permanently to free up storage?`))) return;
 
-        const delRes = await fetch(API_DESIGN_PROOFS_URL, {
-          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'purge_orphaned' }),
-        });
-        const delData = await delRes.json();
-        if (!delRes.ok || !delData.success) throw new Error(delData.error || 'Failed');
-        showActionToast('✓', `Cleaned up ${delData.purged} leftover mockup file(s).`);
+        let purged = 0;
+        for (const s of found) {
+          if (!s.rows.length) continue;
+          const res = await fetch(s.url, {
+            method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'purge_orphaned' }),
+          });
+          const data = await res.json();
+          if (res.ok && data.success) purged += data.purged || 0;
+        }
+        showActionToast('✓', `Cleaned up ${purged} leftover file(s).`);
       } catch (e) {
         showActionToast('⚠', 'Could not clean up: ' + e.message);
       }

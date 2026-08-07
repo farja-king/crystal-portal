@@ -67,6 +67,21 @@ export async function onRequest(context) {
       });
     }
 
+    // GET ?orphaned=1 - design_files rows whose customer was permanently
+    // deleted (see customers.js) before that path cleaned up R2 too, or
+    // from before this cleanup existed at all. Otherwise-invisible forever -
+    // every other lookup here requires a customer_id that still resolves to
+    // something. Same one-off maintenance pattern as design-proofs.js's
+    // ?orphaned=1.
+    if (request.method === "GET" && url.searchParams.get("orphaned")) {
+      const { results } = await db.prepare(`
+        SELECT f.id, f.filename, f.size_bytes, f.uploaded_at
+        FROM design_files f LEFT JOIN customers c ON c.id = f.customer_id
+        WHERE c.id IS NULL ORDER BY f.uploaded_at DESC
+      `).all();
+      return json(results);
+    }
+
     // GET ?customer_id=X - list of files on file for one customer.
     if (request.method === "GET") {
       const customerId = url.searchParams.get("customer_id");
@@ -105,6 +120,19 @@ export async function onRequest(context) {
 
     if (request.method === "DELETE") {
       const data = await request.json();
+
+      if (data.action === "purge_orphaned") {
+        const { results: orphaned } = await db.prepare(`
+          SELECT f.id, f.r2_key FROM design_files f LEFT JOIN customers c ON c.id = f.customer_id WHERE c.id IS NULL
+        `).all();
+        if (!orphaned.length) return json({ success: true, purged: 0 });
+        await Promise.all(orphaned.map((f) => bucket.delete(f.r2_key).catch(() => {})));
+        const ids = orphaned.map((f) => f.id);
+        const placeholders = ids.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM design_files WHERE id IN (${placeholders})`).bind(...ids).run();
+        return json({ success: true, purged: orphaned.length });
+      }
+
       if (!data.id) return json({ error: "id is required" }, 400);
       const row = await db.prepare("SELECT r2_key FROM design_files WHERE id = ?").bind(data.id).first();
       if (row) {

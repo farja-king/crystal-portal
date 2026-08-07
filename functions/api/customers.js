@@ -218,6 +218,21 @@ export async function onRequest(context) {
     if (request.method === "DELETE") {
       const { id, permanent } = await request.json();
       if (permanent) {
+        // Their design file backups (functions/api/design-files.js) are
+        // scoped to this customer_id and nothing else references them -
+        // permanently deleting the customer would otherwise strand those
+        // files in R2 forever with no row left to find them by.
+        if (env.DESIGN_FILES) {
+          try {
+            const { results: files } = await db.prepare(
+              "SELECT r2_key FROM design_files WHERE customer_id = ?"
+            ).bind(id).all();
+            await Promise.all(files.map((f) => env.DESIGN_FILES.delete(f.r2_key).catch(() => {})));
+            await db.prepare("DELETE FROM design_files WHERE customer_id = ?").bind(id).run();
+          } catch (e) {
+            // design_files table doesn't exist yet - nothing to clean up
+          }
+        }
         await db.prepare("DELETE FROM customers WHERE id = ?").bind(id).run();
       } else {
         await db.prepare("UPDATE customers SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
