@@ -4912,6 +4912,7 @@
     let orderLines = [];
     let ordersLoaded = false;
     let ordersById = {};
+    let productionSummaryByOrder = {};
     let orderSearchTimer = null;
 
     // The currently-selected order customer's own price list (products
@@ -6314,12 +6315,25 @@
       const tbody = document.getElementById('orders-table-body');
       tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       try {
-        const res = await fetch(API_ORDERS_URL);
+        const [res, productionRes] = await Promise.all([
+          fetch(API_ORDERS_URL),
+          fetch('/api/production-steps?all=1', { cache: 'no-store' }).catch(() => null),
+        ]);
         const rows = await res.json();
         ordersById = {};
         rows.forEach((o) => { ordersById[o.id] = o; });
         selectedOrderIds = new Set();
         updateOrderBulkBar();
+
+        // Order-id -> { current_title, all_done, total, done_count } for
+        // every order whose Production Tracker has been opened at least
+        // once - see viewOrder()/loadProductionSteps(). An order that's
+        // never had its tracker opened just has no entry, and shows no
+        // badge below rather than a misleading "not started".
+        productionSummaryByOrder = {};
+        try {
+          if (productionRes && productionRes.ok) productionSummaryByOrder = await productionRes.json();
+        } catch (e) {}
 
         if (!rows.length) {
           tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No quotes yet.</td></tr>';
@@ -6334,6 +6348,14 @@
           const statusBadge = isInvoice
             ? `<span class="px-2 py-1 text-xs font-semibold rounded-full ${o.paid_status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">${o.paid_status === 'paid' ? 'Paid' : 'Unpaid'}</span>`
             : `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(o.status || 'draft')}</span>`;
+
+          // Small at-a-glance echo of the Production Tracker's current step
+          // (see viewOrder()'s "Production Tracker" section) - no badge at
+          // all for an order whose tracker has never been opened.
+          const production = productionSummaryByOrder[o.id];
+          const productionBadge = production
+            ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full ${production.all_done ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}" title="Production: ${escapeAttr(production.done_count)}/${escapeAttr(production.total)} steps done">${production.all_done ? '✓ Production complete' : '🏭 ' + escapeHtml(production.current_title)}</span>`
+            : '';
 
           const actions = [];
           if (isInvoice) {
@@ -6364,7 +6386,7 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}</td>
+              <td class="p-4">${statusBadge}${productionBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
@@ -6690,6 +6712,7 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
         loadProductionSteps(orderId);
+        loadOrders(); // keeps the main list's production badge in sync
       } catch (e) {
         showActionToast('⚠', 'Could not add step: ' + e.message);
       }
@@ -6702,6 +6725,7 @@
           body: JSON.stringify({ id, status: wasDone ? 'pending' : 'done' }),
         });
         loadProductionSteps(orderId);
+        loadOrders(); // keeps the main list's production badge in sync
       } catch (e) {
         showActionToast('⚠', 'Could not update step: ' + e.message);
       }
@@ -6714,6 +6738,7 @@
           body: JSON.stringify({ id, action: 'move', direction }),
         });
         loadProductionSteps(orderId);
+        loadOrders();
       } catch (e) {
         showActionToast('⚠', 'Could not reorder: ' + e.message);
       }
@@ -6725,6 +6750,7 @@
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, title }),
         });
+        loadOrders(); // the badge on the list may be echoing this step's title
       } catch (e) {
         showActionToast('⚠', 'Could not save: ' + e.message);
       }
@@ -6749,6 +6775,7 @@
           body: JSON.stringify({ id }),
         });
         loadProductionSteps(orderId);
+        loadOrders();
       } catch (e) {
         showActionToast('⚠', 'Could not delete step: ' + e.message);
       }

@@ -81,6 +81,35 @@ export async function onRequest(context) {
       });
     }
 
+    // GET ?all=1 - a lightweight one-line-per-order summary (current step
+    // title, done/total count) for every order that already has a tracker
+    // started - backs the small production-status badge on the main
+    // Quotes & Invoices list. Deliberately does NOT seed the default
+    // pipeline for orders that have never had their tracker opened - an
+    // order with no steps yet just shows no badge, rather than silently
+    // starting a tracker for every order in the list.
+    if (request.method === "GET" && url.searchParams.get("all")) {
+      const { results: allSteps } = await db.prepare(
+        "SELECT order_id, title, status FROM production_steps ORDER BY order_id, position ASC"
+      ).all();
+      const byOrder = {};
+      for (const s of allSteps) {
+        (byOrder[s.order_id] = byOrder[s.order_id] || []).push(s);
+      }
+      const summary = {};
+      for (const orderId in byOrder) {
+        const steps = byOrder[orderId];
+        const current = steps.find((s) => s.status !== "done");
+        summary[orderId] = {
+          current_title: current ? current.title : null,
+          all_done: !current,
+          total: steps.length,
+          done_count: steps.filter((s) => s.status === "done").length,
+        };
+      }
+      return json(summary);
+    }
+
     // GET ?order_id=X - the whole tracker for one order, seeding the
     // default pipeline the very first time it's ever opened.
     if (request.method === "GET") {
