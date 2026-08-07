@@ -1196,10 +1196,16 @@
         </button>
       </div>
 
-      <label class="text-sm block mb-4 max-w-xs">
-        <span class="block font-medium text-slate-700 mb-1">Due by</span>
-        <input type="date" id="ord-due-date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
-      </label>
+      <div class="grid gap-3 md:grid-cols-2 mb-4 max-w-md">
+        <label class="text-sm block">
+          <span class="block font-medium text-slate-700 mb-1">Due by</span>
+          <input type="date" id="ord-due-date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+        </label>
+        <label class="text-sm block">
+          <span class="block font-medium text-slate-700 mb-1">Remind every (days)</span>
+          <input type="number" min="1" max="30" placeholder="Default" id="ord-reminder-interval" title="How often to chase this invoice for payment once it's overdue - leave blank to use the portal-wide default" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+        </label>
+      </div>
 
       <label class="text-sm block mb-4">
         <span class="block font-medium text-slate-700 mb-1">Notes</span>
@@ -5992,6 +5998,7 @@
         discount_flat: Number(document.getElementById('ord-discount-flat').value) || 0,
         notes: document.getElementById('ord-notes').value,
         due_date: document.getElementById('ord-due-date').value,
+        reminder_interval_days: Number(document.getElementById('ord-reminder-interval').value) || null,
         doc_type: newOrderDocType,
         items: orderLines.map((l) => ({
           source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
@@ -6044,6 +6051,7 @@
           orderLines = [];
           document.getElementById('ord-notes').value = '';
           document.getElementById('ord-due-date').value = '';
+          document.getElementById('ord-reminder-interval').value = '';
           document.getElementById('ord-customer').value = '';
           renderOrderCustomerPicker();
           document.getElementById('ord-discount').value = 0;
@@ -6141,6 +6149,7 @@
       document.getElementById('ord-discount-flat').value = o.discount_flat || 0;
       document.getElementById('ord-notes').value = o.notes || '';
       document.getElementById('ord-due-date').value = o.due_date || '';
+      document.getElementById('ord-reminder-interval').value = o.reminder_interval_days || '';
       document.getElementById('ord-status').value = o.status || 'draft';
       document.getElementById('ord-status-field').classList.remove('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Update ' + (o.doc_type === 'invoice' ? 'Invoice' : 'Quote');
@@ -6196,9 +6205,12 @@
       document.getElementById('ord-discount').value = o.discount_pct || 0;
       document.getElementById('ord-discount-flat').value = o.discount_flat || 0;
       // Notes and due-by are specific to the original job, not carried
-      // forward onto a new one.
+      // forward onto a new one - but the reminder cadence is more of a
+      // customer preference than a per-job detail, so that one does carry
+      // over (same treatment as discount above).
       document.getElementById('ord-notes').value = '';
       document.getElementById('ord-due-date').value = '';
+      document.getElementById('ord-reminder-interval').value = o.reminder_interval_days || '';
       document.getElementById('ord-status-field').classList.add('hidden');
       document.getElementById('ord-cancel-edit-btn').textContent = 'Cancel';
       document.getElementById('ord-save-msg').textContent = '';
@@ -6234,6 +6246,7 @@
       document.getElementById('ord-discount-flat').value = 0;
       document.getElementById('ord-notes').value = '';
       document.getElementById('ord-due-date').value = '';
+      document.getElementById('ord-reminder-interval').value = '';
       orderCustomerItems = [];
       orderCustomerName = '';
       orderLineOpenVariantPicker = null;
@@ -6331,8 +6344,8 @@
           } else {
             actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
           }
-          actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold">View</button>`);
-          actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
+          actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">View</button>`);
+          actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
           actions.push(`<button data-action="reorder-order" data-id="${escapeAttr(o.id)}" title="Start a new quote/invoice prefilled with this customer and these garments - fully editable before saving" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Reorder</button>`);
           actions.push(`<label title="Attach a design proof - saved as a draft, nothing sent until you email/save this quote or hit Send now" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold cursor-pointer">
             Add Image

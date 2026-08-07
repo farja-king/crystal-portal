@@ -9,6 +9,14 @@
 // settings GET/PUT and action:'run_one' (the manual "Send reminder now"
 // button), both of which go through the normal password gate like
 // everything else here.
+// D1's CURRENT_TIMESTAMP is "YYYY-MM-DD HH:MM:SS" (UTC, space-separated) -
+// not reliably parsed as UTC by `new Date(...)` across runtimes, so
+// normalize to a real ISO string first.
+function parseSqlTimestamp(s) {
+  if (!s) return NaN;
+  return new Date(s.includes("T") ? s : s.replace(" ", "T") + "Z").getTime();
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -138,26 +146,38 @@ export async function onRequest(context) {
     }
 
     // The daily batch, called by the Worker's cron - not meant to be hit
-    // from the admin UI.
+    // from the admin UI. Each invoice can override the portal-wide day
+    // count via orders.reminder_interval_days, so the day-count check has
+    // to happen per-row in JS rather than as one shared SQL WHERE clause.
     if (data.action === "run") {
-      const daysAfterDue = await getDaysAfterDue();
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - daysAfterDue);
-      const cutoffStr = cutoff.toISOString();
+      const defaultDays = await getDaysAfterDue();
+      const now = Date.now();
 
       const { results: candidates } = await db.prepare(`
         SELECT * FROM orders
         WHERE doc_type = 'invoice' AND paid_status != 'paid'
-          AND due_date IS NOT NULL AND due_date <> '' AND due_date <= ?
-          AND (last_reminder_sent_at IS NULL OR last_reminder_sent_at <= ?)
-      `).bind(cutoffStr, cutoffStr).all();
+          AND due_date IS NOT NULL AND due_date <> ''
+      `).all();
 
+      let checked = 0;
       let sent = 0;
       for (const order of candidates) {
+        const days = Number(order.reminder_interval_days) || defaultDays;
+        const cutoffMs = now - days * 86400000;
+
+        const dueMs = new Date(order.due_date).getTime();
+        if (!Number.isFinite(dueMs) || dueMs > cutoffMs) continue; // not overdue by enough days yet
+
+        if (order.last_reminder_sent_at) {
+          const lastMs = parseSqlTimestamp(order.last_reminder_sent_at);
+          if (Number.isFinite(lastMs) && lastMs > cutoffMs) continue; // reminded too recently for this invoice's own cadence
+        }
+
+        checked += 1;
         const result = await sendReminder(order);
         if (result.sent) sent += 1;
       }
-      return json({ success: true, checked: candidates.length, sent });
+      return json({ success: true, checked, sent });
     }
 
     return json({ error: "Unknown action" }, 400);

@@ -221,6 +221,16 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // reminder_interval_days - per-invoice override for how often
+    // payment-reminders.js chases this one, set in the builder next to Due
+    // by. NULL means "use the portal-wide default" (see reminder_settings
+    // in payment-reminders.js) - most invoices never need a special cadence,
+    // this is only for the odd one that should be chased more/less often.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN reminder_interval_days INTEGER`).run();
+    } catch {
+      // already exists
+    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
@@ -287,8 +297,8 @@ export async function onRequest(context) {
       await db.prepare(`
         INSERT INTO orders (
           id, doc_type, quote_number, invoice_number, customer_id, customer_name, customer_email,
-          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, invoiced_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, reminder_interval_days, invoiced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         isInvoice ? "invoice" : "quote",
@@ -307,6 +317,7 @@ export async function onRequest(context) {
         isInvoice ? "unpaid" : null,
         data.notes || "",
         data.due_date || "",
+        data.reminder_interval_days ? Number(data.reminder_interval_days) : null,
         isInvoice ? new Date().toISOString() : null
       ).run();
 
@@ -383,7 +394,7 @@ export async function onRequest(context) {
         UPDATE orders SET
           customer_id = ?, customer_name = ?, customer_email = ?,
           items = ?, subtotal = ?, discount_pct = ?, discount_flat = ?, discount_amount = ?, total = ?,
-          notes = ?, status = ?, due_date = ?, updated_at = CURRENT_TIMESTAMP
+          notes = ?, status = ?, due_date = ?, reminder_interval_days = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         data.customer_id ?? existing.customer_id,
@@ -398,6 +409,9 @@ export async function onRequest(context) {
         data.notes ?? existing.notes,
         data.status !== undefined ? String(data.status).slice(0, 30) : existing.status,
         data.due_date ?? existing.due_date,
+        data.reminder_interval_days !== undefined
+          ? (data.reminder_interval_days ? Number(data.reminder_interval_days) : null)
+          : existing.reminder_interval_days,
         data.id
       ).run();
 
