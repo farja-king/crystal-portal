@@ -6353,8 +6353,14 @@
           // (see viewOrder()'s "Production Tracker" section) - no badge at
           // all for an order whose tracker has never been opened.
           const production = productionSummaryByOrder[o.id];
+          // Before the first step is ticked, current_title is null - shown
+          // as a plain "Pending" badge rather than hidden entirely, so a
+          // tracker that's been started but not progressed is still visible.
+          const productionLabel = production
+            ? (production.all_done ? '✓ Production complete' : production.current_title ? '🏭 ' + escapeHtml(production.current_title) : '⏳ Pending')
+            : '';
           const productionBadge = production
-            ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full ${production.all_done ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}" title="Production: ${escapeAttr(production.done_count)}/${escapeAttr(production.total)} steps done">${production.all_done ? '✓ Production complete' : '🏭 ' + escapeHtml(production.current_title)}</span>`
+            ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full ${production.all_done ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}" title="Production: ${escapeAttr(production.done_count)}/${escapeAttr(production.total)} steps done">${productionLabel}</span>`
             : '';
 
           const actions = [];
