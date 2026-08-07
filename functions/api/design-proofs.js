@@ -335,13 +335,16 @@ export async function onRequest(context) {
         if (data.decision !== "approved" && data.decision !== "declined") {
           return json({ error: "decision must be 'approved' or 'declined'" }, 400);
         }
-        // Required, not just an optional add-on - proof.html blocks
-        // submission client-side too, but the customer's answer to the
-        // image-use question needs to always be on record, not sometimes
-        // null, so this is enforced here as well.
-        if (data.image_consent !== "yes" && data.image_consent !== "no") {
+        // Only asked/required on approval - declining means there's nothing
+        // approved yet to use images of, so image_consent has no meaning on
+        // that path and is deliberately left null rather than forced to an
+        // answer. proof.html only renders the question once Approve is
+        // chosen; this mirrors that same rule server-side.
+        if (data.decision === "approved" && data.image_consent !== "yes" && data.image_consent !== "no") {
           return json({ error: "Please choose Yes or No for image use before continuing." }, 400);
         }
+        const imageConsent = data.decision === "approved" && (data.image_consent === "yes" || data.image_consent === "no")
+          ? data.image_consent : null;
 
         const proof = await db.prepare(`
           SELECT p.*, o.quote_number, o.invoice_number, o.doc_type, o.customer_name
@@ -356,7 +359,7 @@ export async function onRequest(context) {
         const notes = (data.notes || "").slice(0, 1000);
         await db.prepare(
           "UPDATE design_proofs SET status = ?, decision_notes = ?, image_consent = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).bind(data.decision, notes, data.image_consent, proof.id).run();
+        ).bind(data.decision, notes, imageConsent, proof.id).run();
 
         // The quote's own Status field (Draft/Sent/Approved/Declined - see
         // the ord-status dropdown in admin.html) mirrors the customer's
