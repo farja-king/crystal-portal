@@ -1062,7 +1062,7 @@
        the top of the email, above the standard quote/invoice content. A
        PDF copy is always attached automatically (see functions/api/
        send-email.js), no separate control for that here. -->
-  <div id="email-compose-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div id="email-compose-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
     <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
       <h3 class="font-bold text-slate-900 mb-3">Send <span id="email-compose-doclabel">quote</span></h3>
       <label class="text-sm block mb-3">
@@ -1085,7 +1085,7 @@
        showActionToast() - a visual confirmation after actions like saving a
        quote that also emails a new design proof version to the customer,
        so it's obvious something actually went out, not just silently saved. -->
-  <div id="action-toast" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div id="action-toast" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
     <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-6 text-center">
       <div id="action-toast-icon" class="text-4xl mb-3">✓</div>
       <p id="action-toast-text" class="text-sm text-slate-800 whitespace-pre-line"></p>
