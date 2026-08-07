@@ -31,6 +31,14 @@ export async function onRequest(context) {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    // The table already existed on live D1 before api_key was added to the
+    // CREATE TABLE above - "IF NOT EXISTS" is a no-op against an existing
+    // table, so it needs adding here instead (same pattern as orders.js).
+    try {
+      await db.prepare(`ALTER TABLE auth_config ADD COLUMN api_key TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     const cfg = await db.prepare("SELECT * FROM auth_config WHERE id = 'default'").first();
 
