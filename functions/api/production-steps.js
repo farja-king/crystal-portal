@@ -98,13 +98,18 @@ export async function onRequest(context) {
       }
       const summary = {};
       for (const orderId in byOrder) {
-        const steps = byOrder[orderId];
-        const current = steps.find((s) => s.status !== "done");
+        const steps = byOrder[orderId]; // ordered by position ASC
+        const doneSteps = steps.filter((s) => s.status === "done");
+        // The badge should echo what's actually been ticked off, not what's
+        // coming up next - "Artwork approved" stays showing until Garments
+        // ordered is itself ticked, not the moment it becomes the next
+        // pending step.
+        const lastDone = doneSteps[doneSteps.length - 1];
         summary[orderId] = {
-          current_title: current ? current.title : null,
-          all_done: !current,
+          current_title: lastDone ? lastDone.title : null,
+          all_done: doneSteps.length === steps.length,
           total: steps.length,
-          done_count: steps.filter((s) => s.status === "done").length,
+          done_count: doneSteps.length,
         };
       }
       return json(summary);
