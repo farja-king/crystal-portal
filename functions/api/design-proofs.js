@@ -136,6 +136,18 @@ export async function onRequest(context) {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_design_proofs_customer ON design_proofs (customer_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_design_proofs_token ON design_proofs (token)").run();
 
+    // image_consent - whether the customer agreed to let their design/order
+    // images be used on the website, social media or Google advertising,
+    // answered alongside their approve/decline decision on proof.html.
+    // 'yes' / 'no' / NULL (never answered) - the table already existed on
+    // live D1 before this was added, so it needs an ALTER here too (same
+    // pattern as orders.js).
+    try {
+      await db.prepare(`ALTER TABLE design_proofs ADD COLUMN image_consent TEXT`).run();
+    } catch {
+      // already exists
+    }
+
     const url = new URL(request.url);
 
     // Streams the actual image/PDF bytes from R2 - used both by the admin
@@ -169,7 +181,7 @@ export async function onRequest(context) {
     // data leaks through this one.
     if (request.method === "GET" && url.searchParams.get("token")) {
       const row = await db.prepare(`
-        SELECT p.id, p.version, p.filename, p.content_type, p.status, p.decision_notes, p.token,
+        SELECT p.id, p.version, p.filename, p.content_type, p.status, p.decision_notes, p.token, p.image_consent,
                o.quote_number, o.invoice_number, o.doc_type, o.customer_name
         FROM design_proofs p JOIN orders o ON o.id = p.order_id
         WHERE p.token = ?
@@ -180,6 +192,7 @@ export async function onRequest(context) {
         id: row.id, version: row.version, filename: row.filename, status: row.status,
         decision_notes: row.decision_notes, token: row.token, doc_number: docNumber,
         customer_name: row.customer_name, is_image: /^image\//.test(row.content_type || ""),
+        image_consent: row.image_consent,
       });
     }
 
@@ -228,7 +241,7 @@ export async function onRequest(context) {
       const where = orderId ? "p.order_id = ?" : "p.customer_id = ?";
       const { results } = await db.prepare(`
         SELECT p.id, p.order_id, p.version, p.filename, p.content_type, p.status, p.decision_notes,
-               p.created_at, p.sent_at, p.decided_at, o.quote_number, o.invoice_number, o.doc_type,
+               p.created_at, p.sent_at, p.decided_at, p.image_consent, o.quote_number, o.invoice_number, o.doc_type,
                (p.r2_key <> '') AS has_file
         FROM design_proofs p JOIN orders o ON o.id = p.order_id
         WHERE ${where} ORDER BY p.order_id, p.version DESC
@@ -334,9 +347,10 @@ export async function onRequest(context) {
         }
 
         const notes = (data.notes || "").slice(0, 1000);
+        const imageConsent = data.image_consent === "yes" || data.image_consent === "no" ? data.image_consent : null;
         await db.prepare(
-          "UPDATE design_proofs SET status = ?, decision_notes = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).bind(data.decision, notes, proof.id).run();
+          "UPDATE design_proofs SET status = ?, decision_notes = ?, image_consent = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).bind(data.decision, notes, imageConsent, proof.id).run();
 
         // The quote's own Status field (Draft/Sent/Approved/Declined - see
         // the ord-status dropdown in admin.html) mirrors the customer's

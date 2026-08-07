@@ -10,7 +10,7 @@
   
   <!-- Navigation Header -->
   <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+    <div class="w-full px-6 py-4 flex justify-between items-center">
       <div class="flex items-center space-x-3">
         <div class="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-lg">C</div>
         <h1 class="text-xl font-bold tracking-wide">Crystal Embroidery <span class="text-indigo-400 font-normal">Back Office</span></h1>
@@ -52,7 +52,7 @@
 
   <!-- Shown only while the site is still unprotected -->
   <div id="auth-banner" class="hidden bg-amber-500 text-amber-950">
-    <div class="max-w-7xl mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+    <div class="w-full px-6 py-3 flex flex-wrap items-center justify-between gap-3">
       <p class="text-sm font-medium">
         ⚠️ This portal has no password yet - anyone with the link can see your cost prices and margins.
       </p>
@@ -63,7 +63,7 @@
   </div>
 
   <!-- Main Content Area -->
-  <main class="max-w-7xl mx-auto px-6 py-8">
+  <main class="w-full px-6 py-8">
 
     <!-- DASHBOARD TAB -->
     <section id="section-dashboard">
@@ -750,6 +750,12 @@
           <p class="text-slate-500 text-sm">Build a garment quote and convert it to an invoice when it is confirmed.<br>No VAT is shown anywhere. Not VAT registered.</p>
         </div>
         <div class="flex items-center gap-2">
+          <button onclick="openNewOrderBuilder('quote')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            + New Quote
+          </button>
+          <button onclick="openNewOrderBuilder('invoice')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            + New Invoice
+          </button>
           <button id="ord-sync-btn" onclick="syncDataFromWebsite()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🌐 Sync Data
           </button>
@@ -768,7 +774,7 @@
       <!-- Quotes nobody ever responded to, tucked out of the way without
            deleting them - see openOrderArchive/restoreOrder. -->
       <div id="order-archive-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6">
+        <div class="bg-white rounded-xl shadow-lg max-w-4xl w-full max-h-[85vh] overflow-y-auto p-6">
           <div class="flex justify-between items-start mb-4">
             <div>
               <h3 class="text-lg font-bold text-slate-900">Archived Quotes &amp; Invoices</h3>
@@ -776,6 +782,24 @@
             </div>
             <button onclick="closeOrderArchive()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
           </div>
+
+          <h4 class="font-bold text-slate-900 mb-2">✓ Completed</h4>
+          <div class="overflow-x-auto border border-slate-200 rounded-lg mb-6">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th class="p-2">Number</th>
+                  <th class="p-2">Customer</th>
+                  <th class="p-2">Total</th>
+                  <th class="p-2">Archived</th>
+                  <th class="p-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="order-archive-completed-body" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+
+          <h4 class="font-bold text-slate-900 mb-2">⏳ Pending</h4>
           <div class="overflow-x-auto border border-slate-200 rounded-lg">
             <table class="w-full text-left text-sm">
               <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
@@ -787,9 +811,31 @@
                   <th class="p-2 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody id="order-archive-body" class="divide-y divide-slate-100"></tbody>
+              <tbody id="order-archive-pending-body" class="divide-y divide-slate-100"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- One-click choice of which Archive section a quote/invoice lands
+           in - a manual call (is the actual embroidery job done, not just
+           whether it's been paid/decided), so no confirmation step, just
+           pick one. See openArchiveChoice/archiveOrder. -->
+      <div id="order-archive-choice-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+          <h3 class="text-lg font-bold text-slate-900 mb-1">Archive this as…</h3>
+          <p class="text-sm text-slate-500 mb-4">Tucked out of the main list either way - restore any time from Archived.</p>
+          <div class="flex gap-2 mb-3">
+            <button type="button" onclick="archiveOrder('completed')" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-lg text-sm font-semibold shadow-sm">
+              ✓ Completed work
+            </button>
+            <button type="button" onclick="archiveOrder('pending')" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-4 py-3 rounded-lg text-sm font-semibold shadow-sm">
+              ⏳ Pending work
+            </button>
+          </div>
+          <button type="button" onclick="closeArchiveChoice()" class="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Cancel
+          </button>
         </div>
       </div>
 
@@ -838,143 +884,6 @@
         </div>
       </div>
       <p id="ord-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
-
-      <!-- Builder -->
-      <div id="ord-builder" class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h3 id="ord-builder-heading" class="font-bold text-slate-900">New Quote</h3>
-          <!-- Only shown while creating something new (hidden the moment an
-               existing quote/invoice is opened for editing - see
-               editOrderInBuilder/cancelOrderEdit) - a quote can still become
-               an invoice later via Convert, this is purely for skipping the
-               quote stage entirely when the job's already agreed and just
-               needs invoicing. -->
-          <div id="ord-doctype-toggle" class="inline-flex bg-slate-100 rounded-lg p-1 text-sm font-semibold">
-            <button type="button" id="ord-doctype-quote-btn" onclick="setNewOrderDocType('quote')" class="px-3 py-1.5 rounded-md bg-white text-slate-900 shadow-sm transition">New Quote</button>
-            <button type="button" id="ord-doctype-invoice-btn" onclick="setNewOrderDocType('invoice')" class="px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-800 transition">New Invoice</button>
-          </div>
-        </div>
-
-        <div class="grid gap-3 md:grid-cols-3 mb-4">
-          <label class="text-sm">
-            <span class="block font-medium text-slate-700 mb-1">Customer</span>
-            <div class="flex gap-2">
-              <div id="ord-customer-picker" class="flex-1"></div>
-              <input type="hidden" id="ord-customer" />
-              <button type="button" onclick="toggleNewCustomerPanel()" class="shrink-0 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold shadow-sm">
-                + New
-              </button>
-            </div>
-          </label>
-          <label class="text-sm">
-            <span class="block font-medium text-slate-700 mb-1">Discount %</span>
-            <input id="ord-discount" type="number" min="0" max="100" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
-          </label>
-          <label class="text-sm">
-            <span class="block font-medium text-slate-700 mb-1">Discount £</span>
-            <input id="ord-discount-flat" type="number" min="0" step="0.01" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
-          </label>
-          <label id="ord-status-field" class="text-sm hidden">
-            <span class="block font-medium text-slate-700 mb-1">Status</span>
-            <select id="ord-status" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
-              <option value="draft">Draft</option>
-              <option value="sent">Sent</option>
-              <option value="approved">Approved</option>
-              <option value="declined">Declined</option>
-            </select>
-          </label>
-        </div>
-
-        <div id="ord-new-customer-panel" class="hidden grid gap-2 md:grid-cols-5 mb-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
-          <input id="ord-nc-name" placeholder="Name *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-          <input id="ord-nc-company" placeholder="Company" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-          <input id="ord-nc-email" placeholder="Email" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-          <input id="ord-nc-phone" placeholder="Phone" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-          <div class="flex gap-2">
-            <button type="button" onclick="saveNewCustomerFromOrder()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold">Save</button>
-            <button type="button" onclick="toggleNewCustomerPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold">✕</button>
-          </div>
-          <p id="ord-nc-msg" class="text-xs text-red-600 md:col-span-5"></p>
-          <!-- Shown instead of saving when name/company/email/phone looks
-               like it might already match someone on file - see
-               findPotentialDuplicateCustomers(). -->
-          <div id="ord-nc-dupe-warning" class="hidden md:col-span-5 bg-amber-50 border border-amber-200 rounded-lg p-3"></div>
-        </div>
-
-        <div id="ord-lines" class="space-y-4 mb-4"></div>
-
-        <div class="flex flex-wrap gap-2 mb-4">
-          <button onclick="addOrderLine('catalog')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            + Garment we supply
-          </button>
-          <button onclick="addOrderLine('customer_supplied')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            + Customer's own garment
-          </button>
-        </div>
-
-        <label class="text-sm block mb-4 max-w-xs">
-          <span class="block font-medium text-slate-700 mb-1">Due by</span>
-          <input type="date" id="ord-due-date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
-        </label>
-
-        <label class="text-sm block mb-4">
-          <span class="block font-medium text-slate-700 mb-1">Notes</span>
-          <textarea id="ord-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" placeholder="Artwork notes, turnaround, special instructions…"></textarea>
-        </label>
-
-        <!-- Attach a mockup right here while building/editing the quote -
-             only shows once this quote actually has an id to attach to (see
-             editOrderInBuilder), since a brand-new not-yet-saved quote has
-             nowhere for the file to belong to yet. Same draft-until-sent
-             behaviour as the read-only View panel's card (they're the same
-             functions, just pointed at these element ids instead - see
-             loadOrderDesignProofs/uploadDesignProof/sendDesignProofNow). -->
-        <div id="ord-design-proofs-section" class="hidden bg-slate-50 rounded-xl border border-slate-200 p-4 mb-4">
-          <div class="flex items-center justify-between mb-2">
-            <p class="text-sm font-semibold text-slate-900">Design Proofs <span class="font-normal text-xs text-slate-400">(customer approves/declines by email, no login needed)</span></p>
-            <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer" title="Saved as a draft - nothing is sent to the customer until you email or save/update this quote, or hit Send now">
-              + Attach proof (draft)
-              <input id="ord-proof-file-input" type="file" accept="image/*,.pdf" class="hidden" onchange="uploadDesignProof(editingExistingOrderId, 'ord-proof-file-input', 'ord-proof-upload-status', 'ord-design-proofs')" />
-            </label>
-          </div>
-          <p id="ord-proof-upload-status" class="text-xs mb-2 hidden"></p>
-          <div id="ord-design-proofs"></div>
-        </div>
-        <p id="ord-design-proofs-hint" class="text-xs text-red-600 font-bold mb-4">Save this quote first, then you'll be able to attach a design proof to it.</p>
-
-        <div class="bg-slate-50 rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
-          <div class="text-sm text-slate-600 space-y-0.5">
-            <div>Subtotal: <span id="ord-subtotal" class="font-semibold text-slate-900">£0.00</span></div>
-            <div>Discount: <span id="ord-discount-amt" class="font-semibold text-slate-900">£0.00</span></div>
-          </div>
-          <div class="text-2xl font-bold text-slate-900">Total: <span id="ord-total">£0.00</span></div>
-          <div class="flex gap-2">
-            <button id="ord-cancel-edit-btn" onclick="cancelOrderEdit()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
-              Cancel
-            </button>
-            <button id="ord-save-btn" onclick="saveOrder()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
-              💾 Save as Quote
-            </button>
-          </div>
-        </div>
-        <p id="ord-save-msg" class="text-sm mt-3"></p>
-      </div>
-
-      <!-- View/Edit Order Panel -->
-      <div id="order-view-edit-panel" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-        <div class="flex justify-between items-center mb-6">
-          <h3 id="panel-title" class="text-lg font-bold text-slate-900">View Quote</h3>
-          <button onclick="closeOrderPanel()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
-        </div>
-
-        <div id="order-panel-content" class="space-y-4">
-          <!-- Content will be filled dynamically -->
-        </div>
-
-        <div id="panel-actions" class="mt-6 flex gap-3 justify-end">
-          <!-- Actions will be filled dynamically -->
-        </div>
-      </div>
 
       <!-- Bulk selection bar -->
       <div id="ord-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
@@ -1165,6 +1074,159 @@
     <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-6 text-center">
       <div id="action-toast-icon" class="text-4xl mb-3">✓</div>
       <p id="action-toast-text" class="text-sm text-slate-800 whitespace-pre-line"></p>
+    </div>
+  </div>
+
+  <!-- View/Edit Order Panel - a popup so it can be opened from anywhere
+       (the Quotes & Invoices list, or a quote/invoice number clicked inside
+       the Customer View modal below) regardless of which tab is currently
+       active. z-[60] so it stacks above customer-view-modal (z-50) when
+       opened from within it. See viewOrder()/closeOrderPanel(). -->
+  <div id="order-view-edit-panel" class="hidden fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6">
+      <div class="flex justify-between items-center mb-6">
+        <h3 id="panel-title" class="text-lg font-bold text-slate-900">View Quote</h3>
+        <button onclick="closeOrderPanel()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
+      </div>
+
+      <div id="order-panel-content" class="space-y-4">
+        <!-- Content will be filled dynamically -->
+      </div>
+
+      <div id="panel-actions" class="mt-6 flex gap-3 justify-end">
+        <!-- Actions will be filled dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Quote/Invoice builder popup - opened via the "+ New Quote" / "+ New
+       Invoice" buttons on the Quotes & Invoices toolbar, or by clicking Edit
+       on an existing quote/invoice from any list (including from within the
+       Customer View modal) - see openNewOrderBuilder()/editOrderInBuilder()/
+       closeOrderBuilderModal(). Lives at top level (not inside
+       section-orders) so it still works when opened from a different tab. -->
+  <div id="ord-builder-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div id="ord-builder" class="bg-white rounded-xl shadow-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h3 id="ord-builder-heading" class="font-bold text-slate-900">New Quote</h3>
+        <div class="flex items-center gap-3">
+          <!-- Only shown while creating something new (hidden the moment an
+               existing quote/invoice is opened for editing - see
+               editOrderInBuilder/cancelOrderEdit) - a quote can still become
+               an invoice later via Convert, this is purely for skipping the
+               quote stage entirely when the job's already agreed and just
+               needs invoicing. -->
+          <div id="ord-doctype-toggle" class="inline-flex bg-slate-100 rounded-lg p-1 text-sm font-semibold">
+            <button type="button" id="ord-doctype-quote-btn" onclick="setNewOrderDocType('quote')" class="px-3 py-1.5 rounded-md bg-white text-slate-900 shadow-sm transition">New Quote</button>
+            <button type="button" id="ord-doctype-invoice-btn" onclick="setNewOrderDocType('invoice')" class="px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-800 transition">New Invoice</button>
+          </div>
+          <button type="button" onclick="closeOrderBuilderModal()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
+        </div>
+      </div>
+
+      <div class="grid gap-3 md:grid-cols-3 mb-4">
+        <label class="text-sm">
+          <span class="block font-medium text-slate-700 mb-1">Customer</span>
+          <div class="flex gap-2">
+            <div id="ord-customer-picker" class="flex-1"></div>
+            <input type="hidden" id="ord-customer" />
+            <button type="button" onclick="toggleNewCustomerPanel()" class="shrink-0 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              + New
+            </button>
+          </div>
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium text-slate-700 mb-1">Discount %</span>
+          <input id="ord-discount" type="number" min="0" max="100" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium text-slate-700 mb-1">Discount £</span>
+          <input id="ord-discount-flat" type="number" min="0" step="0.01" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
+        </label>
+        <label id="ord-status-field" class="text-sm hidden">
+          <span class="block font-medium text-slate-700 mb-1">Status</span>
+          <select id="ord-status" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+            <option value="draft">Draft</option>
+            <option value="sent">Sent</option>
+            <option value="approved">Approved</option>
+            <option value="declined">Declined</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="ord-new-customer-panel" class="hidden grid gap-2 md:grid-cols-5 mb-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
+        <input id="ord-nc-name" placeholder="Name *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="ord-nc-company" placeholder="Company" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="ord-nc-email" placeholder="Email" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="ord-nc-phone" placeholder="Phone" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <div class="flex gap-2">
+          <button type="button" onclick="saveNewCustomerFromOrder()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold">Save</button>
+          <button type="button" onclick="toggleNewCustomerPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold">✕</button>
+        </div>
+        <p id="ord-nc-msg" class="text-xs text-red-600 md:col-span-5"></p>
+        <!-- Shown instead of saving when name/company/email/phone looks
+             like it might already match someone on file - see
+             findPotentialDuplicateCustomers(). -->
+        <div id="ord-nc-dupe-warning" class="hidden md:col-span-5 bg-amber-50 border border-amber-200 rounded-lg p-3"></div>
+      </div>
+
+      <div id="ord-lines" class="space-y-4 mb-4"></div>
+
+      <div class="flex flex-wrap gap-2 mb-4">
+        <button onclick="addOrderLine('catalog')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+          + Garment we supply
+        </button>
+        <button onclick="addOrderLine('customer_supplied')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+          + Customer's own garment
+        </button>
+      </div>
+
+      <label class="text-sm block mb-4 max-w-xs">
+        <span class="block font-medium text-slate-700 mb-1">Due by</span>
+        <input type="date" id="ord-due-date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+      </label>
+
+      <label class="text-sm block mb-4">
+        <span class="block font-medium text-slate-700 mb-1">Notes</span>
+        <textarea id="ord-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" placeholder="Artwork notes, turnaround, special instructions…"></textarea>
+      </label>
+
+      <!-- Attach a mockup right here while building/editing the quote -
+           only shows once this quote actually has an id to attach to (see
+           editOrderInBuilder), since a brand-new not-yet-saved quote has
+           nowhere for the file to belong to yet. Same draft-until-sent
+           behaviour as the read-only View panel's card (they're the same
+           functions, just pointed at these element ids instead - see
+           loadOrderDesignProofs/uploadDesignProof/sendDesignProofNow). -->
+      <div id="ord-design-proofs-section" class="hidden bg-slate-50 rounded-xl border border-slate-200 p-4 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-sm font-semibold text-slate-900">Design Proofs <span class="font-normal text-xs text-slate-400">(customer approves/declines by email, no login needed)</span></p>
+          <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer" title="Saved as a draft - nothing is sent to the customer until you email or save/update this quote, or hit Send now">
+            + Attach proof (draft)
+            <input id="ord-proof-file-input" type="file" accept="image/*,.pdf" class="hidden" onchange="uploadDesignProof(editingExistingOrderId, 'ord-proof-file-input', 'ord-proof-upload-status', 'ord-design-proofs')" />
+          </label>
+        </div>
+        <p id="ord-proof-upload-status" class="text-xs mb-2 hidden"></p>
+        <div id="ord-design-proofs"></div>
+      </div>
+      <p id="ord-design-proofs-hint" class="text-xs text-red-600 font-bold mb-4">Save this quote first, then you'll be able to attach a design proof to it.</p>
+
+      <div class="bg-slate-50 rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
+        <div class="text-sm text-slate-600 space-y-0.5">
+          <div>Subtotal: <span id="ord-subtotal" class="font-semibold text-slate-900">£0.00</span></div>
+          <div>Discount: <span id="ord-discount-amt" class="font-semibold text-slate-900">£0.00</span></div>
+        </div>
+        <div class="text-2xl font-bold text-slate-900">Total: <span id="ord-total">£0.00</span></div>
+        <div class="flex gap-2">
+          <button id="ord-cancel-edit-btn" onclick="cancelOrderEdit()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+            Cancel
+          </button>
+          <button id="ord-save-btn" onclick="saveOrder()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+            💾 Save as Quote
+          </button>
+        </div>
+      </div>
+      <p id="ord-save-msg" class="text-sm mt-3"></p>
     </div>
   </div>
 
@@ -2108,6 +2170,10 @@
         const res = await fetch(API_ORDERS_URL + '?customer_id=' + encodeURIComponent(id));
         if (!res.ok) throw new Error('HTTP ' + res.status);
         customerHistoryOrders = await res.json();
+        // So viewOrder() (opened by clicking a row below) can find the order
+        // even if the Quotes & Invoices tab (which normally populates this)
+        // hasn't been visited yet this session.
+        customerHistoryOrders.forEach((o) => { ordersById[o.id] = o; });
       } catch (e) {
         customerHistoryOrders = [];
         document.getElementById('cv-orders-body').innerHTML = '<tr><td colspan="4" class="p-4 text-center text-red-500 text-sm">Could not load order history.</td></tr>';
@@ -2304,6 +2370,7 @@
               </div>
               <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not emailed yet'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
               ${p.decision_notes ? `<div class="text-xs text-slate-600 mt-0.5"><strong>Note:</strong> ${escapeHtml(p.decision_notes)}</div>` : ''}
+              ${p.image_consent ? `<div class="text-xs mt-0.5">📷 Image use consent: <strong>${p.image_consent === 'yes' ? 'Yes' : 'No'}</strong></div>` : ''}
             </div>
           </div>`;
         }).join('');
@@ -3100,7 +3167,7 @@
             ? '<span class="block text-xs text-slate-400 mt-0.5">Emailed ' + (o.email_sent_count > 1 ? o.email_sent_count + '&times; &middot; last ' : '') + escapeHtml(ukDate(o.email_sent_at)) + '</span>'
             : '';
           return '<tr class="hover:bg-slate-50">' +
-            '<td class="p-2 font-semibold text-slate-900">' + escapeHtml(number) + emailedNote + '</td>' +
+            '<td class="p-2"><button type="button" onclick="viewOrder(\'' + escapeAttr(o.id) + '\')" class="font-semibold text-indigo-600 hover:underline">' + escapeHtml(number) + '</button>' + emailedNote + '</td>' +
             '<td class="p-2 text-slate-600">' + escapeHtml(ukDate(o.created_at)) + '</td>' +
             '<td class="p-2 text-right font-medium text-slate-900">' + money(o.total) + '</td>' +
             '<td class="p-2"><span class="px-2 py-0.5 text-xs font-semibold rounded-full ' + statusClass + '">' + escapeHtml(statusLabel) + '</span></td>' +
@@ -5838,6 +5905,23 @@
     // converting a quote he never needed.
     let newOrderDocType = 'quote';
 
+    function openOrderBuilderModal() {
+      document.getElementById('ord-builder-modal').classList.remove('hidden');
+    }
+
+    function closeOrderBuilderModal() {
+      document.getElementById('ord-builder-modal').classList.add('hidden');
+    }
+
+    // Entry point for the "+ New Quote" / "+ New Invoice" buttons - resets
+    // the builder to a clean blank state (cancelOrderEdit is a safe no-op if
+    // nothing was already being edited) and opens it as a popup.
+    function openNewOrderBuilder(type) {
+      cancelOrderEdit();
+      setNewOrderDocType(type);
+      openOrderBuilderModal();
+    }
+
     function setNewOrderDocType(type) {
       newOrderDocType = type;
       const activeCls = 'px-3 py-1.5 rounded-md bg-white text-slate-900 shadow-sm transition';
@@ -5952,6 +6036,7 @@
       const o = ordersById[id];
       if (!o) return;
       closeOrderPanel();
+      openOrderBuilderModal();
       editingExistingOrderId = id;
 
       orderLines = (o.items || []).map((item) => {
@@ -6041,6 +6126,7 @@
     }
 
     function cancelOrderEdit() {
+      closeOrderBuilderModal();
       editingExistingOrderId = null;
       orderLines = [];
       document.getElementById('ord-doctype-toggle').classList.remove('hidden');
@@ -6109,7 +6195,7 @@
           actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
           actions.push(`<a href="${API_ORDER_PDF_URL}?id=${escapeAttr(o.id)}" target="_blank" title="Download a PDF copy - the same file that goes out with the emailed copy" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">PDF</a>`);
           actions.push(`<button id="email-order-btn-${o.id}" onclick="emailOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Email</button>`);
-          actions.push(`<button onclick="archiveOrder('${o.id}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Archive</button>`);
+          actions.push(`<button onclick="openArchiveChoice('${escapeAttr(o.id)}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Archive</button>`);
           actions.push(`<button onclick="deleteOrder('${o.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold">Delete</button>`);
 
           return `
@@ -6322,7 +6408,6 @@
       `;
 
       panel.classList.remove('hidden');
-      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     // The full send history for this quote/invoice - every "Emailed again"
@@ -6440,6 +6525,7 @@
               </div>
               <div class="text-xs text-slate-400">${p.sent_at ? 'Emailed ' + escapeHtml(ukDate(p.sent_at)) : 'Not sent yet - will go out with your next email, or hit Send now'}${p.decided_at ? ' · Decided ' + escapeHtml(ukDate(p.decided_at)) : ''}</div>
               ${p.decision_notes ? `<div class="text-xs text-slate-600 mt-0.5"><strong>Note:</strong> ${escapeHtml(p.decision_notes)}</div>` : ''}
+              ${p.image_consent ? `<div class="text-xs mt-0.5">📷 Image use consent: <strong>${p.image_consent === 'yes' ? 'Yes' : 'No'}</strong></div>` : ''}
               ${!p.sent_at ? `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Send now</button>
               <button type="button" onclick="deleteDesignProof('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-rose-500 hover:text-rose-700 font-semibold mt-1 ml-3">Delete</button>` : `<button type="button" title="Email this version again - works whether it's pending, approved or declined" onclick="resendDesignProof('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Resend</button>`}
             </div>
@@ -6610,6 +6696,7 @@
     function closeNewQuoteProofModal() {
       newQuoteProofOrderId = null;
       document.getElementById('new-quote-proof-modal').classList.add('hidden');
+      closeOrderBuilderModal();
       loadOrders();
     }
 
@@ -6776,42 +6863,84 @@
       loadOrders();
     }
 
-    async function archiveOrder(id) {
+    // Which order the one-click Completed/Pending choice popup is currently
+    // asking about - see openArchiveChoice/archiveOrder.
+    let archiveChoiceOrderId = null;
+
+    function openArchiveChoice(id) {
+      archiveChoiceOrderId = id;
+      document.getElementById('order-archive-choice-modal').classList.remove('hidden');
+    }
+
+    function closeArchiveChoice() {
+      archiveChoiceOrderId = null;
+      document.getElementById('order-archive-choice-modal').classList.add('hidden');
+    }
+
+    // One click, no confirmation step - whichever button was clicked
+    // (Completed/Pending) archives it into that section immediately.
+    async function archiveOrder(bucket) {
+      const id = archiveChoiceOrderId;
+      if (!id) return;
+      closeArchiveChoice();
       await fetch(API_ORDERS_URL, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, action: 'archive' }),
+        body: JSON.stringify({ id, action: 'archive', bucket }),
       });
       loadOrders();
     }
 
+    function archivedOrderRow(o) {
+      const number = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
+      const isCompleted = o.archive_bucket === 'completed';
+      return `<tr>
+        <td class="p-2 font-semibold text-slate-900">${escapeHtml(number)}</td>
+        <td class="p-2">${escapeHtml(o.customer_name)}</td>
+        <td class="p-2">${money(o.total)}</td>
+        <td class="p-2 text-xs text-slate-500">${escapeHtml(ukDate(o.archived_at))}</td>
+        <td class="p-2 text-right whitespace-nowrap">
+          <button onclick="restoreOrder('${escapeAttr(o.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Restore</button>
+          <button onclick="moveArchiveBucket('${escapeAttr(o.id)}', '${isCompleted ? 'pending' : 'completed'}')" title="Move to the other section - fixes a mis-filed item, no need to restore and rearchive" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Move to ${isCompleted ? 'Pending' : 'Completed'}</button>
+          <button onclick="removeArchivedProofImages('${escapeAttr(o.id)}')" title="Deletes the actual image file(s) to free up storage - keeps the record of what was attached and what the customer decided" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Remove image from database</button>
+        </td>
+      </tr>`;
+    }
+
     async function openOrderArchive() {
       const modal = document.getElementById('order-archive-modal');
-      const tbody = document.getElementById('order-archive-body');
-      tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      const completedBody = document.getElementById('order-archive-completed-body');
+      const pendingBody = document.getElementById('order-archive-pending-body');
+      completedBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      pendingBody.innerHTML = '';
       modal.classList.remove('hidden');
       try {
         const res = await fetch(API_ORDERS_URL + '?archived=1', { cache: 'no-store' });
         const rows = await res.json();
-        if (!Array.isArray(rows) || !rows.length) {
-          tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing archived.</td></tr>';
-          return;
-        }
-        tbody.innerHTML = rows.map((o) => {
-          const number = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
-          return `<tr>
-            <td class="p-2 font-semibold text-slate-900">${escapeHtml(number)}</td>
-            <td class="p-2">${escapeHtml(o.customer_name)}</td>
-            <td class="p-2">${money(o.total)}</td>
-            <td class="p-2 text-xs text-slate-500">${escapeHtml(ukDate(o.archived_at))}</td>
-            <td class="p-2 text-right whitespace-nowrap">
-              <button onclick="restoreOrder('${escapeAttr(o.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Restore</button>
-              <button onclick="removeArchivedProofImages('${escapeAttr(o.id)}')" title="Deletes the actual image file(s) to free up storage - keeps the record of what was attached and what the customer decided" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Remove image from database</button>
-            </td>
-          </tr>`;
-        }).join('');
+        if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
+
+        // Anything archived before this split existed has no archive_bucket
+        // set - treated as Pending rather than silently dropped.
+        const completed = rows.filter((o) => o.archive_bucket === 'completed');
+        const pending = rows.filter((o) => o.archive_bucket !== 'completed');
+
+        completedBody.innerHTML = completed.length
+          ? completed.map(archivedOrderRow).join('')
+          : '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing here.</td></tr>';
+        pendingBody.innerHTML = pending.length
+          ? pending.map(archivedOrderRow).join('')
+          : '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing here.</td></tr>';
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-500 text-sm">Could not load archived items.</td></tr>';
+        completedBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-500 text-sm">Could not load archived items.</td></tr>';
+        pendingBody.innerHTML = '';
       }
+    }
+
+    async function moveArchiveBucket(id, bucket) {
+      await fetch(API_ORDERS_URL, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action: 'set_archive_bucket', bucket }),
+      });
+      openOrderArchive();
     }
 
     function closeOrderArchive() {

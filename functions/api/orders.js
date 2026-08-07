@@ -210,6 +210,17 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // archive_bucket - which of the two Archive sections ("Completed" or
+    // "Pending") this lands in, picked by hand with one click at the moment
+    // it's archived (see the archive_bucket-choice popup in admin.html) -
+    // deliberately not derived from paid_status/status, since "the physical
+    // job is finished" and "the invoice is paid" are different things.
+    // NULL for anything archived before this existed - treated as Pending.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN archive_bucket TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
@@ -308,12 +319,21 @@ export async function onRequest(context) {
       if (!existing) return json({ error: "Order not found" }, 404);
 
       if (data.action === "archive") {
-        await db.prepare("UPDATE orders SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
+        const bucket = data.bucket === "completed" ? "completed" : "pending";
+        await db.prepare("UPDATE orders SET archived_at = CURRENT_TIMESTAMP, archive_bucket = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(bucket, data.id).run();
         return json({ success: true });
       }
 
       if (data.action === "unarchive") {
-        await db.prepare("UPDATE orders SET archived_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
+        await db.prepare("UPDATE orders SET archived_at = NULL, archive_bucket = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
+        return json({ success: true });
+      }
+
+      // Fixes a mis-filed archived item (Completed <-> Pending) without
+      // having to unarchive and rearchive it.
+      if (data.action === "set_archive_bucket") {
+        const bucket = data.bucket === "completed" ? "completed" : "pending";
+        await db.prepare("UPDATE orders SET archive_bucket = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(bucket, data.id).run();
         return json({ success: true });
       }
 
