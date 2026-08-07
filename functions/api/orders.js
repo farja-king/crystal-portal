@@ -244,6 +244,11 @@ export async function onRequest(context) {
       const docType = url.searchParams.get("doc_type");
       const customerId = url.searchParams.get("customer_id");
       const archived = url.searchParams.get("archived");
+      // ?all=1 - every order regardless of archived_at, for reporting (the
+      // Dashboard) where an archived sale still needs to count towards
+      // revenue/stats - archiving only declutters the working list, it was
+      // never meant to erase a completed sale from the numbers.
+      const includeAll = url.searchParams.get("all");
       const where = [];
       const binds = [];
       if (docType) { where.push("doc_type = ?"); binds.push(docType); }
@@ -254,7 +259,7 @@ export async function onRequest(context) {
       // default view.
       if (archived) {
         where.push("archived_at IS NOT NULL");
-      } else if (!customerId) {
+      } else if (!customerId && !includeAll) {
         where.push("archived_at IS NULL");
       }
       const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";

@@ -7593,7 +7593,11 @@
     async function loadDashboard() {
       const tiles = document.getElementById('dash-tiles');
       try {
-        const res = await fetch(API_ORDERS_URL, { cache: 'no-store' });
+        // ?all=1 - includes archived orders too, so a completed/archived
+        // sale still counts towards revenue and stats here (archiving only
+        // tidies the Quotes & Invoices list, it shouldn't erase the sale
+        // from reporting).
+        const res = await fetch(API_ORDERS_URL + '?all=1', { cache: 'no-store' });
         dashboardOrders = await res.json();
       } catch (e) {
         dashboardOrders = [];
