@@ -21,16 +21,69 @@ export async function onRequest(context) {
   const json = (body, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+  // notify: true for the two milestones a customer actually cares about
+  // hearing from us about - the middle three are useful for Martin to track
+  // but not the kind of thing worth an email each time. Fully editable
+  // afterward, same as everything else about these steps.
   const DEFAULT_STEPS = [
-    "Artwork approved",
-    "Garments ordered",
-    "In production",
-    "Quality check",
-    "Ready for collection/dispatch",
+    { title: "Artwork approved", notify: true },
+    { title: "Garments ordered", notify: false },
+    { title: "In production", notify: false },
+    { title: "Quality check", notify: false },
+    { title: "Ready for collection/dispatch", notify: true },
   ];
 
   if (!bucket) {
     return json({ error: "File storage isn't set up yet - the DESIGN_FILES R2 bucket binding is missing from this Pages project." }, 500);
+  }
+
+  const escapeHtml = (str) => String(str ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+  // Emailed the moment a step flagged notify_customer is first marked done
+  // (see the PUT handler below) - same Resend setup and email_log table as
+  // design-proofs.js/payment-reminders.js, so this shows up for free in the
+  // order's existing Communication History panel.
+  async function sendStepNotification(orderId, stepTitle) {
+    if (!env.RESEND_API_KEY) return { sent: false, reason: "Email isn't set up yet - the RESEND_API_KEY secret is missing." };
+    const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(orderId).first();
+    if (!order) return { sent: false, reason: "Order not found" };
+    const to = (order.customer_email || "").trim();
+    if (!to) return { sent: false, reason: "No email address on file for this customer" };
+
+    const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
+    const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
+    const docNumber = order.doc_type === "invoice" ? order.invoice_number : order.quote_number;
+    const subject = `Order update: ${stepTitle} - ${docNumber}`;
+    const html = `
+      <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
+        <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
+        <div style="color:#64748b;margin-bottom:20px;">Update on your order ${escapeHtml(docNumber)}</div>
+        <p>Hi ${escapeHtml(order.customer_name)},</p>
+        <p>Good news - your order has reached the next stage: <strong>${escapeHtml(stepTitle)}</strong>.</p>
+        <p>We'll keep you updated as it progresses.</p>
+        <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
+      </div>`;
+
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: fromAddress, to: [to], reply_to: replyToAddress, subject, html }),
+      });
+      if (!res.ok) return { sent: false, reason: "Resend rejected the email" };
+      try {
+        await db.prepare(
+          "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
+        ).bind(crypto.randomUUID(), orderId, to, subject).run();
+      } catch (e) {
+        // email_log table doesn't exist yet (send-email.js/payment-reminders.js
+        // create it lazily) - the email still sent, just not logged this time
+      }
+      return { sent: true };
+    } catch (e) {
+      return { sent: false, reason: e.message };
+    }
   }
 
   try {
@@ -47,6 +100,16 @@ export async function onRequest(context) {
       )
     `).run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_production_steps_order ON production_steps (order_id)").run();
+    // notify_customer - whether marking this step done should email the
+    // customer. notified_at - when that email last actually went out
+    // (cleared on reopen, so re-completing a step can notify again).
+    for (const col of ["notify_customer INTEGER DEFAULT 0", "notified_at TEXT"]) {
+      try {
+        await db.prepare(`ALTER TABLE production_steps ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
+    }
 
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS production_step_images (
@@ -141,8 +204,8 @@ export async function onRequest(context) {
       if (!existing.length) {
         for (let i = 0; i < DEFAULT_STEPS.length; i++) {
           await db.prepare(
-            "INSERT INTO production_steps (id, order_id, title, position) VALUES (?, ?, ?, ?)"
-          ).bind(crypto.randomUUID(), orderId, DEFAULT_STEPS[i], i).run();
+            "INSERT INTO production_steps (id, order_id, title, position, notify_customer) VALUES (?, ?, ?, ?, ?)"
+          ).bind(crypto.randomUUID(), orderId, DEFAULT_STEPS[i].title, i, DEFAULT_STEPS[i].notify ? 1 : 0).run();
         }
       }
 
@@ -223,14 +286,29 @@ export async function onRequest(context) {
       const title = data.title !== undefined ? String(data.title).slice(0, 200) : existing.title;
       const notes = data.notes !== undefined ? String(data.notes).slice(0, 2000) : existing.notes;
       const status = data.status === "done" ? "done" : data.status === "pending" ? "pending" : existing.status;
+      const notifyCustomer = data.notify_customer !== undefined ? (data.notify_customer ? 1 : 0) : existing.notify_customer;
+      const justCompleted = status === "done" && existing.status !== "done";
       const completedAt = status === "done"
         ? (existing.status === "done" ? existing.completed_at : new Date().toISOString())
         : null;
+      // Reopening clears notified_at so a later re-completion can notify
+      // again - notified_at means "when the customer was last told about
+      // THIS completion", not "has this step ever emailed".
+      let notifiedAt = status === "done" ? existing.notified_at : null;
 
       await db.prepare(
-        "UPDATE production_steps SET title = ?, notes = ?, status = ?, completed_at = ? WHERE id = ?"
-      ).bind(title, notes, status, completedAt, data.id).run();
-      return json({ success: true });
+        "UPDATE production_steps SET title = ?, notes = ?, status = ?, notify_customer = ?, completed_at = ?, notified_at = ? WHERE id = ?"
+      ).bind(title, notes, status, notifyCustomer, completedAt, notifiedAt, data.id).run();
+
+      let emailResult = null;
+      if (justCompleted && notifyCustomer) {
+        emailResult = await sendStepNotification(existing.order_id, title);
+        if (emailResult.sent) {
+          notifiedAt = new Date().toISOString();
+          await db.prepare("UPDATE production_steps SET notified_at = ? WHERE id = ?").bind(notifiedAt, data.id).run();
+        }
+      }
+      return json({ success: true, notified_at: notifiedAt, email: emailResult });
     }
 
     if (request.method === "DELETE") {

@@ -6690,6 +6690,10 @@
             <div class="flex items-center justify-between gap-2 flex-wrap">
               <input type="text" value="${escapeAttr(s.title)}" onblur="saveStepTitle('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" class="flex-1 min-w-[8rem] text-sm bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 ${titleCls}" />
               <div class="flex items-center gap-1 shrink-0">
+                <label title="Email the customer automatically when this step is marked done" class="flex items-center gap-1 text-xs text-slate-500 px-1">
+                  <input type="checkbox" ${s.notify_customer ? 'checked' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
+                  📧
+                </label>
                 <button type="button" onclick="toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone})" title="${isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">${isDone ? '↺' : '✓'}</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'up')" title="Move up" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▲</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'down')" title="Move down" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▼</button>
@@ -6701,6 +6705,7 @@
               </div>
             </div>
             <textarea placeholder="Notes…" onblur="saveStepNotes('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" rows="1" class="w-full text-xs text-slate-600 bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 mt-1 resize-y">${escapeHtml(s.notes || '')}</textarea>
+            ${s.notified_at ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Emailed ${escapeHtml(ukDate(s.notified_at))}</div>` : ''}
             ${imagesHtml ? `<div class="mt-1">${imagesHtml}</div>` : ''}
           </div>
         </div>`;
@@ -6726,10 +6731,18 @@
 
     async function toggleStepDone(id, orderId, wasDone) {
       try {
-        await fetch(API_PRODUCTION_STEPS_URL, {
+        const res = await fetch(API_PRODUCTION_STEPS_URL, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, status: wasDone ? 'pending' : 'done' }),
         });
+        const data = await res.json();
+        if (data.email) {
+          if (data.email.sent) {
+            showActionToast('📧', 'Customer emailed about this update.');
+          } else if (data.email.reason) {
+            showActionToast('⚠', "Marked done, but couldn't email the customer: " + data.email.reason);
+          }
+        }
         loadProductionSteps(orderId);
         loadOrders(); // keeps the main list's production badge in sync
       } catch (e) {
@@ -6770,6 +6783,17 @@
         });
       } catch (e) {
         showActionToast('⚠', 'Could not save note: ' + e.message);
+      }
+    }
+
+    async function saveStepNotify(id, orderId, notifyCustomer) {
+      try {
+        await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, notify_customer: notifyCustomer }),
+        });
+      } catch (e) {
+        showActionToast('⚠', 'Could not save: ' + e.message);
       }
     }
 
