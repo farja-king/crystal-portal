@@ -254,7 +254,12 @@
 
       <!-- Edit Customer Form (hidden until Edit is clicked) -->
       <div id="customer-edit-form" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-        <h3 id="customer-edit-form-title" class="text-lg font-bold text-slate-900 mb-4">Edit Customer</h3>
+        <div class="flex items-center justify-between mb-4">
+          <h3 id="customer-edit-form-title" class="text-lg font-bold text-slate-900">Edit Customer</h3>
+          <button id="cust-edit-delete-top" type="button" onclick="deleteCustomerFromEditForm()" class="hidden bg-white border border-rose-300 hover:bg-rose-50 text-rose-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Delete customer
+          </button>
+        </div>
         <!-- Shown instead of saving when name/company/email/phone looks like
              it might already match someone on file - only relevant when
              adding a new customer, see findPotentialDuplicateCustomers(). -->
@@ -342,6 +347,9 @@
           </button>
           <button onclick="closeCustomerEditForm()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             Cancel
+          </button>
+          <button id="cust-edit-delete-bottom" type="button" onclick="deleteCustomerFromEditForm()" class="hidden ml-auto bg-white border border-rose-300 hover:bg-rose-50 text-rose-600 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Delete customer
           </button>
         </div>
       </div>
@@ -3244,6 +3252,8 @@
       document.getElementById('edit-lifetime-spend').value = c.lifetime_spend || 0;
       document.getElementById('edit-transaction-count').value = c.transaction_count || 0;
       document.getElementById('edit-last-visit').value = (c.last_visit || '').slice(0, 10);
+      document.getElementById('cust-edit-delete-top').classList.remove('hidden');
+      document.getElementById('cust-edit-delete-bottom').classList.remove('hidden');
       document.getElementById('customer-edit-form').classList.remove('hidden');
       document.getElementById('customer-directory-list').classList.add('hidden');
       document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3266,6 +3276,8 @@
       document.getElementById('edit-lifetime-spend').value = 0;
       document.getElementById('edit-transaction-count').value = 0;
       document.getElementById('edit-last-visit').value = '';
+      document.getElementById('cust-edit-delete-top').classList.add('hidden');
+      document.getElementById('cust-edit-delete-bottom').classList.add('hidden');
       document.getElementById('customer-edit-form').classList.remove('hidden');
       document.getElementById('customer-directory-list').classList.add('hidden');
       document.getElementById('customer-edit-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3277,6 +3289,16 @@
       addingNewCustomer = false;
       document.getElementById('customer-edit-form').classList.add('hidden');
       document.getElementById('customer-directory-list').classList.remove('hidden');
+    }
+
+    // Same soft-delete as the row-level Delete in the Customer Directory
+    // table, just reachable from inside the edit form too (top and bottom -
+    // see the two buttons in #customer-edit-form) so you don't have to
+    // close out and find the row again while already looking at the record.
+    async function deleteCustomerFromEditForm() {
+      if (!editingCustomerId) return;
+      await deleteCustomerRow(editingCustomerId);
+      if (!customersById[editingCustomerId]) closeCustomerEditForm();
     }
 
     function renderCustomerEditDupeWarning(matches) {
