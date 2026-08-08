@@ -6789,11 +6789,12 @@
           ? '<div class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold shrink-0">●</div>'
           : '<div class="w-6 h-6 rounded-full border-2 border-slate-300 shrink-0"></div>';
         const titleCls = isDone ? 'text-slate-400 line-through' : isCurrent ? 'text-slate-900 font-semibold' : 'text-slate-500';
-        // Ticking this one done schedules the review-request email instead
-        // of the plain per-step notify (see toggleStepDone) - the 📧 toggle
-        // doesn't apply to it, so it's hidden here rather than shown but inert.
-        const notifyToggle = isCollectedStep ? '' : `
-                <label title="Email the customer automatically when this step is marked done" class="flex items-center gap-1 text-xs text-slate-500 px-1">
+        // Shown on every step, including "Order collected", for a
+        // consistent row - it just doesn't do anything for that one step,
+        // since ticking it done always opens the review-request scheduling
+        // popup instead of the plain per-step notify (see toggleStepDone).
+        const notifyToggle = `
+                <label title="${isCollectedStep ? "Not used for this step - ticking it done opens the review-request scheduling popup instead" : 'Email the customer automatically when this step is marked done'}" class="flex items-center gap-1 text-xs text-slate-500 px-1">
                   <input type="checkbox" ${s.notify_customer ? 'checked' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
                   📧
                 </label>`;
