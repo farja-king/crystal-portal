@@ -6394,6 +6394,29 @@
       }
     }
 
+    // Forces a scheduled-but-not-yet-sent review request out immediately -
+    // for when the Worker's cron hasn't reached the scheduled time yet (or
+    // simply hasn't run since it was scheduled) and it shouldn't wait any
+    // longer. Reuses confirm_pickup with send_at = now rather than a
+    // separate endpoint.
+    async function sendPickupReviewNow(orderId) {
+      try {
+        const res = await fetch('/api/review-requests', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'confirm_pickup', id: orderId, send_at: new Date().toISOString() }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast(data.email && data.email.sent ? '📧' : '⚠',
+          data.email && data.email.sent ? 'Review request emailed now.' : ('Could not email now: ' + (data.email && data.email.reason)));
+      } catch (e) {
+        showActionToast('⚠', 'Could not send: ' + e.message);
+      } finally {
+        loadProductionSteps(orderId);
+        loadOrders();
+      }
+    }
+
     async function loadOrders() {
       ordersLoaded = true;
       loadReminderDays();
@@ -6774,7 +6797,9 @@
           ? (order.review_email_sent_at
               ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Review request sent ${escapeHtml(ukDate(order.review_email_sent_at))}</div>`
               : order.review_email_scheduled_at
-              ? `<div class="text-xs text-sky-600 mt-0.5">🕐 Review request due ${escapeHtml(new Date(order.review_email_scheduled_at).toLocaleString('en-GB'))}</div>`
+              ? `<div class="text-xs text-sky-600 mt-0.5">🕐 Review request due ${escapeHtml(new Date(order.review_email_scheduled_at).toLocaleString('en-GB'))}
+                  <button type="button" onclick="sendPickupReviewNow('${escapeAttr(orderId)}')" class="ml-1 text-indigo-600 hover:text-indigo-800 font-semibold underline">Send now</button>
+                </div>`
               : '')
           : '';
         const imagesHtml = (s.images || []).map((img) => `
