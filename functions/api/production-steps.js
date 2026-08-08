@@ -24,19 +24,18 @@ export async function onRequest(context) {
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   // notify: true for the two milestones a customer actually cares about
-  // hearing from us about - the middle three are useful for Martin to track
+  // hearing from us about - the middle two are useful for Martin to track
   // but not the kind of thing worth an email each time. Fully editable
   // afterward, same as everything else about these steps.
   const DEFAULT_STEPS = [
     { title: "Artwork approved", notify: true },
     { title: "Garments ordered", notify: false },
     { title: "In production", notify: false },
-    { title: "Quality check", notify: false },
     { title: "Ready for collection/dispatch", notify: true },
-    // Not notify-enabled itself - the customer-facing "hope you enjoyed it,
-    // please leave a review" follow-up is a separate, schedulable flow (the
-    // "Confirmed Pickup?" checkbox on the main list - see
-    // functions/api/review-requests.js), not this step's own tick.
+    // Not notify-enabled itself - marking this one done is what triggers
+    // the "Confirmed Pickup?" review-request scheduling popup in admin.html
+    // (see toggleStepDone/schedulePickupReview and
+    // functions/api/review-requests.js), not a plain notify email.
     { title: "Order collected", notify: false },
   ];
 

@@ -6328,37 +6328,24 @@
       }
     }
 
-    // "Confirmed Pickup?" checkbox on the main list - unticking is just a
-    // correction (no popup needed), ticking asks when to send the
-    // "hope you enjoyed it" review-request email (see review-requests.js).
+    // Merged into the Production Tracker's "Order collected" step (was
+    // previously a separate "Confirmed Pickup?" checkbox on the main list) -
+    // ticking that specific step done is what opens this popup, via
+    // toggleStepDone below. Reopening that step calls unconfirm_pickup
+    // directly with no popup, same as unticking a plain checkbox used to.
     let pickupScheduleOrderId = null;
-
-    async function onConfirmedPickupChange(id, checked) {
-      if (!checked) {
-        try {
-          await fetch('/api/review-requests', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'unconfirm_pickup', id }),
-          });
-          loadOrders();
-        } catch (e) {
-          showActionToast('⚠', 'Could not update: ' + e.message);
-        }
-        return;
-      }
-      pickupScheduleOrderId = id;
-      document.getElementById('pickup-schedule-modal').classList.remove('hidden');
-    }
+    let pickupScheduleStepId = null;
 
     function closePickupScheduleModal() {
       pickupScheduleOrderId = null;
+      pickupScheduleStepId = null;
       document.getElementById('pickup-schedule-modal').classList.add('hidden');
-      loadOrders(); // nothing was saved - reload so the checkbox reverts to unticked
     }
 
     async function schedulePickupReview(preset) {
-      const id = pickupScheduleOrderId;
-      if (!id) return;
+      const orderId = pickupScheduleOrderId;
+      const stepId = pickupScheduleStepId;
+      if (!orderId || !stepId) return;
       const now = new Date();
       let sendAt;
       if (preset === 'now') {
@@ -6378,9 +6365,16 @@
 
       document.getElementById('pickup-schedule-modal').classList.add('hidden');
       try {
+        // Only now actually mark "Order collected" done - it was withheld
+        // until a time was chosen (see toggleStepDone), so cancelling this
+        // popup leaves the step untouched.
+        await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: stepId, status: 'done' }),
+        });
         const res = await fetch('/api/review-requests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'confirm_pickup', id, send_at: sendAt.toISOString() }),
+          body: JSON.stringify({ action: 'confirm_pickup', id: orderId, send_at: sendAt.toISOString() }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
@@ -6394,6 +6388,8 @@
         showActionToast('⚠', 'Could not schedule: ' + e.message);
       } finally {
         pickupScheduleOrderId = null;
+        pickupScheduleStepId = null;
+        loadProductionSteps(orderId);
         loadOrders();
       }
     }
@@ -6481,13 +6477,7 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}${productionBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}
-                <label class="flex items-center gap-1 text-xs text-slate-600 mt-1.5" title="Ticking this schedules a 'hope you enjoyed it, please leave a review' email">
-                  <input type="checkbox" ${o.pickup_confirmed_at ? 'checked' : ''} onchange="onConfirmedPickupChange('${escapeAttr(o.id)}', this.checked)" class="rounded border-slate-300" />
-                  Confirmed Pickup?
-                </label>
-                ${o.review_email_sent_at ? `<span class="block text-xs text-emerald-600 mt-0.5">Review request sent ${escapeHtml(ukDate(o.review_email_sent_at))}</span>` : (o.review_email_scheduled_at ? `<span class="block text-xs text-sky-600 mt-0.5">Review request due ${escapeHtml(new Date(o.review_email_scheduled_at).toLocaleString('en-GB'))}</span>` : '')}
-              </td>
+              <td class="p-4">${statusBadge}${productionBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
@@ -6760,15 +6750,33 @@
       }
       const firstPendingIdx = steps.findIndex((s) => s.status !== 'done');
 
+      const order = ordersById[orderId];
+
       el.innerHTML = steps.map((s, idx) => {
         const isDone = s.status === 'done';
         const isCurrent = !isDone && idx === firstPendingIdx;
+        const isCollectedStep = /collected/i.test(s.title || '');
         const marker = isDone
           ? '<div class="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold shrink-0">✓</div>'
           : isCurrent
           ? '<div class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold shrink-0">●</div>'
           : '<div class="w-6 h-6 rounded-full border-2 border-slate-300 shrink-0"></div>';
         const titleCls = isDone ? 'text-slate-400 line-through' : isCurrent ? 'text-slate-900 font-semibold' : 'text-slate-500';
+        // Ticking this one done schedules the review-request email instead
+        // of the plain per-step notify (see toggleStepDone) - the 📧 toggle
+        // doesn't apply to it, so it's hidden here rather than shown but inert.
+        const notifyToggle = isCollectedStep ? '' : `
+                <label title="Email the customer automatically when this step is marked done" class="flex items-center gap-1 text-xs text-slate-500 px-1">
+                  <input type="checkbox" ${s.notify_customer ? 'checked' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
+                  📧
+                </label>`;
+        const pickupStatusHtml = isCollectedStep && order
+          ? (order.review_email_sent_at
+              ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Review request sent ${escapeHtml(ukDate(order.review_email_sent_at))}</div>`
+              : order.review_email_scheduled_at
+              ? `<div class="text-xs text-sky-600 mt-0.5">🕐 Review request due ${escapeHtml(new Date(order.review_email_scheduled_at).toLocaleString('en-GB'))}</div>`
+              : '')
+          : '';
         const imagesHtml = (s.images || []).map((img) => `
           <div class="relative inline-block mr-2 mb-2">
             <a href="${API_PRODUCTION_STEPS_URL}?view=${escapeAttr(img.id)}" target="_blank"><img src="${API_PRODUCTION_STEPS_URL}?view=${escapeAttr(img.id)}" class="w-14 h-14 object-cover rounded-lg border border-slate-200" /></a>
@@ -6785,11 +6793,8 @@
             <div class="flex items-center justify-between gap-2 flex-wrap">
               <input type="text" value="${escapeAttr(s.title)}" onblur="saveStepTitle('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" class="flex-1 min-w-[8rem] text-sm bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 ${titleCls}" />
               <div class="flex items-center gap-1 shrink-0">
-                <label title="Email the customer automatically when this step is marked done" class="flex items-center gap-1 text-xs text-slate-500 px-1">
-                  <input type="checkbox" ${s.notify_customer ? 'checked' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
-                  📧
-                </label>
-                <button type="button" onclick="toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone})" title="${isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">${isDone ? '↺' : '✓'}</button>
+                ${notifyToggle}
+                <button type="button" onclick="toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone}, '${escapeAttr(s.title)}')" title="${isCollectedStep && !isDone ? 'Confirm pickup & schedule review request' : isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">${isDone ? '↺' : '✓'}</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'up')" title="Move up" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▲</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'down')" title="Move down" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▼</button>
                 <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold cursor-pointer">
@@ -6801,6 +6806,7 @@
             </div>
             <textarea placeholder="Notes…" onblur="saveStepNotes('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" rows="1" class="w-full text-xs text-slate-600 bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 mt-1 resize-y">${escapeHtml(s.notes || '')}</textarea>
             ${s.notified_at ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Emailed ${escapeHtml(ukDate(s.notified_at))}</div>` : ''}
+            ${pickupStatusHtml}
             ${imagesHtml ? `<div class="mt-1">${imagesHtml}</div>` : ''}
           </div>
         </div>`;
@@ -6824,7 +6830,20 @@
       }
     }
 
-    async function toggleStepDone(id, orderId, wasDone) {
+    async function toggleStepDone(id, orderId, wasDone, title) {
+      // "Order collected" is special: marking it done is what confirms
+      // pickup and schedules the review-request email (merged from what
+      // used to be a separate "Confirmed Pickup?" checkbox on the main
+      // list - see schedulePickupReview). The actual PUT to mark it done
+      // happens there, once a send time is chosen, not here.
+      const isCollectedStep = /collected/i.test(title || '');
+      if (isCollectedStep && !wasDone) {
+        pickupScheduleStepId = id;
+        pickupScheduleOrderId = orderId;
+        document.getElementById('pickup-schedule-modal').classList.remove('hidden');
+        return;
+      }
+
       try {
         const res = await fetch(API_PRODUCTION_STEPS_URL, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -6837,6 +6856,15 @@
           } else if (data.email.reason) {
             showActionToast('⚠', "Marked done, but couldn't email the customer: " + data.email.reason);
           }
+        }
+        // Reopening "Order collected" undoes the pickup confirmation too,
+        // same as unticking the old checkbox did - a scheduled/sent review
+        // request from before is left alone in email_log as history.
+        if (isCollectedStep && wasDone) {
+          await fetch('/api/review-requests', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'unconfirm_pickup', id: orderId }),
+          });
         }
         loadProductionSteps(orderId);
         loadOrders(); // keeps the main list's production badge in sync
