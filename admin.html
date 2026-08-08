@@ -6374,7 +6374,11 @@
         });
         const res = await fetch('/api/review-requests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'confirm_pickup', id: orderId, send_at: sendAt.toISOString() }),
+          // "Now" deliberately omits send_at rather than sending the
+          // browser's own clock reading - the server then uses its own
+          // clock, so a client clock that's even slightly fast can never
+          // make an immediate send look like it's still in the future.
+          body: JSON.stringify({ action: 'confirm_pickup', id: orderId, send_at: preset === 'now' ? undefined : sendAt.toISOString() }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
@@ -6403,7 +6407,7 @@
       try {
         const res = await fetch('/api/review-requests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'confirm_pickup', id: orderId, send_at: new Date().toISOString() }),
+          body: JSON.stringify({ action: 'confirm_pickup', id: orderId }), // no send_at - see the 'now' preset above for why
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
