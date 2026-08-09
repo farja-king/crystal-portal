@@ -5960,6 +5960,32 @@
         </div>`;
     }
 
+    // Drag-handle reordering for the garment lines - the ⠿ handle on each
+    // card is the only draggable element (not the whole card, which would
+    // fight with selecting text/clicking inputs inside it). Index-based
+    // rather than delegated event listeners since renderOrderLines already
+    // rebuilds every card's markup (and its indices) from scratch on every
+    // change anyway.
+    let orderLineDragIdx = null;
+
+    function handleOrderLineDragStart(event, idx) {
+      orderLineDragIdx = idx;
+      event.dataTransfer.effectAllowed = 'move';
+    }
+
+    function handleOrderLineDragEnd() {
+      orderLineDragIdx = null;
+    }
+
+    function handleOrderLineDrop(event, targetIdx) {
+      event.preventDefault();
+      if (orderLineDragIdx === null || orderLineDragIdx === targetIdx) return;
+      const [moved] = orderLines.splice(orderLineDragIdx, 1);
+      orderLines.splice(targetIdx, 0, moved);
+      orderLineDragIdx = null;
+      renderOrderLines();
+    }
+
     function renderOrderLines() {
       const container = document.getElementById('ord-lines');
       if (!orderLines.length) {
@@ -6095,9 +6121,10 @@
           : `${productBlock}${breakdownBlock}`;
 
         return `
-          <div class="border border-slate-200 rounded-xl p-4">
+          <div class="border border-slate-200 rounded-xl p-4 bg-white" ondragover="event.preventDefault()" ondrop="handleOrderLineDrop(event, ${idx})" ondragend="handleOrderLineDragEnd()">
             <div class="flex items-start justify-between gap-2 mb-2">
-              <span class="text-xs font-semibold uppercase tracking-wide ${isCustomerSupplied ? 'text-amber-600' : 'text-indigo-600'}">
+              <span class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide ${isCustomerSupplied ? 'text-amber-600' : 'text-indigo-600'}">
+                <span draggable="true" ondragstart="handleOrderLineDragStart(event, ${idx})" title="Drag to reorder" class="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 text-base leading-none select-none">⠿</span>
                 ${isCustomerSupplied ? "Customer's own garment" : 'Garment we supply'}
               </span>
               <button type="button" onclick="removeOrderLine(${idx})" class="text-rose-500 hover:text-rose-700 text-sm">Remove line</button>
