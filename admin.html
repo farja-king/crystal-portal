@@ -437,6 +437,22 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Same bulk actions as the bar above the table, repeated here so a
+           long list of ticked customers doesn't mean scrolling back up to
+           Merge/Delete - see updateCustomerBulkBar(), which keeps both in sync. -->
+      <div id="cust-bulk-bar-bottom" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mt-3 text-sm">
+        <span id="cust-bulk-count-bottom" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="openMergeCustomersDialog()" id="cust-bulk-merge-btn-bottom" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+          Merge (pick exactly 2)
+        </button>
+        <button type="button" onclick="bulkDeleteCustomers()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected
+        </button>
+        <button type="button" onclick="clearCustomerSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
+      </div>
       </div>
     </section>
 
@@ -1898,14 +1914,16 @@
     // records - any other count is ambiguous about which one wins) in sync
     // with the checkboxes.
     function updateCustomerBulkBar() {
-      const bar = document.getElementById('cust-bulk-bar');
       const count = selectedCustomerIds.size;
-      bar.classList.toggle('hidden', count === 0);
-      if (count === 0) return;
-      document.getElementById('cust-bulk-count').textContent = count + ' selected';
-      const mergeBtn = document.getElementById('cust-bulk-merge-btn');
-      mergeBtn.disabled = count !== 2;
-      mergeBtn.textContent = count === 2 ? 'Merge these two' : 'Merge (pick exactly 2)';
+      ['', '-bottom'].forEach((suffix) => {
+        const bar = document.getElementById('cust-bulk-bar' + suffix);
+        bar.classList.toggle('hidden', count === 0);
+        if (count === 0) return;
+        document.getElementById('cust-bulk-count' + suffix).textContent = count + ' selected';
+        const mergeBtn = document.getElementById('cust-bulk-merge-btn' + suffix);
+        mergeBtn.disabled = count !== 2;
+        mergeBtn.textContent = count === 2 ? 'Merge these two' : 'Merge (pick exactly 2)';
+      });
     }
 
     // Bulk delete - same one-DELETE-per-row approach as deleteCustomerRow,
