@@ -1327,6 +1327,9 @@
             <button type="button" onclick="toggleCvAddItemForm()" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
               + Add item manually
             </button>
+            <button type="button" onclick="toggleCvOtherCustomerPicker()" title="Reuse an item already set up for a different customer, instead of re-entering it from scratch" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+              + Search other customers' items
+            </button>
             <!-- Everything in this modal auto-saves the moment you edit it -
                  there's nothing this button "saves" that isn't already saved.
                  It's here purely so closing the record doesn't mean
@@ -1369,6 +1372,21 @@
             </div>
           </div>
         </div>
+
+        <!-- Search another customer's own bespoke price-list items (never
+             the shared catalog, never this same customer's list) and copy
+             one across - see toggleCvOtherCustomerPicker()/
+             searchCvOtherCustomerItems()/copyOtherCustomerItem(). -->
+        <div id="cv-other-customer-picker" class="hidden mb-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <div class="relative mb-2">
+            <input id="cv-other-customer-search" type="text" autocomplete="off" placeholder="Search every other customer's price list by item, code, colour or category…"
+                   oninput="searchCvOtherCustomerItems(this.value); toggleSearchClear(this)"
+                   class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+            <button type="button" onclick="clearSearchField('cv-other-customer-search'); document.getElementById('cv-other-customer-results').innerHTML=''" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          </div>
+          <div id="cv-other-customer-results" class="max-h-56 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-lg empty:border-0"></div>
+        </div>
+
         <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-3 mb-3">
           <p class="text-xs text-slate-600 mb-2">Import this customer's items from a Square export CSV. Safe to re-run - won't overwrite prices you've already adjusted here.</p>
           <div class="flex flex-wrap items-center gap-3">
@@ -3209,6 +3227,80 @@
       msg.textContent = failed ? `${failed} of ${toAdd.length} could not be added.` : `Added ${toAdd.length} item(s) to this customer's price list.`;
       loadCustomerCatalogItems(cvCatalogCustomerId);
       if (!failed) setTimeout(() => { toggleCvCatalogPicker(); }, 900);
+    }
+
+    // ---- Search other customers' own price-list items and copy one across
+    // - same "copy, not reference" rule as the shared-catalog picker above,
+    // so re-pricing it for one customer never silently changes another's.
+    let cvOtherCustomerSearchTimer = null;
+    let cvOtherCustomerResults = [];
+
+    function toggleCvOtherCustomerPicker() {
+      const panel = document.getElementById('cv-other-customer-picker');
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        document.getElementById('cv-other-customer-search').value = '';
+        document.getElementById('cv-other-customer-results').innerHTML = '';
+        document.getElementById('cv-other-customer-search').focus();
+      }
+    }
+
+    function searchCvOtherCustomerItems(raw) {
+      clearTimeout(cvOtherCustomerSearchTimer);
+      const resultsEl = document.getElementById('cv-other-customer-results');
+      const query = raw.trim();
+      if (!query) { resultsEl.innerHTML = ''; return; }
+      cvOtherCustomerSearchTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(API_PRODUCTS_URL + '?other_customers_for=' + encodeURIComponent(cvCatalogCustomerId) + '&q=' + encodeURIComponent(query), { cache: 'no-store' });
+          const data = await res.json();
+          cvOtherCustomerResults = data.results || [];
+          resultsEl.innerHTML = cvOtherCustomerResults.length
+            ? cvOtherCustomerResults.map((r, i) => `
+                <div class="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <div class="min-w-0">
+                    ${r.supplier_code ? `<span class="font-mono text-xs font-semibold text-slate-700">${escapeHtml(r.supplier_code)}</span> ` : ''}
+                    <span class="text-slate-700">${escapeHtml(r.title)}</span>
+                    <span class="block text-xs text-slate-400">${[r.colour, r.size].filter(Boolean).map(escapeHtml).join(' / ') || 'No colour/size'} · ${r.sell_price != null ? money(r.sell_price) : 'No price'} · from <strong>${escapeHtml(r.owner_customer_name)}</strong></span>
+                  </div>
+                  <button type="button" onclick="copyOtherCustomerItem(${i})" class="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">Copy here</button>
+                </div>`).join('')
+            : '<p class="px-3 py-2 text-sm text-slate-400">No matches on any other customer\'s price list.</p>';
+        } catch (e) {
+          resultsEl.innerHTML = '<p class="px-3 py-2 text-sm text-red-500">Search failed.</p>';
+        }
+      }, 250);
+    }
+
+    async function copyOtherCustomerItem(index) {
+      const v = cvOtherCustomerResults[index];
+      if (!v || !cvCatalogCustomerId) return;
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: crypto.randomUUID(),
+            supplier: v.supplier || '',
+            supplier_code: v.supplier_code || '',
+            supplier_ref: v.supplier_ref || '',
+            brand: v.brand || '',
+            title: v.title || '',
+            colour: v.colour || '',
+            size: v.size || '',
+            category: v.category || '',
+            cost_price: v.cost_price || 0,
+            vat_rate: v.vat_rate ?? 0.2,
+            sell_price: v.sell_price,
+            customer_id: cvCatalogCustomerId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast('✓', `Copied "${v.title}" to this customer's price list.`);
+        loadCustomerCatalogItems(cvCatalogCustomerId);
+      } catch (e) {
+        showActionToast('⚠', 'Could not copy item: ' + e.message);
+      }
     }
 
     function applyCustomerHistoryFilters() {

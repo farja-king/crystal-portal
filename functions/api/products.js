@@ -162,6 +162,27 @@ export async function onRequest(context) {
         });
       }
 
+      // ?other_customers_for=<id>&q=... - searches every OTHER customer's
+      // own bespoke price-list items (never the shared catalog, never this
+      // same customer's own list) for the Customer View's "Search other
+      // customers' items" picker - lets the same garment/service already
+      // set up for one customer get reused for another instead of
+      // re-entering it from scratch. Includes which customer each match
+      // belongs to, purely for display context.
+      const otherCustomersFor = (p.get("other_customers_for") || "").trim();
+      if (otherCustomersFor) {
+        const query = (p.get("q") || "").trim();
+        if (!query) return json({ results: [] });
+        const { results } = await db.prepare(`
+          SELECT pr.*, c.name AS owner_customer_name
+          FROM products pr JOIN customers c ON c.id = pr.customer_id
+          WHERE pr.customer_id IS NOT NULL AND pr.customer_id <> '' AND pr.customer_id <> ?1
+            AND (pr.title LIKE ?2 OR pr.supplier_code LIKE ?2 OR pr.colour LIKE ?2 OR pr.category LIKE ?2)
+          ORDER BY pr.title LIMIT 25
+        `).bind(otherCustomersFor, `%${query}%`).all();
+        return json({ results });
+      }
+
       const where = [];
       const binds = [];
 
