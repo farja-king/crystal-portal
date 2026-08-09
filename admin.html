@@ -469,7 +469,7 @@
       <div id="cat-add-product-form" class="hidden grid gap-2 md:grid-cols-4 mb-6 bg-slate-50 border border-slate-200 rounded-lg p-4">
         <input id="cat-add-title" placeholder="Title / description *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
         <input id="cat-add-code" placeholder="Code / SKU" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-        <input id="cat-add-category" placeholder="Category" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="cat-add-category" placeholder="Category" list="category-suggestions" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         <input id="cat-add-colour" placeholder="Colour (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         <input id="cat-add-size" placeholder="Size (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         <label class="text-sm">
@@ -688,7 +688,7 @@
 
       <div id="svc-add-form" class="hidden grid gap-2 md:grid-cols-4 mb-6 bg-slate-50 border border-slate-200 rounded-lg p-4">
         <input id="svc-add-title" placeholder="Service name *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
-        <input id="svc-add-category" placeholder="Category (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
+        <input id="svc-add-category" placeholder="Category (optional)" list="category-suggestions" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
         <label class="text-sm">
           <span class="block text-xs text-slate-500 mb-1">Cost price</span>
           <input id="svc-add-cost" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcServiceFormVat('svc-add-cost', 'svc-add-sell', 'svc-add-vat-toggle', 'svc-add-vat', 'svc-add-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
@@ -1382,7 +1382,7 @@
         <div id="cv-add-item-form" class="hidden grid gap-2 md:grid-cols-4 mb-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
           <input id="cv-add-item-title" placeholder="Title / description *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
           <input id="cv-add-item-sku" placeholder="Code / SKU" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-          <input id="cv-add-item-category" placeholder="Category" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="cv-add-item-category" placeholder="Category" list="category-suggestions" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
           <input id="cv-add-item-colour" placeholder="Colour (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
           <input id="cv-add-item-size" placeholder="Size (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
           <label class="text-sm">
@@ -1557,6 +1557,11 @@
       </div>
     </div>
   </div>
+
+  <!-- Shared category autocomplete for every manual "add" form (catalog,
+       order-builder inline add, customer price list, services) - see
+       refreshCategorySuggestions(). -->
+  <datalist id="category-suggestions"></datalist>
 
   <script>
     const API_URL = '/api/quotes';
@@ -3874,6 +3879,21 @@
       return `${datePart} ${timePart}`;
     }
 
+    // Backs a shared <datalist> (see refreshCategorySuggestions) so every
+    // manual "add" form's Category field - catalog, order-builder inline
+    // add, customer price list, services - can suggest from categories that
+    // already exist anywhere in the system, instead of each being a bare
+    // free-text box with no memory of what's already been typed elsewhere.
+    let allProductCategories = [];
+
+    function refreshCategorySuggestions() {
+      const datalist = document.getElementById('category-suggestions');
+      if (!datalist) return;
+      const serviceCategories = allServices.map((s) => s.category).filter(Boolean);
+      const unique = [...new Set([...allProductCategories, ...serviceCategories])].sort((a, b) => a.localeCompare(b));
+      datalist.innerHTML = unique.map((c) => `<option value="${escapeAttr(c)}"></option>`).join('');
+    }
+
     async function loadFacets() {
       try {
         const res = await fetch(API_PRODUCTS_URL + '?facets=1&item_type=garment', { cache: 'no-store' });
@@ -3896,6 +3916,8 @@
         fill('cat-supplier', data.suppliers || []);
         fill('cat-brand', data.brands || []);
         fill('cat-category', data.categories || []);
+        allProductCategories = (data.categories || []).map((r) => r.value).filter(Boolean);
+        refreshCategorySuggestions();
 
         const t = data.totals || {};
         document.getElementById('cat-stat-total').textContent = (t.total || 0).toLocaleString();
@@ -3988,6 +4010,7 @@
         selectedServiceIds = new Set();
         serviceEditingIds = new Set();
         renderServicesTable();
+        refreshCategorySuggestions();
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load services: ' + escapeHtml(e.message) + '</td></tr>';
       }
@@ -5559,7 +5582,7 @@
         <div class="grid gap-2 md:grid-cols-4 mb-2">
           <input id="ord-add-title-${idx}" placeholder="Title / description *" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
           <input id="ord-add-code-${idx}" placeholder="Code / SKU" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-          <input id="ord-add-category-${idx}" placeholder="Category" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="ord-add-category-${idx}" placeholder="Category" list="category-suggestions" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
           <input id="ord-add-colour-${idx}" placeholder="Colour (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
           <input id="ord-add-size-${idx}" placeholder="Size (optional)" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
           <label class="text-sm">
