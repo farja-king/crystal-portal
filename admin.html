@@ -1303,6 +1303,16 @@
 
       <p id="cv-square-summary" class="hidden bg-slate-50 rounded-lg p-3 mb-4 text-sm text-slate-700"></p>
 
+      <!-- Free-text notes, right here on the record itself rather than only
+           reachable via the separate Edit Customer form - anything worth
+           jotting down while looking at this customer's activity. Auto-
+           saves on blur, same pattern as everything else in this modal. -->
+      <div class="border-t border-slate-200 pt-4 mb-4">
+        <h4 class="font-bold text-slate-900 mb-2">Notes</h4>
+        <textarea id="cv-notes" rows="3" onblur="saveCvNotes()" placeholder="Anything worth remembering about this customer…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"></textarea>
+        <p id="cv-notes-status" class="text-xs mt-1 hidden"></p>
+      </div>
+
       <!-- A customer-specific price list (e.g. imported from their Square
            export) - tagged to this customer via products.customer_id, so it
            shows as quick-picks in the quote builder once they're selected
@@ -2190,6 +2200,9 @@
 
       const addressLines = [c.address_1, c.address_2, c.city, c.county, c.postcode].filter(Boolean).map(escapeHtml);
       document.getElementById('cv-address').innerHTML = addressLines.length ? addressLines.join('<br>') : '<span class="text-slate-400">No address on file</span>';
+      cvNotesCustomerId = id;
+      document.getElementById('cv-notes').value = c.notes || '';
+      document.getElementById('cv-notes-status').classList.add('hidden');
 
       const squareSummary = document.getElementById('cv-square-summary');
       if (c.square_customer_id) {
@@ -2230,9 +2243,39 @@
       renderCustomerHistoryOrders();
     }
 
+    async function saveCvNotes() {
+      if (!cvNotesCustomerId) return;
+      const c = customersById[cvNotesCustomerId];
+      if (!c) return;
+      const status = document.getElementById('cv-notes-status');
+      const notes = document.getElementById('cv-notes').value;
+      if (notes === (c.notes || '')) return; // nothing changed, don't spam a save
+      try {
+        // customers.js's PUT overwrites every editable field, not just the
+        // ones sent (see its own comment) - reuse the already-loaded record
+        // rather than just {id, notes}, or every other field would be wiped.
+        const res = await fetch(API_CUSTOMERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...c, notes }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+        c.notes = notes;
+        status.className = 'text-xs mt-1 text-emerald-600';
+        status.textContent = 'Saved.';
+        status.classList.remove('hidden');
+        setTimeout(() => status.classList.add('hidden'), 2000);
+      } catch (e) {
+        status.className = 'text-xs mt-1 text-red-600';
+        status.textContent = 'Could not save: ' + e.message;
+        status.classList.remove('hidden');
+      }
+    }
+
     function closeCustomerViewModal() {
       document.getElementById('customer-view-modal').classList.add('hidden');
       customerHistoryOrders = [];
+      cvNotesCustomerId = null;
       cvCatalogCustomerId = null;
       cvCatalogItems = [];
       cvCatalogExpanded = new Set();
@@ -2249,6 +2292,7 @@
     // currently-selected order customer's items).
     let cvCatalogCustomerId = null;
     let cvCatalogItems = [];
+    let cvNotesCustomerId = null;
     // Product titles currently expanded to show their individual variations
     // - a Set (not just "last expanded") so several groups can be open at
     // once, and re-rendering after an inline edit doesn't collapse them.
