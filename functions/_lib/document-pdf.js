@@ -137,19 +137,18 @@ export function buildOrderPdf(o, customerAddr) {
   if (o.discount_amount) doc.line("Discount: -" + money(o.discount_amount), { x: 400, size: 10, gap: 13 });
   doc.gap(6);
   doc.line("Total: " + money(o.total), { x: 400, font: "F2", size: 14, gap: 18 });
-  // Deposit due (nothing paid yet) or paid-to-date/balance due (something
-  // has, i.e. paid_status === 'partial') - the payments ledger in
-  // functions/api/orders.js already knows what's been paid, so once
-  // anything lands this naturally supersedes the deposit line rather than
-  // needing its own separate "deposit paid" tracking.
+  // Deposit due only on the invoice's first-ever send (email_sent_count is
+  // 0/null before that), matching send-email.js exactly - the deposit ask
+  // only makes sense once, every send after that shows a running paid-to-
+  // date/balance-due statement instead.
   if (o.doc_type === "invoice" && o.paid_status !== "paid") {
     const amountPaid = Number(o.amount_paid || 0);
-    const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
-    if (amountPaid > 0) {
-      doc.line("Paid to date: " + money(amountPaid), { x: 400, size: 10, gap: 13 });
+    if (!o.email_sent_count) {
+      const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+      if (depositDue > 0) doc.line("Deposit due: " + money(depositDue), { x: 400, font: "F2", size: 11, gap: 15 });
+    } else {
+      if (amountPaid > 0) doc.line("Paid to date: " + money(amountPaid), { x: 400, size: 10, gap: 13 });
       doc.line("Balance due: " + money(o.total - amountPaid), { x: 400, font: "F2", size: 11, gap: 15 });
-    } else if (depositDue > 0) {
-      doc.line("Deposit due: " + money(depositDue), { x: 400, font: "F2", size: 11, gap: 15 });
     }
   }
   doc.line("VAT not applicable - not VAT registered.", { x: 400, size: 8, gray: 0.5, gap: 13 });

@@ -110,6 +110,13 @@ export async function onRequest(context) {
     const items = JSON.parse(o.items || "[]");
     const docLabel = o.doc_type === "invoice" ? "Invoice" : "Quote";
     const docNumber = o.doc_type === "invoice" ? o.invoice_number : o.quote_number;
+    // The very first time an invoice goes out is the moment to actually ask
+    // for the deposit Martin set on it - every send after that is more of a
+    // running statement (what's been paid, what's still owed), since the
+    // deposit ask itself only makes sense once. email_sent_count is what
+    // this same file already increments below on every successful send, so
+    // it's "0/null" only for a send that hasn't happened yet.
+    const isFirstSend = !o.email_sent_count;
 
     // Manual invoices (functions/api/manual-invoice.js) have no items/
     // discount to build the usual itemised email around, and their PDF is
@@ -142,15 +149,17 @@ export async function onRequest(context) {
             ${(() => {
               if (o.paid_status === "paid") return "";
               const amountPaid = Number(o.amount_paid || 0);
-              const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
-              if (amountPaid > 0) {
-                return `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>
-                  <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
+              if (isFirstSend) {
+                // The deposit ask only belongs on the invoice's first-ever
+                // send - once it's gone out once, every later send is a
+                // running statement instead (see amount_paid branch below).
+                const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+                return depositDue > 0
+                  ? `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`
+                  : "";
               }
-              if (depositDue > 0) {
-                return `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`;
-              }
-              return "";
+              return `${amountPaid > 0 ? `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>` : ""}
+                <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
             })()}
           </div>
           ${o.paid_status !== "paid" ? `
@@ -253,17 +262,20 @@ export async function onRequest(context) {
     const discountLine = o.discount_amount ? `Discount: -${money(o.discount_amount)}` : "";
 
     const isUnpaidInvoice = o.doc_type === "invoice" && o.paid_status !== "paid";
-    // Deposit due (nothing paid yet) or paid-to-date/balance due (something
-    // has) - see the matching comment in document-pdf.js/buildOrderPdf.
+    // Deposit due only on the invoice's first-ever send; every send after
+    // that is a running statement instead - see isFirstSend above and the
+    // matching comment in document-pdf.js/buildOrderPdf.
     let depositBalanceLine = "";
     if (isUnpaidInvoice) {
       const amountPaid = Number(o.amount_paid || 0);
-      const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
-      if (amountPaid > 0) {
-        depositBalanceLine = `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>
+      if (isFirstSend) {
+        const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+        if (depositDue > 0) {
+          depositBalanceLine = `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`;
+        }
+      } else {
+        depositBalanceLine = `${amountPaid > 0 ? `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>` : ""}
           <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
-      } else if (depositDue > 0) {
-        depositBalanceLine = `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`;
       }
     }
     const bankBlock = isUnpaidInvoice ? `
