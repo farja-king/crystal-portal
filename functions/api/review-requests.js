@@ -69,7 +69,7 @@ export async function onRequest(context) {
       const html = emailShell({
         heading: "Hope you love it! 🧵",
         bodyHtml: `<p>Hi ${escapeHtml(order.customer_name)},</p>
-          <p>Thanks so much for picking up order <strong>${escapeHtml(docNumber)}</strong> - we really hope you're happy with it!</p>
+          <p>Thanks so much for picking up order <strong>${escapeHtml(docNumber)}</strong> - we really hope you love it!</p>
           <p>If you have a couple of minutes, a quick Google review would mean a lot to us and helps other customers find us too.</p>`,
         ctaText: "Leave a Google Review",
         ctaUrl: GOOGLE_REVIEW_URL,
