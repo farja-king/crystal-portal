@@ -5297,6 +5297,7 @@
     const API_ORDERS_URL = '/api/orders';
     const API_ORDER_PDF_URL = '/api/order-pdf';
     const API_RECEIPT_URL = '/api/receipt';
+    const API_STATEMENT_URL = '/api/statement';
     let orderLines = [];
     let ordersLoaded = false;
     let ordersById = {};
@@ -7090,7 +7091,10 @@
         ${o.doc_type === 'invoice' ? `<div class="py-4 border-b border-slate-200">
           <div class="flex items-center justify-between mb-2">
             <p class="text-xs text-slate-500 font-medium">Payments</p>
-            ${o.paid_status !== 'paid' ? `<button type="button" onclick="openRecordPaymentModal('${escapeAttr(id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">+ Record payment</button>` : ''}
+            <div class="flex gap-2">
+              <button type="button" onclick="sendOrderStatement('${escapeAttr(id)}')" title="Emails the customer every payment on this invoice plus the balance due - can be sent any time" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">Send Statement</button>
+              ${o.paid_status !== 'paid' ? `<button type="button" onclick="openRecordPaymentModal('${escapeAttr(id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">+ Record payment</button>` : ''}
+            </div>
           </div>
           <div id="order-payments">Loading…</div>
         </div>` : ''}
@@ -7954,6 +7958,29 @@
       }
     }
 
+    // Every payment on this invoice plus the balance due, in one email -
+    // unlike a per-payment receipt this isn't tied to a specific payment
+    // and can be sent any time (e.g. a customer asks for a fresh copy).
+    async function sendOrderStatement(orderId) {
+      try {
+        const res = await fetch(API_STATEMENT_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: orderId }),
+        });
+        const data = await res.json();
+        if (data.sent) {
+          showActionToast('✓', 'Statement sent.');
+        } else {
+          showActionToast('⚠', "Statement couldn't be sent" + (data.reason ? ': ' + data.reason : '.'));
+        }
+      } catch (e) {
+        showActionToast('⚠', "Statement couldn't be sent: " + e.message);
+      }
+      if (document.getElementById('order-comm-history')) {
+        loadOrderCommHistory(orderId);
+      }
+    }
+
     async function loadOrderPayments(orderId) {
       const el = document.getElementById('order-payments');
       if (!el) return;
@@ -7982,7 +8009,8 @@
           </div>
           <div class="flex items-center gap-3">
             ${p.receipt_sent_at
-              ? `<span class="text-xs text-emerald-600" title="${escapeAttr(ukDate(p.receipt_sent_at))}">Receipt sent</span>`
+              ? `<span class="text-xs text-emerald-600" title="${escapeAttr(ukDate(p.receipt_sent_at))}">Receipt sent</span>
+                 <button onclick="sendPaymentReceipt('${escapeAttr(orderId)}', '${escapeAttr(p.id)}', 'Receipt re-sent.', 'The receipt')" title="Email this receipt again - e.g. if the customer lost it" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Resend</button>`
               : `<button onclick="sendPaymentReceipt('${escapeAttr(orderId)}', '${escapeAttr(p.id)}')" title="Email the customer a receipt for this payment" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold">Send receipt</button>`}
             <button onclick="openEditPaymentModal('${escapeAttr(orderId)}', paymentsById['${escapeAttr(orderId)}']['${escapeAttr(p.id)}'])" title="Edit this payment" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Edit</button>
             <button onclick="deletePayment('${escapeAttr(orderId)}', '${escapeAttr(p.id)}')" title="Void this payment" class="text-red-600 hover:text-red-800 text-xs font-semibold">Void</button>
