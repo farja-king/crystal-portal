@@ -137,11 +137,16 @@ export function buildOrderPdf(o, customerAddr) {
   if (o.discount_amount) doc.line("Discount: -" + money(o.discount_amount), { x: 400, size: 10, gap: 13 });
   doc.gap(6);
   doc.line("Total: " + money(o.total), { x: 400, font: "F2", size: 14, gap: 18 });
-  // Deposit due only on the invoice's first-ever send (email_sent_count is
-  // 0/null before that), matching send-email.js exactly - the deposit ask
-  // only makes sense once, every send after that shows a running paid-to-
-  // date/balance-due statement instead.
-  if (o.doc_type === "invoice" && o.paid_status !== "paid") {
+  // A quote always shows what deposit it'll need if accepted - the customer
+  // should know that before they agree to it, not find out only once it's
+  // already been converted to an invoice. An invoice shows the deposit ask
+  // only on its first-ever send (email_sent_count is 0/null before that) -
+  // the ask only makes sense once, every send after that shows a running
+  // paid-to-date/balance-due statement instead.
+  if (o.doc_type === "quote") {
+    const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+    if (depositDue > 0) doc.line("Deposit due on acceptance: " + money(depositDue), { x: 400, font: "F2", size: 11, gap: 15 });
+  } else if (o.doc_type === "invoice" && o.paid_status !== "paid") {
     const amountPaid = Number(o.amount_paid || 0);
     if (!o.email_sent_count) {
       const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));

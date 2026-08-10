@@ -262,11 +262,18 @@ export async function onRequest(context) {
     const discountLine = o.discount_amount ? `Discount: -${money(o.discount_amount)}` : "";
 
     const isUnpaidInvoice = o.doc_type === "invoice" && o.paid_status !== "paid";
-    // Deposit due only on the invoice's first-ever send; every send after
-    // that is a running statement instead - see isFirstSend above and the
-    // matching comment in document-pdf.js/buildOrderPdf.
+    // A quote always shows what deposit it'll need if accepted - the
+    // customer should know that before they agree to it. An invoice only
+    // asks on its first-ever send; every send after that is a running
+    // statement instead - see isFirstSend above and the matching comment in
+    // document-pdf.js/buildOrderPdf.
     let depositBalanceLine = "";
-    if (isUnpaidInvoice) {
+    if (o.doc_type === "quote") {
+      const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+      if (depositDue > 0) {
+        depositBalanceLine = `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due on acceptance: ${money(depositDue)}</div>`;
+      }
+    } else if (isUnpaidInvoice) {
       const amountPaid = Number(o.amount_paid || 0);
       if (isFirstSend) {
         const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
