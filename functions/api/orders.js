@@ -17,6 +17,7 @@ export async function onRequest(context) {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Content-Type": "application/json",
+    "Cache-Control": "no-store",
   };
 
   if (request.method === "OPTIONS") {

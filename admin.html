@@ -6852,7 +6852,7 @@
       tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       try {
         const [res, productionRes] = await Promise.all([
-          fetch(API_ORDERS_URL),
+          fetch(API_ORDERS_URL, { cache: 'no-store' }),
           fetch('/api/production-steps?all=1', { cache: 'no-store' }).catch(() => null),
         ]);
         const rows = await res.json();
