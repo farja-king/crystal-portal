@@ -455,9 +455,19 @@ export async function onRequest(context) {
       if (data.action === "convert_to_invoice") {
         if (existing.doc_type === "invoice") return json({ error: "Already an invoice" }, 409);
         const invoice_number = await nextNumber("invoice");
+        // email_sent_count/email_sent_at reset here - send-email.js treats
+        // "0/null" as this document's first-ever send to decide whether to
+        // ask for the deposit (functions/api/send-email.js's isFirstSend,
+        // document-pdf.js's matching check). Without resetting, a quote
+        // that was already emailed once carries that count straight into
+        // the invoice, so the invoice's actual first send gets mistaken for
+        // a later one and shows a balance-due statement instead of the
+        // deposit ask - the invoice is a new document as far as the
+        // customer's concerned, even though it's the same row here.
         await db.prepare(`
           UPDATE orders SET doc_type = 'invoice', invoice_number = ?, paid_status = 'unpaid',
-            invoiced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            invoiced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
+            email_sent_count = 0, email_sent_at = NULL
           WHERE id = ?
         `).bind(invoice_number, data.id).run();
         return json({ success: true, invoice_number });
