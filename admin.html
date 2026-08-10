@@ -7874,7 +7874,15 @@
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, action: 'convert_to_invoice' }),
       });
-      loadOrders();
+      // Refresh first so ordersById[id] reflects the new invoice_number/
+      // doc_type before emailOrder() reads it - it powers both the compose
+      // dialog's subject line and the "Save & Send"-style toast after.
+      await loadOrders();
+      // Converting used to leave the new invoice sitting there until Martin
+      // remembered to come back and email it separately - this reuses the
+      // same compose-and-send flow the Email button already uses (asks for
+      // the address + an optional note, Cancel if it's not ready yet).
+      await emailOrder(id);
     }
 
     function paidStatusBadgeClass(status) {
