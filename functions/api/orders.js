@@ -92,7 +92,17 @@ export async function onRequest(context) {
           lineTotal = round2(qty * (unitPrice + decorationTotal));
         }
       } else {
-        qty = Math.max(1, parseInt(item.qty, 10) || 1);
+        // A customer's own saved catalog item (customer_item: true) still
+        // carries its qty in breakdown[0].qty, not item.qty - it reuses the
+        // same breakdown array a real garment line uses, just with a single
+        // row and no colour/size, purely so the builder's qty input
+        // (updateBreakdownQtyLive) has somewhere to write to. Must match
+        // admin.html's lineQty() exactly (source === 'catalog' -> sum
+        // breakdown), or the live total shown while editing silently
+        // diverges from what actually gets saved.
+        qty = breakdown.length
+          ? breakdown.reduce((sum, b) => sum + b.qty, 0)
+          : Math.max(1, parseInt(item.qty, 10) || 1);
         const decorationTotal = decorations.reduce((sum, d) => sum + d.price * d.qty, 0);
         lineTotal = round2(qty * (unitPrice + decorationTotal));
       }
