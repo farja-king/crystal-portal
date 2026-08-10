@@ -6490,6 +6490,8 @@
           renderOrderCustomerPicker();
           document.getElementById('ord-discount').value = 0;
           document.getElementById('ord-discount-flat').value = 0;
+          document.getElementById('ord-deposit-pct').value = 0;
+          document.getElementById('ord-deposit-amount').value = 0;
           orderCustomerItems = [];
           orderCustomerName = '';
           orderLineOpenVariantPicker = null;
@@ -6509,6 +6511,14 @@
           openNewQuoteProofModal(data.id, docNumber, customer.name, savedDocType);
         }
         loadOrders();
+        // If this quote/invoice was edited from inside a customer's profile
+        // (the Edit button on their order history there opens this same
+        // builder), that history list was only ever populated when the
+        // profile modal opened - it isn't part of loadOrders()'s refresh, so
+        // without this it'd keep showing the pre-edit total until the modal
+        // was closed and reopened. Same pattern the manual-invoice save
+        // already uses.
+        if (cvNotesCustomerId) viewCustomerHistory(cvNotesCustomerId);
       } catch (e) {
         msg.className = 'text-sm mt-3 text-red-600';
         msg.textContent = 'Could not save: ' + e.message;
