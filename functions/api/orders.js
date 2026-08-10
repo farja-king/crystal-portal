@@ -231,6 +231,20 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // is_manual - an invoice already produced in a separate app (e.g. Karl
+    // Sports' own invoicing) and just uploaded here as a PDF, rather than
+    // built from garment lines - see functions/api/manual-invoice.js. Still
+    // a normal row in this table (shows in Quotes & Invoices, Dashboard,
+    // payment reminders etc like any other invoice), it just has no items
+    // and its PDF is the uploaded file, not a generated one - order-pdf.js
+    // and send-email.js both branch on this.
+    for (const col of ["is_manual INTEGER DEFAULT 0", "manual_pdf_r2_key TEXT", "manual_pdf_filename TEXT"]) {
+      try {
+        await db.prepare(`ALTER TABLE orders ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
+    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
@@ -474,17 +488,32 @@ export async function onRequest(context) {
       await db.prepare(`DELETE FROM production_steps WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
     }
 
+    // Deletes an order's own uploaded manual-invoice PDF (if it has one) -
+    // separate from deleteOrphanedDesignProofs/deleteOrphanedProductionSteps
+    // above since this is a single column on the order itself, not a
+    // related table.
+    async function deleteManualInvoicePdfs(orderIds) {
+      if (!orderIds.length || !env.DESIGN_FILES) return;
+      const placeholders = orderIds.map(() => "?").join(",");
+      const { results } = await db.prepare(
+        `SELECT manual_pdf_r2_key FROM orders WHERE id IN (${placeholders}) AND manual_pdf_r2_key <> ''`
+      ).bind(...orderIds).all();
+      await Promise.all(results.map((r) => env.DESIGN_FILES.delete(r.manual_pdf_r2_key).catch(() => {})));
+    }
+
     if (request.method === "DELETE") {
       const { id, ids } = await request.json();
       if (Array.isArray(ids) && ids.length) {
         await deleteOrphanedDesignProofs(ids);
         await deleteOrphanedProductionSteps(ids);
+        await deleteManualInvoicePdfs(ids);
         const placeholders = ids.map(() => "?").join(",");
         await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...ids).run();
         return json({ success: true, count: ids.length });
       }
       await deleteOrphanedDesignProofs([id]);
       await deleteOrphanedProductionSteps([id]);
+      await deleteManualInvoicePdfs([id]);
       await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
       return json({ success: true });
     }

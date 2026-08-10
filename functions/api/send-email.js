@@ -111,6 +111,78 @@ export async function onRequest(context) {
     const docLabel = o.doc_type === "invoice" ? "Invoice" : "Quote";
     const docNumber = o.doc_type === "invoice" ? o.invoice_number : o.quote_number;
 
+    // Manual invoices (functions/api/manual-invoice.js) have no items/
+    // discount to build the usual itemised email around, and their PDF is
+    // whatever Martin uploaded, not one built from this order's data - both
+    // get their own short branch below rather than threading is_manual
+    // checks through the shared template used by every system-built order.
+    if (o.is_manual) {
+      // Defined locally rather than reusing the one further down this
+      // function - that one isn't declared until after this early-return
+      // branch, so referencing it here would hit its temporal dead zone.
+      const ukDate = (raw) => {
+        if (!raw) return "";
+        const d = new Date(raw);
+        return isNaN(d) ? "" : String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0") + "/" + d.getFullYear();
+      };
+      const subject = `Invoice ${docNumber} from Crystal Custom Embroidery`;
+      const html = `
+        <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
+          <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
+          <div style="color:#64748b;font-size:13px;line-height:1.5;">26 Grove Street, Raunds, NN9 6DS<br>hello@embroidery.click | 07530 576197</div>
+          <div style="color:#64748b;margin-top:8px;margin-bottom:20px;">Invoice - ${escapeHtml(docNumber)}</div>
+          ${personalMessage ? `<div style="background:#f8fafc;border-left:3px solid #4f46e5;border-radius:6px;padding:12px 16px;margin-bottom:20px;white-space:pre-line;">${escapeHtml(personalMessage)}</div>` : ""}
+          <p>Hi ${escapeHtml(o.customer_name)},</p>
+          <p>Please find your invoice attached.</p>
+          <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-top:16px;">
+            <div style="font-size:14px;">Date: ${ukDate(o.created_at)}</div>
+            <div style="font-size:14px;">Status: ${o.paid_status === "paid" ? "Paid" : "Unpaid"}</div>
+            ${o.due_date ? `<div style="font-size:14px;">Due by: ${ukDate(o.due_date)}</div>` : ""}
+            <div style="font-size:20px;font-weight:700;margin-top:6px;">Total: ${money(o.total)}</div>
+          </div>
+          ${o.paid_status !== "paid" ? `
+          <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-top:16px;font-size:14px;line-height:1.6;">
+            <div style="font-weight:600;">We appreciate your business. Please pay via Bank Transfer</div>
+            <div>Banking Details: Crystal Custom Embroidery,</div>
+            <div>Sort Code: 04-03-33, Account Number: 55185130</div>
+          </div>` : ""}
+          ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
+          <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
+        </div>`;
+
+      let pdfAttachment = null;
+      if (o.manual_pdf_r2_key && env.DESIGN_FILES) {
+        const obj = await env.DESIGN_FILES.get(o.manual_pdf_r2_key);
+        if (obj) {
+          const bytes = new Uint8Array(await obj.arrayBuffer());
+          let binary = "";
+          const CHUNK = 8192;
+          for (let i = 0; i < bytes.length; i += CHUNK) binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+          pdfAttachment = { filename: o.manual_pdf_filename || `${docNumber || "invoice"}.pdf`, content: btoa(binary) };
+        }
+      }
+
+      const resendRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: fromAddress, to: [to], reply_to: replyToAddress, subject, html,
+          ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
+        }),
+      });
+      if (!resendRes.ok) {
+        const errBody = await resendRes.text();
+        return json({ error: "Resend rejected the email: " + errBody }, 502);
+      }
+      await db.prepare(
+        "UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP, email_sent_to = ?, email_sent_count = email_sent_count + 1 WHERE id = ?"
+      ).bind(to, o.id).run();
+      await db.prepare(
+        "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
+      ).bind(crypto.randomUUID(), o.id, to, subject).run();
+      return json({ success: true, sent_to: to });
+    }
+
     // Same live-from-the-customer-record address lookup as the printed
     // version (functions/api/orders.js) - this email is meant to read as
     // the actual invoice, not a stripped-down summary of it, so it needs

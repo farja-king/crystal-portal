@@ -33,6 +33,32 @@ export async function onRequest(context) {
     });
   }
 
+  // Manual invoices (functions/api/manual-invoice.js) have no items to
+  // build a PDF from - the "PDF" for these always is whatever file Martin
+  // uploaded, streamed straight from R2 instead.
+  if (o.is_manual) {
+    if (!o.manual_pdf_r2_key || !env.DESIGN_FILES) {
+      return new Response(JSON.stringify({ error: "No PDF on file for this invoice" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const obj = await env.DESIGN_FILES.get(o.manual_pdf_r2_key);
+    if (!obj) {
+      return new Response(JSON.stringify({ error: "File missing from storage" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(obj.body, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="${(o.manual_pdf_filename || o.invoice_number || "invoice").replace(/"/g, "")}"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
   const customerAddr = o.customer_id
     ? await db.prepare("SELECT address_1, address_2, city, county, postcode FROM customers WHERE id = ?").bind(o.customer_id).first()
     : null;

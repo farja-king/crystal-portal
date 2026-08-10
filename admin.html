@@ -1534,9 +1534,14 @@
 
       <div class="flex items-center justify-between mb-3">
         <h4 class="font-bold text-slate-900">Order History</h4>
-        <button type="button" onclick="closeCustomerViewModal()" title="Everything here is already saved - this just closes the window" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
-          ✓ Done
-        </button>
+        <div class="flex gap-2">
+          <button type="button" onclick="openManualInvoiceModal()" title="For an invoice already produced elsewhere (e.g. Karl Sports' own invoicing) - upload the PDF and fill in the number/total/due date by hand" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+            + Upload manual invoice
+          </button>
+          <button type="button" onclick="closeCustomerViewModal()" title="Everything here is already saved - this just closes the window" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+            ✓ Done
+          </button>
+        </div>
       </div>
 
       <div class="flex flex-wrap items-end gap-3 mb-3">
@@ -1587,6 +1592,50 @@
       <div class="flex justify-end pt-4 mt-2 border-t border-slate-200">
         <button type="button" onclick="closeCustomerViewModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
           ✓ Done - close this customer
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload/edit a manual invoice - see openManualInvoiceModal()/
+       submitManualInvoice() and functions/api/manual-invoice.js. z-[100]
+       since it opens from inside customer-view-modal (z-50). -->
+  <div id="manual-invoice-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+      <h3 id="manual-invoice-title" class="text-lg font-bold text-slate-900 mb-1">Upload manual invoice</h3>
+      <p class="text-sm text-slate-500 mb-4">For an invoice already produced in a separate app - it'll show in Quotes &amp; Invoices, the Dashboard and payment reminders just like any other invoice, but its PDF is the one you upload here.</p>
+      <div class="grid gap-3">
+        <label class="text-sm">
+          <span class="block font-medium text-slate-700 mb-1">Invoice number</span>
+          <input id="mi-number" type="text" placeholder="Must match the number printed on the PDF" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+        </label>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Total (£)</span>
+            <input id="mi-total" type="number" step="0.01" min="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Due by</span>
+            <input id="mi-due-date" type="date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+        </div>
+        <label class="text-sm">
+          <span class="block font-medium text-slate-700 mb-1">Notes (optional)</span>
+          <textarea id="mi-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"></textarea>
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium text-slate-700 mb-1" id="mi-file-label">Invoice PDF</span>
+          <input id="mi-file" type="file" accept="application/pdf" class="w-full text-sm" />
+          <p id="mi-existing-file" class="text-xs text-slate-500 mt-1 hidden"></p>
+        </label>
+      </div>
+      <p id="mi-msg" class="text-sm text-red-600 mt-3"></p>
+      <div class="flex gap-2 mt-2">
+        <button type="button" id="mi-submit-btn" onclick="submitManualInvoice()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+          Save
+        </button>
+        <button type="button" onclick="closeManualInvoiceModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+          Cancel
         </button>
       </div>
     </div>
@@ -2310,6 +2359,83 @@
         status.className = 'text-xs mt-1 text-red-600';
         status.textContent = 'Could not save: ' + e.message;
         status.classList.remove('hidden');
+      }
+    }
+
+    // Upload a new manual invoice for the customer currently open in
+    // Customer View, or (when editingManualInvoiceId is set) edit an
+    // existing one's details/replace its PDF - see manual-invoice.js.
+    let editingManualInvoiceId = null;
+
+    function openManualInvoiceModal(orderId) {
+      editingManualInvoiceId = orderId || null;
+      const existing = orderId ? ordersById[orderId] : null;
+      document.getElementById('manual-invoice-title').textContent = existing ? 'Edit manual invoice' : 'Upload manual invoice';
+      document.getElementById('mi-number').value = existing ? (existing.invoice_number || '') : '';
+      document.getElementById('mi-total').value = existing ? existing.total : '';
+      document.getElementById('mi-due-date').value = existing ? (existing.due_date || '') : '';
+      document.getElementById('mi-notes').value = existing ? (existing.notes || '') : '';
+      document.getElementById('mi-file').value = '';
+      const fileLabel = document.getElementById('mi-file-label');
+      const existingFile = document.getElementById('mi-existing-file');
+      fileLabel.textContent = existing ? 'Replace PDF (optional)' : 'Invoice PDF';
+      if (existing && existing.manual_pdf_filename) {
+        existingFile.textContent = 'Current file: ' + existing.manual_pdf_filename;
+        existingFile.classList.remove('hidden');
+      } else {
+        existingFile.classList.add('hidden');
+      }
+      document.getElementById('mi-msg').textContent = '';
+      document.getElementById('manual-invoice-modal').classList.remove('hidden');
+    }
+
+    function closeManualInvoiceModal() {
+      editingManualInvoiceId = null;
+      document.getElementById('manual-invoice-modal').classList.add('hidden');
+    }
+
+    async function submitManualInvoice() {
+      const msg = document.getElementById('mi-msg');
+      const number = document.getElementById('mi-number').value.trim();
+      const total = document.getElementById('mi-total').value;
+      const file = document.getElementById('mi-file').files[0];
+
+      if (!number) { msg.textContent = 'Invoice number is required.'; return; }
+      if (total === '' || Number(total) < 0 || !isFinite(Number(total))) { msg.textContent = 'Enter a valid total.'; return; }
+      if (!editingManualInvoiceId && !file) { msg.textContent = 'A PDF file is required.'; return; }
+
+      const form = new FormData();
+      form.append('invoice_number', number);
+      form.append('total', total);
+      form.append('due_date', document.getElementById('mi-due-date').value);
+      form.append('notes', document.getElementById('mi-notes').value);
+      if (file) form.append('file', file);
+
+      msg.className = 'text-sm text-slate-500 mt-3';
+      msg.textContent = editingManualInvoiceId ? 'Saving…' : 'Uploading…';
+
+      try {
+        let res;
+        if (editingManualInvoiceId) {
+          form.append('id', editingManualInvoiceId);
+          res = await fetch('/api/manual-invoice', { method: 'PUT', body: form });
+        } else {
+          if (!cvNotesCustomerId) throw new Error('No customer selected');
+          const c = customersById[cvNotesCustomerId];
+          form.append('customer_id', cvNotesCustomerId);
+          form.append('customer_name', c ? c.name : '');
+          form.append('customer_email', c ? (c.email || '') : '');
+          res = await fetch('/api/manual-invoice', { method: 'POST', body: form });
+        }
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        closeManualInvoiceModal();
+        showActionToast('✓', editingManualInvoiceId ? 'Manual invoice updated.' : `Saved as ${data.invoice_number}.`);
+        if (cvNotesCustomerId) viewCustomerHistory(cvNotesCustomerId);
+        if (typeof loadOrders === 'function' && ordersLoaded) loadOrders();
+      } catch (e) {
+        msg.className = 'text-sm text-red-600 mt-3';
+        msg.textContent = 'Could not save: ' + e.message;
       }
     }
 
@@ -6379,6 +6505,10 @@
     function editOrderInBuilder(id) {
       const o = ordersById[id];
       if (!o) return;
+      // Manual invoices (functions/api/manual-invoice.js) have no garment
+      // lines to build - openManualInvoiceModal is the actual "Edit" for
+      // these, wired up wherever this would normally be called.
+      if (o.is_manual) { openManualInvoiceModal(id); return; }
       closeOrderPanel();
       openOrderBuilderModal();
       editingExistingOrderId = id;
@@ -6711,7 +6841,11 @@
             actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
           }
           actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">View</button>`);
-          actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
+          if (o.is_manual) {
+            actions.push(`<button onclick="openManualInvoiceModal('${escapeAttr(o.id)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Edit details</button>`);
+          } else {
+            actions.push(`<button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Edit</button>`);
+          }
           actions.push(`<button data-action="reorder-order" data-id="${escapeAttr(o.id)}" title="Start a new quote/invoice prefilled with this customer and these garments - fully editable before saving" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Reorder</button>`);
           actions.push(`<label title="Attach a design proof - saved as a draft, nothing sent until you email/save this quote or hit Send now" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold cursor-pointer">
             Add Image
@@ -6891,7 +7025,9 @@
         </div>
         <div class="py-4 border-b border-slate-200">
           <p class="text-xs text-slate-500 font-medium mb-2">Items</p>
-          ${itemsHtml}
+          ${o.is_manual
+            ? `<p class="text-sm text-slate-500">Manual invoice - produced elsewhere, no line items here. <a href="${API_ORDER_PDF_URL}?id=${escapeAttr(id)}" target="_blank" class="text-indigo-600 hover:underline">View the uploaded PDF</a>.</p>`
+            : itemsHtml}
         </div>
         <div class="grid gap-4 md:grid-cols-2 py-4 border-b border-slate-200">
           <div>
@@ -6932,9 +7068,9 @@
       loadProductionSteps(id);
 
       actions.innerHTML = `
-        <button onclick="editOrderInBuilder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
-          Edit
-        </button>
+        ${o.is_manual
+          ? `<button onclick="openManualInvoiceModal('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Edit details</button>`
+          : `<button onclick="editOrderInBuilder('${escapeAttr(id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Edit</button>`}
         <button onclick="reorderOrder('${escapeAttr(id)}')" title="Start a new quote/invoice prefilled with this customer and these garments - fully editable before saving" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">
           Reorder
         </button>
