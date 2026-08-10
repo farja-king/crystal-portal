@@ -245,11 +245,68 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    // amount_paid - running total of everything recorded against this
+    // invoice in the payments ledger below, kept denormalized on the order
+    // itself so every existing place that reads orders.* (list badges,
+    // reminders, Dashboard) can see "how much has been paid so far" without
+    // a join. Recomputed from payments on every insert/delete, never edited
+    // directly.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN amount_paid REAL DEFAULT 0`).run();
+    } catch {
+      // already exists
+    }
+
+    // payments - the real ledger, one row per payment actually received.
+    // paid_status on the order stays a quick-glance summary ('unpaid' |
+    // 'partial' | 'paid'), derived from this table; this is the record of
+    // what was actually paid, when, how, and by whom it was recorded.
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        method TEXT,
+        type TEXT NOT NULL DEFAULT 'payment',
+        notes TEXT,
+        received_at TEXT NOT NULL,
+        receipt_sent_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+
+    // Recomputes orders.amount_paid/paid_status/paid_at from the payments
+    // ledger - called after every insert/delete so the denormalized summary
+    // on the order never drifts from the actual rows.
+    async function recomputePaymentSummary(orderId) {
+      const order = await db.prepare("SELECT total, paid_status FROM orders WHERE id = ?").bind(orderId).first();
+      if (!order) return null;
+      const sumRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE order_id = ?").bind(orderId).first();
+      const amountPaid = sumRow ? sumRow.total : 0;
+      let status;
+      if (amountPaid <= 0) status = "unpaid";
+      else if (amountPaid >= order.total) status = "paid";
+      else status = "partial";
+      const paidAt = status === "paid" ? new Date().toISOString() : null;
+      await db.prepare(
+        "UPDATE orders SET amount_paid = ?, paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+      ).bind(amountPaid, status, paidAt, orderId).run();
+      return { amount_paid: amountPaid, paid_status: status, paid_at: paidAt };
+    }
 
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
       const url = new URL(request.url);
       const id = url.searchParams.get("id");
+      // ?payments_for=X -> the payment ledger for one order, used by the
+      // order detail panel's payment-history section.
+      const paymentsFor = url.searchParams.get("payments_for");
+      if (paymentsFor) {
+        const { results } = await db.prepare(
+          "SELECT * FROM payments WHERE order_id = ? ORDER BY received_at DESC, created_at DESC"
+        ).bind(paymentsFor).all();
+        return json(results);
+      }
       if (id) {
         const row = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(id).first();
         if (!row) return json({ error: "Not found" }, 404);
@@ -378,16 +435,30 @@ export async function onRequest(context) {
         return json({ success: true, invoice_number });
       }
 
-      if (data.action === "set_paid_status") {
-        if (existing.doc_type !== "invoice") return json({ error: "Only invoices have a paid status" }, 400);
-        const status = data.paid_status === "paid" ? "paid" : "unpaid";
-        // paid_at is set the moment it's marked paid, and cleared if it's
-        // ever flipped back to unpaid - keeps it meaning "when this
-        // actually became paid", not "has it ever been paid".
-        await db.prepare(
-          "UPDATE orders SET paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).bind(status, status === "paid" ? new Date().toISOString() : null, data.id).run();
-        return json({ success: true });
+      if (data.action === "record_payment") {
+        if (existing.doc_type !== "invoice") return json({ error: "Only invoices take payments" }, 400);
+        const amount = Number(data.amount);
+        if (!amount || amount <= 0) return json({ error: "Amount must be greater than zero" }, 400);
+        await db.prepare(`
+          INSERT INTO payments (id, order_id, amount, method, type, notes, received_at)
+          VALUES (?, ?, ?, ?, 'payment', ?, ?)
+        `).bind(
+          crypto.randomUUID(),
+          data.id,
+          amount,
+          data.method || "",
+          data.notes || "",
+          data.received_at || new Date().toISOString()
+        ).run();
+        const summary = await recomputePaymentSummary(data.id);
+        return json({ success: true, ...summary });
+      }
+
+      if (data.action === "delete_payment") {
+        if (!data.payment_id) return json({ error: "payment_id required" }, 400);
+        await db.prepare("DELETE FROM payments WHERE id = ? AND order_id = ?").bind(data.payment_id, data.id).run();
+        const summary = await recomputePaymentSummary(data.id);
+        return json({ success: true, ...summary });
       }
 
       if (data.action === "set_status") {
