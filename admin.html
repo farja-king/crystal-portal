@@ -1164,7 +1164,7 @@
        closeOrderBuilderModal(). Lives at top level (not inside
        section-orders) so it still works when opened from a different tab. -->
   <div id="ord-builder-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-    <div id="ord-builder" class="bg-white rounded-xl shadow-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-5">
+    <div id="ord-builder" class="bg-white rounded-xl shadow-lg max-w-5xl w-full max-h-[90vh] overflow-y-auto p-5">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h3 id="ord-builder-heading" class="font-bold text-slate-900">New Quote</h3>
         <div class="flex items-center gap-3">
@@ -1182,8 +1182,8 @@
         </div>
       </div>
 
-      <div class="grid gap-x-3 gap-y-5 md:grid-cols-3 mb-4">
-        <label class="text-sm">
+      <div class="grid gap-x-3 gap-y-5 md:grid-cols-4 mb-4">
+        <label class="text-sm md:col-span-2">
           <span class="block font-medium text-slate-700 mb-1">Customer</span>
           <div class="flex gap-2">
             <div id="ord-customer-picker" class="flex-1"></div>
@@ -1202,11 +1202,11 @@
           <input id="ord-discount-flat" type="number" min="0" step="0.01" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
         </label>
         <label class="text-sm">
-          <span class="block font-medium text-slate-700 mb-1">Deposit % <span class="font-normal text-slate-400">(invoices only)</span></span>
+          <span class="block font-medium text-slate-700 mb-1">Deposit %</span>
           <input id="ord-deposit-pct" type="number" min="0" max="100" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
         </label>
         <label class="text-sm">
-          <span class="block font-medium text-slate-700 mb-1">Deposit £ <span class="font-normal text-slate-400">(invoices only)</span></span>
+          <span class="block font-medium text-slate-700 mb-1">Deposit £</span>
           <input id="ord-deposit-amount" type="number" min="0" step="0.01" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
         </label>
         <label id="ord-status-field" class="text-sm hidden">
