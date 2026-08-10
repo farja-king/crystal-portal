@@ -92,6 +92,16 @@ export class PdfDoc {
     this.y -= 10;
   }
 
+  // A plain stroked rectangle - x/y is the bottom-left corner (PDF's
+  // coordinate origin), same as everywhere else in this file. Used to box
+  // off a section (e.g. the totals summary) so it reads as one grouped
+  // card instead of a loose stack of lines.
+  rect(x, y, w, h, { gray = 0.75, weight = 0.75 } = {}) {
+    this.page.push(
+      `${weight} w ${gray} G ${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re S`
+    );
+  }
+
   gap(px = 8) {
     this.y -= px;
   }

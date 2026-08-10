@@ -27,10 +27,19 @@ function truncate(str, max) {
 }
 
 const COL_ITEM_X = MARGIN;
-const COL_QTY_X = 350;
-const COL_UNIT_X = 400;
-const COL_TOTAL_X = 470;
+const QTY_RIGHT = 380;
+const UNIT_RIGHT = 462;
 const RIGHT_EDGE = PAGE_WIDTH - MARGIN;
+
+// Courier is genuinely fixed-width (0.6em per glyph), unlike Helvetica -
+// this writer has no AFM table to measure Helvetica's real per-character
+// widths (see pdf.js), so Courier is the only font it can right-align a
+// numeric column against precisely. Every Qty/Unit/Total/Subtotal-style
+// figure below is drawn in Courier for exactly this reason - it's what
+// makes the numbers actually line up instead of drifting per row.
+function courierRightX(str, size, rightEdge) {
+  return rightEdge - String(str).length * size * 0.6;
+}
 
 function itemDetailLines(item) {
   const lines = [];
@@ -103,9 +112,9 @@ export function buildOrderPdf(o, customerAddr) {
   doc.row(
     [
       { x: COL_ITEM_X, text: "Item", font: "F2", size: 9 },
-      { x: COL_QTY_X, text: "Qty", font: "F2", size: 9 },
-      { x: COL_UNIT_X, text: "Unit", font: "F2", size: 9 },
-      { x: COL_TOTAL_X, text: "Total", font: "F2", size: 9 },
+      { x: courierRightX("Qty", 9, QTY_RIGHT), text: "Qty", font: "F3", size: 9 },
+      { x: courierRightX("Unit", 9, UNIT_RIGHT), text: "Unit", font: "F3", size: 9 },
+      { x: courierRightX("Total", 9, RIGHT_EDGE), text: "Total", font: "F3", size: 9 },
     ],
     { gap: 14 }
   );
@@ -115,13 +124,16 @@ export function buildOrderPdf(o, customerAddr) {
     const baseLabel = item.source === "catalog"
       ? [item.supplier_code, item.title].filter(Boolean).join(" ")
       : ([item.description, item.title].filter(Boolean).join(" - ") || "Customer's own garment");
+    const qtyStr = String(item.qty);
+    const unitStr = money(item.unit_price);
+    const totalStr = money(item.line_total);
 
     doc.row(
       [
         { x: COL_ITEM_X, text: truncate(baseLabel, 48), size: 9 },
-        { x: COL_QTY_X, text: String(item.qty), size: 9 },
-        { x: COL_UNIT_X, text: money(item.unit_price), size: 9 },
-        { x: COL_TOTAL_X, text: money(item.line_total), size: 9 },
+        { x: courierRightX(qtyStr, 9, QTY_RIGHT), text: qtyStr, font: "F3", size: 9 },
+        { x: courierRightX(unitStr, 9, UNIT_RIGHT), text: unitStr, font: "F3", size: 9 },
+        { x: courierRightX(totalStr, 9, RIGHT_EDGE), text: totalStr, font: "F3", size: 9 },
       ],
       { gap: 13 }
     );
@@ -132,11 +144,15 @@ export function buildOrderPdf(o, customerAddr) {
   });
 
   doc.hr();
-  doc.gap(4);
-  doc.line("Subtotal: " + money(o.subtotal), { x: 400, size: 10, gap: 13 });
-  if (o.discount_amount) doc.line("Discount: -" + money(o.discount_amount), { x: 400, size: 10, gap: 13 });
-  doc.gap(6);
-  doc.line("Total: " + money(o.total), { x: 400, font: "F2", size: 14, gap: 18 });
+  doc.gap(10);
+
+  // Totals card - a boxed summary on the right rather than a loose stack of
+  // left-aligned lines, with every figure right-aligned against the same
+  // edge (see courierRightX above) so Subtotal/Total/Deposit/Balance all
+  // actually line up under each other.
+  const totalsRows = [{ label: "Subtotal", value: money(o.subtotal) }];
+  if (o.discount_amount) totalsRows.push({ label: "Discount", value: "-" + money(o.discount_amount) });
+  totalsRows.push({ label: "Total", value: money(o.total), bold: true });
   // A quote always shows what deposit it'll need if accepted - the customer
   // should know that before they agree to it, not find out only once it's
   // already been converted to an invoice. An invoice shows the deposit ask
@@ -145,17 +161,40 @@ export function buildOrderPdf(o, customerAddr) {
   // paid-to-date/balance-due statement instead.
   if (o.doc_type === "quote") {
     const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
-    if (depositDue > 0) doc.line("Deposit due on acceptance: " + money(depositDue), { x: 400, font: "F2", size: 11, gap: 15 });
+    if (depositDue > 0) totalsRows.push({ label: "Deposit due on acceptance", value: money(depositDue), bold: true });
   } else if (o.doc_type === "invoice" && o.paid_status !== "paid") {
     const amountPaid = Number(o.amount_paid || 0);
     if (!o.email_sent_count) {
       const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
-      if (depositDue > 0) doc.line("Deposit due: " + money(depositDue), { x: 400, font: "F2", size: 11, gap: 15 });
+      if (depositDue > 0) totalsRows.push({ label: "Deposit due", value: money(depositDue), bold: true });
     } else {
-      if (amountPaid > 0) doc.line("Paid to date: " + money(amountPaid), { x: 400, size: 10, gap: 13 });
-      doc.line("Balance due: " + money(o.total - amountPaid), { x: 400, font: "F2", size: 11, gap: 15 });
+      if (amountPaid > 0) totalsRows.push({ label: "Paid to date", value: money(amountPaid) });
+      totalsRows.push({ label: "Balance due", value: money(o.total - amountPaid), bold: true });
     }
   }
+
+  // Wide enough that even the longest label here ("Deposit due on
+  // acceptance") can't run into the value column - Helvetica-Bold isn't
+  // measured (no AFM table), so this width was chosen with real margin
+  // rather than computed exactly.
+  const cardX = 270;
+  const cardRight = RIGHT_EDGE;
+  const rowH = 20;
+  const topPad = 16;
+  // Constructed so the cursor lands exactly 8pt below the box's own bottom
+  // edge once the row loop finishes - no separate "now skip past the box"
+  // step needed afterward.
+  const cardH = topPad + totalsRows.length * rowH - 8;
+  doc.ensureSpace(totalsRows.length + 2, rowH);
+  doc.rect(cardX, doc.y - cardH, cardRight - cardX, cardH, { gray: 0.8, weight: 0.75 });
+  doc.y -= topPad;
+  totalsRows.forEach((r) => {
+    const size = r.bold ? 11 : 10;
+    doc.text(cardX + 16, doc.y, r.label, { font: r.bold ? "F2" : "F1", size, gray: r.bold ? 0 : 0.4 });
+    doc.text(courierRightX(r.value, size, cardRight - 16), doc.y, r.value, { font: "F3", size, gray: 0 });
+    doc.y -= rowH;
+  });
+  doc.gap(6);
   doc.line("VAT not applicable - not VAT registered.", { x: 400, size: 8, gray: 0.5, gap: 13 });
 
   if (o.notes) {
