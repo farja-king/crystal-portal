@@ -5595,9 +5595,25 @@
       renderOrderLines();
     }
 
+    // Updates just this one line's own "Total qty"/"Line total" text without
+    // a full renderOrderLines() - every oninput "Live" handler below calls
+    // this alongside renderOrderTotals() (which only refreshes the overall
+    // Subtotal/Total at the bottom) so a keystroke updates both, without
+    // re-rendering the whole line list and kicking focus out of whatever
+    // field is being typed into.
+    function updateLineTotalDisplay(idx) {
+      const line = orderLines[idx];
+      if (!line) return;
+      const qtyEl = document.getElementById('line-total-qty-' + idx);
+      if (qtyEl) qtyEl.textContent = 'Total qty: ' + lineQty(line);
+      const totalEl = document.getElementById('line-total-' + idx);
+      if (totalEl) totalEl.textContent = 'Line total: ' + money(lineTotal(line));
+    }
+
     function updateOrderLineQty(idx, value) {
       orderLines[idx].qty = Math.max(1, parseInt(value, 10) || 1);
       renderOrderTotals();
+      updateLineTotalDisplay(idx);
     }
 
     function updateOrderLineDescription(idx, value) {
@@ -5643,11 +5659,13 @@
     function updateDecorationPriceLive(idx, decIdx, value) {
       orderLines[idx].decorations[decIdx].price = Number(value) || 0;
       renderOrderTotals();
+      updateLineTotalDisplay(idx);
     }
 
     function updateDecorationQtyLive(idx, decIdx, value) {
       orderLines[idx].decorations[decIdx].qty = Math.max(1, parseInt(value, 10) || 1);
       renderOrderTotals();
+      updateLineTotalDisplay(idx);
     }
 
     function updateDecorationNotes(idx, decIdx, value) {
@@ -6040,6 +6058,7 @@
     function updateBreakdownQtyLive(idx, rowIdx, value) {
       orderLines[idx].breakdown[rowIdx].qty = Math.max(1, parseInt(value, 10) || 1);
       renderOrderTotals();
+      updateLineTotalDisplay(idx);
     }
 
     // Decorations scoped to one specific breakdown row (one colour/size),
@@ -6090,11 +6109,13 @@
     function updateBreakdownDecorationPriceLive(idx, rowIdx, decIdx, value) {
       orderLines[idx].breakdown[rowIdx].decorations[decIdx].price = Number(value) || 0;
       renderOrderTotals();
+      updateLineTotalDisplay(idx);
     }
 
     function updateBreakdownDecorationQtyLive(idx, rowIdx, decIdx, value) {
       orderLines[idx].breakdown[rowIdx].decorations[decIdx].qty = Math.max(1, parseInt(value, 10) || 1);
       renderOrderTotals();
+      updateLineTotalDisplay(idx);
     }
 
     function updateBreakdownDecorationNotes(idx, rowIdx, decIdx, value) {
@@ -6279,7 +6300,7 @@
             }).join('')}
             <div class="flex items-center justify-between pt-0.5">
               <button type="button" onclick="addBreakdownRow(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add colour/size</button>
-              <span class="text-xs text-slate-500">Total qty: ${lineQty(line)}</span>
+              <span id="line-total-qty-${idx}" class="text-xs text-slate-500">Total qty: ${lineQty(line)}</span>
             </div>
           </div>` : '';
 
@@ -6331,7 +6352,7 @@
             ${decorationsBlock}
             <div class="flex items-center justify-between mt-2">
               ${usesRowDecorations ? '<span></span>' : `<button type="button" onclick="addOrderLineDecoration(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add decoration</button>`}
-              <span class="text-sm font-semibold text-slate-700">Line total: ${money(lineTotal(line))}</span>
+              <span id="line-total-${idx}" class="text-sm font-semibold text-slate-700">Line total: ${money(lineTotal(line))}</span>
             </div>
           </div>`;
       }).join('');
