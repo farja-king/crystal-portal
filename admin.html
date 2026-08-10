@@ -1112,6 +1112,10 @@
         <span class="block font-medium text-slate-700 mb-1">To</span>
         <input id="email-compose-to" type="email" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
       </label>
+      <label class="text-sm block mb-3">
+        <span class="block font-medium text-slate-700 mb-1">Quick phrase <span class="text-slate-400 font-normal">(optional - fills in the message below, edit as needed)</span></span>
+        <select id="email-compose-template" onchange="applyEmailQuickPhrase()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"></select>
+      </label>
       <label class="text-sm block mb-1">
         <span class="block font-medium text-slate-700 mb-1">Personal message <span class="text-slate-400 font-normal">(optional)</span></span>
         <textarea id="email-compose-message" rows="4" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" placeholder="Shown at the top of the email, above the quote/invoice details…"></textarea>
@@ -5091,6 +5095,30 @@
     // Resolves to { to, message } or null if cancelled - the send dialog
     // offered from emailOrder(), with an optional personal note that gets
     // inserted at the top of the email (see functions/api/send-email.js).
+    // Starter set for the "Quick phrase" dropdown on the send-email compose
+    // modal - picking one fills the Personal message box below, which stays
+    // freely editable before sending (this never sends anything on its
+    // own). Martin can swap these out for his own wording whenever - it's
+    // just a plain array, nothing here depends on the exact text.
+    const EMAIL_QUICK_PHRASES = [
+      { label: 'Thank you for your order (deposit required)', text: "Thank you for your order - once the deposit shown below is paid we can order the garments." },
+      { label: 'Quote ready - awaiting decision', text: "Your quote is ready below - let us know if you'd like to go ahead." },
+      { label: 'Design proof attached for approval', text: "We've attached a design proof for your approval - please let us know if you're happy to proceed or would like any changes." },
+      { label: 'Friendly payment reminder', text: "Just a friendly reminder that the balance shown below is still outstanding - let us know if you have any questions." },
+    ];
+
+    function populateEmailQuickPhrases() {
+      const select = document.getElementById('email-compose-template');
+      select.innerHTML = '<option value="">-- Choose a quick phrase --</option>' +
+        EMAIL_QUICK_PHRASES.map((p, i) => `<option value="${i}">${escapeHtml(p.label)}</option>`).join('');
+    }
+
+    function applyEmailQuickPhrase() {
+      const select = document.getElementById('email-compose-template');
+      const phrase = EMAIL_QUICK_PHRASES[select.value];
+      if (phrase) document.getElementById('email-compose-message').value = phrase.text;
+    }
+
     function emailComposeModal(defaultTo, docLabel) {
       return new Promise((resolve) => {
         const modal = document.getElementById('email-compose-modal');
@@ -5099,6 +5127,8 @@
         document.getElementById('email-compose-doclabel').textContent = docLabel;
         toInput.value = defaultTo || '';
         msgInput.value = '';
+        populateEmailQuickPhrases();
+        document.getElementById('email-compose-template').value = '';
         const sendBtn = document.getElementById('email-compose-send');
         const cancelBtn = document.getElementById('email-compose-cancel');
         const cleanup = (result) => {
