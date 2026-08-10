@@ -1669,6 +1669,10 @@
           <span class="block font-medium text-slate-700 mb-1">Notes (optional)</span>
           <textarea id="rp-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"></textarea>
         </label>
+        <label id="rp-receipt-row" class="text-sm flex items-center gap-2">
+          <input id="rp-send-receipt" type="checkbox" checked class="rounded border-slate-300" />
+          <span class="text-slate-700">Email the customer a receipt</span>
+        </label>
       </div>
       <p id="rp-msg" class="text-sm text-red-600 mt-3"></p>
       <div class="flex gap-2 mt-2">
@@ -5292,6 +5296,7 @@
     // ============================== Quotes & Invoices (garment orders) ==============================
     const API_ORDERS_URL = '/api/orders';
     const API_ORDER_PDF_URL = '/api/order-pdf';
+    const API_RECEIPT_URL = '/api/receipt';
     let orderLines = [];
     let ordersLoaded = false;
     let ordersById = {};
@@ -7844,6 +7849,8 @@
       document.getElementById('rp-notes').value = '';
       document.getElementById('rp-msg').textContent = '';
       document.getElementById('rp-submit-btn').textContent = 'Save';
+      document.getElementById('rp-receipt-row').classList.remove('hidden');
+      document.getElementById('rp-send-receipt').checked = true;
       document.getElementById('record-payment-modal').classList.remove('hidden');
     }
 
@@ -7860,6 +7867,10 @@
       document.getElementById('rp-notes').value = payment.notes || '';
       document.getElementById('rp-msg').textContent = '';
       document.getElementById('rp-submit-btn').textContent = 'Save changes';
+      // Editing an existing payment (e.g. fixing an amount typo) never
+      // re-triggers a receipt send on its own - use the per-row "Send
+      // receipt" button in the payment history list for that.
+      document.getElementById('rp-receipt-row').classList.add('hidden');
       document.getElementById('record-payment-modal').classList.remove('hidden');
     }
 
@@ -7888,12 +7899,14 @@
         notes: document.getElementById('rp-notes').value,
         received_at,
       };
+      const isNewPayment = !editingPaymentId;
       if (editingPaymentId) {
         body.action = 'edit_payment';
         body.payment_id = editingPaymentId;
       } else {
         body.action = 'record_payment';
       }
+      const sendReceipt = isNewPayment && document.getElementById('rp-send-receipt').checked;
       const res = await fetch(API_ORDERS_URL, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -7902,10 +7915,42 @@
         msg.textContent = 'Something went wrong — please try again.';
         return;
       }
+      const result = await res.json();
       closeRecordPaymentModal();
       await loadOrders();
       if (document.getElementById('order-payments')) {
         loadOrderPayments(id);
+      }
+      // A failed/skipped receipt never undoes the payment that was just
+      // saved - it's a best-effort follow-up call, reported via its own
+      // toast rather than blocking on it.
+      if (sendReceipt && result.payment_id) {
+        await sendPaymentReceipt(id, result.payment_id, 'Payment saved and receipt sent.', 'Payment saved, but the receipt');
+      } else {
+        showActionToast('✓', isNewPayment ? 'Payment recorded.' : 'Payment updated.');
+      }
+    }
+
+    // sentMsg/failPrefix let this read naturally both right after saving a
+    // payment ("Payment saved and receipt sent...") and from the standalone
+    // "Send receipt" button in payment history, where nothing was just saved.
+    async function sendPaymentReceipt(orderId, paymentId, sentMsg = 'Receipt sent.', failPrefix = 'The receipt') {
+      try {
+        const res = await fetch(API_RECEIPT_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: orderId, payment_id: paymentId }),
+        });
+        const data = await res.json();
+        if (data.sent) {
+          showActionToast('✓', sentMsg);
+        } else {
+          showActionToast('⚠', `${failPrefix} couldn't be sent` + (data.reason ? ': ' + data.reason : '.'));
+        }
+      } catch (e) {
+        showActionToast('⚠', `${failPrefix} couldn't be sent: ` + e.message);
+      }
+      if (document.getElementById('order-payments')) {
+        loadOrderPayments(orderId);
       }
     }
 
@@ -7935,7 +7980,10 @@
             <span class="text-slate-500"> · ${escapeHtml(ukDate(p.received_at))}${p.method ? ' · ' + escapeHtml(p.method) : ''}</span>
             ${p.notes ? `<div class="text-xs text-slate-400">${escapeHtml(p.notes)}</div>` : ''}
           </div>
-          <div class="flex gap-3">
+          <div class="flex items-center gap-3">
+            ${p.receipt_sent_at
+              ? `<span class="text-xs text-emerald-600" title="${escapeAttr(ukDate(p.receipt_sent_at))}">Receipt sent</span>`
+              : `<button onclick="sendPaymentReceipt('${escapeAttr(orderId)}', '${escapeAttr(p.id)}')" title="Email the customer a receipt for this payment" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold">Send receipt</button>`}
             <button onclick="openEditPaymentModal('${escapeAttr(orderId)}', paymentsById['${escapeAttr(orderId)}']['${escapeAttr(p.id)}'])" title="Edit this payment" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Edit</button>
             <button onclick="deletePayment('${escapeAttr(orderId)}', '${escapeAttr(p.id)}')" title="Void this payment" class="text-red-600 hover:text-red-800 text-xs font-semibold">Void</button>
           </div>

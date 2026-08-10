@@ -439,11 +439,12 @@ export async function onRequest(context) {
         if (existing.doc_type !== "invoice") return json({ error: "Only invoices take payments" }, 400);
         const amount = Number(data.amount);
         if (!amount || amount <= 0) return json({ error: "Amount must be greater than zero" }, 400);
+        const paymentId = crypto.randomUUID();
         await db.prepare(`
           INSERT INTO payments (id, order_id, amount, method, type, notes, received_at)
           VALUES (?, ?, ?, ?, 'payment', ?, ?)
         `).bind(
-          crypto.randomUUID(),
+          paymentId,
           data.id,
           amount,
           data.method || "",
@@ -451,7 +452,10 @@ export async function onRequest(context) {
           data.received_at || new Date().toISOString()
         ).run();
         const summary = await recomputePaymentSummary(data.id);
-        return json({ success: true, ...summary });
+        // payment_id is returned so the caller (the Record Payment modal's
+        // optional "send receipt" checkbox) can fire the receipt email
+        // against this exact payment without a second round-trip.
+        return json({ success: true, payment_id: paymentId, ...summary });
       }
 
       if (data.action === "edit_payment") {
