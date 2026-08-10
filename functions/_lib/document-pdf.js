@@ -31,14 +31,16 @@ const QTY_RIGHT = 380;
 const UNIT_RIGHT = 462;
 const RIGHT_EDGE = PAGE_WIDTH - MARGIN;
 
-// Courier is genuinely fixed-width (0.6em per glyph), unlike Helvetica -
-// this writer has no AFM table to measure Helvetica's real per-character
-// widths (see pdf.js), so Courier is the only font it can right-align a
-// numeric column against precisely. Every Qty/Unit/Total/Subtotal-style
-// figure below is drawn in Courier for exactly this reason - it's what
-// makes the numbers actually line up instead of drifting per row.
-function courierRightX(str, size, rightEdge) {
-  return rightEdge - String(str).length * size * 0.6;
+// Real Adobe AFM advance widths (1/1000 em) for the exact characters a
+// money()/qty string can ever contain - digits 0-9, £, ., - and space are
+// all the same width in both Helvetica and Helvetica-Bold, so this is
+// enough to right-align a numeric column precisely in the document's own
+// font, without needing a full per-glyph metrics table (or falling back
+// to Courier, which looks nothing like the rest of the page).
+const NUMERIC_CHAR_WIDTH = { "0": 556, "1": 556, "2": 556, "3": 556, "4": 556, "5": 556, "6": 556, "7": 556, "8": 556, "9": 556, ".": 278, "£": 556, "-": 333, " ": 278, ",": 278 };
+function numericRightX(str, size, rightEdge) {
+  const width = String(str).split("").reduce((sum, ch) => sum + (NUMERIC_CHAR_WIDTH[ch] ?? 556), 0) * size / 1000;
+  return rightEdge - width;
 }
 
 function itemDetailLines(item) {
@@ -112,9 +114,9 @@ export function buildOrderPdf(o, customerAddr) {
   doc.row(
     [
       { x: COL_ITEM_X, text: "Item", font: "F2", size: 9 },
-      { x: courierRightX("Qty", 9, QTY_RIGHT), text: "Qty", font: "F3", size: 9 },
-      { x: courierRightX("Unit", 9, UNIT_RIGHT), text: "Unit", font: "F3", size: 9 },
-      { x: courierRightX("Total", 9, RIGHT_EDGE), text: "Total", font: "F3", size: 9 },
+      { x: numericRightX("Qty", 9, QTY_RIGHT), text: "Qty", font: "F2", size: 9 },
+      { x: numericRightX("Unit", 9, UNIT_RIGHT), text: "Unit", font: "F2", size: 9 },
+      { x: numericRightX("Total", 9, RIGHT_EDGE), text: "Total", font: "F2", size: 9 },
     ],
     { gap: 14 }
   );
@@ -131,9 +133,9 @@ export function buildOrderPdf(o, customerAddr) {
     doc.row(
       [
         { x: COL_ITEM_X, text: truncate(baseLabel, 48), size: 9 },
-        { x: courierRightX(qtyStr, 9, QTY_RIGHT), text: qtyStr, font: "F3", size: 9 },
-        { x: courierRightX(unitStr, 9, UNIT_RIGHT), text: unitStr, font: "F3", size: 9 },
-        { x: courierRightX(totalStr, 9, RIGHT_EDGE), text: totalStr, font: "F3", size: 9 },
+        { x: numericRightX(qtyStr, 9, QTY_RIGHT), text: qtyStr, font: "F2", size: 9, gray: 0 },
+        { x: numericRightX(unitStr, 9, UNIT_RIGHT), text: unitStr, font: "F2", size: 9, gray: 0 },
+        { x: numericRightX(totalStr, 9, RIGHT_EDGE), text: totalStr, font: "F2", size: 9, gray: 0 },
       ],
       { gap: 13 }
     );
@@ -148,7 +150,7 @@ export function buildOrderPdf(o, customerAddr) {
 
   // Totals card - a boxed summary on the right rather than a loose stack of
   // left-aligned lines, with every figure right-aligned against the same
-  // edge (see courierRightX above) so Subtotal/Total/Deposit/Balance all
+  // edge (see numericRightX above) so Subtotal/Total/Deposit/Balance all
   // actually line up under each other.
   const totalsRows = [{ label: "Subtotal", value: money(o.subtotal) }];
   if (o.discount_amount) totalsRows.push({ label: "Discount", value: "-" + money(o.discount_amount) });
@@ -174,9 +176,9 @@ export function buildOrderPdf(o, customerAddr) {
   }
 
   // Wide enough that even the longest label here ("Deposit due on
-  // acceptance") can't run into the value column - Helvetica-Bold isn't
-  // measured (no AFM table), so this width was chosen with real margin
-  // rather than computed exactly.
+  // acceptance") can't run into the value column - label text (letters)
+  // still isn't measured (no full AFM table), only the numeric value
+  // column is, so this width keeps real margin rather than being exact.
   const cardX = 270;
   const cardRight = RIGHT_EDGE;
   const rowH = 20;
@@ -190,8 +192,12 @@ export function buildOrderPdf(o, customerAddr) {
   doc.y -= topPad;
   totalsRows.forEach((r) => {
     const size = r.bold ? 11 : 10;
-    doc.text(cardX + 16, doc.y, r.label, { font: r.bold ? "F2" : "F1", size, gray: r.bold ? 0 : 0.4 });
-    doc.text(courierRightX(r.value, size, cardRight - 16), doc.y, r.value, { font: "F3", size, gray: 0 });
+    // Every value is bold black regardless of row - only the label weight/
+    // size marks Total/Deposit/Balance as more important than Subtotal/
+    // Discount, matching the document's regular body text rather than
+    // switching font family or fading to grey.
+    doc.text(cardX + 16, doc.y, r.label, { font: r.bold ? "F2" : "F1", size, gray: r.bold ? 0 : 0.25 });
+    doc.text(numericRightX(r.value, size, cardRight - 16), doc.y, r.value, { font: "F2", size, gray: 0 });
     doc.y -= rowH;
   });
   doc.gap(6);
