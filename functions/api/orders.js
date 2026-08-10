@@ -245,6 +245,21 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    // deposit_pct/deposit_amount - what's being asked for up front, set by
+    // hand in the builder same as discount_pct/discount_flat (and additive
+    // the same way - a job can have a % deposit and a flat top-up at once).
+    // Deliberately metadata only, not fed into priceItems() - a deposit
+    // doesn't change what's owed, only how big a first payment is being
+    // requested. The actual "deposit due" figure is always computed live
+    // from these plus the current total (see document-pdf.js/send-email.js),
+    // never stored, so it can't drift if the order is edited afterwards.
+    for (const col of ["deposit_pct REAL DEFAULT 0", "deposit_amount REAL DEFAULT 0"]) {
+      try {
+        await db.prepare(`ALTER TABLE orders ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
+    }
     // amount_paid - running total of everything recorded against this
     // invoice in the payments ledger below, kept denormalized on the order
     // itself so every existing place that reads orders.* (list badges,
@@ -368,8 +383,8 @@ export async function onRequest(context) {
       await db.prepare(`
         INSERT INTO orders (
           id, doc_type, quote_number, invoice_number, customer_id, customer_name, customer_email,
-          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, reminder_interval_days, invoiced_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, reminder_interval_days, invoiced_at, deposit_pct, deposit_amount
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         isInvoice ? "invoice" : "quote",
@@ -389,7 +404,9 @@ export async function onRequest(context) {
         data.notes || "",
         data.due_date || "",
         data.reminder_interval_days ? Number(data.reminder_interval_days) : null,
-        isInvoice ? new Date().toISOString() : null
+        isInvoice ? new Date().toISOString() : null,
+        Number(data.deposit_pct) || 0,
+        Number(data.deposit_amount) || 0
       ).run();
 
       return json({
@@ -502,7 +519,7 @@ export async function onRequest(context) {
         UPDATE orders SET
           customer_id = ?, customer_name = ?, customer_email = ?,
           items = ?, subtotal = ?, discount_pct = ?, discount_flat = ?, discount_amount = ?, total = ?,
-          notes = ?, status = ?, due_date = ?, reminder_interval_days = ?, updated_at = CURRENT_TIMESTAMP
+          notes = ?, status = ?, due_date = ?, reminder_interval_days = ?, deposit_pct = ?, deposit_amount = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         data.customer_id ?? existing.customer_id,
@@ -520,6 +537,8 @@ export async function onRequest(context) {
         data.reminder_interval_days !== undefined
           ? (data.reminder_interval_days ? Number(data.reminder_interval_days) : null)
           : existing.reminder_interval_days,
+        data.deposit_pct !== undefined ? Number(data.deposit_pct) || 0 : existing.deposit_pct,
+        data.deposit_amount !== undefined ? Number(data.deposit_amount) || 0 : existing.deposit_amount,
         data.id
       ).run();
 

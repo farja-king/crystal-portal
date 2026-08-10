@@ -1201,6 +1201,14 @@
           <span class="block font-medium text-slate-700 mb-1">Discount £</span>
           <input id="ord-discount-flat" type="number" min="0" step="0.01" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
         </label>
+        <label class="text-sm">
+          <span class="block font-medium text-slate-700 mb-1">Deposit % <span class="font-normal text-slate-400">(invoices only)</span></span>
+          <input id="ord-deposit-pct" type="number" min="0" max="100" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
+        </label>
+        <label class="text-sm">
+          <span class="block font-medium text-slate-700 mb-1">Deposit £ <span class="font-normal text-slate-400">(invoices only)</span></span>
+          <input id="ord-deposit-amount" type="number" min="0" step="0.01" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" oninput="renderOrderTotals()" />
+        </label>
         <label id="ord-status-field" class="text-sm hidden">
           <span class="block font-medium text-slate-700 mb-1">Status</span>
           <select id="ord-status" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
@@ -1279,6 +1287,7 @@
         <div class="text-sm text-slate-600 space-y-0.5">
           <div>Subtotal: <span id="ord-subtotal" class="font-semibold text-slate-900">£0.00</span></div>
           <div>Discount: <span id="ord-discount-amt" class="font-semibold text-slate-900">£0.00</span></div>
+          <div id="ord-deposit-row" class="hidden">Deposit due: <span id="ord-deposit-due" class="font-semibold text-slate-900">£0.00</span></div>
         </div>
         <div class="text-2xl font-bold text-slate-900">Total: <span id="ord-total">£0.00</span></div>
         <div class="flex gap-2">
@@ -6336,7 +6345,10 @@
       const discountFlat = Math.max(0, Number(document.getElementById('ord-discount-flat').value) || 0);
       const discountAmt = subtotal * (discountPct / 100) + discountFlat;
       const total = Math.max(0, subtotal - discountAmt);
-      return { subtotal, discountPct, discountFlat, discountAmt, total };
+      const depositPct = Math.min(100, Math.max(0, Number(document.getElementById('ord-deposit-pct').value) || 0));
+      const depositFlat = Math.max(0, Number(document.getElementById('ord-deposit-amount').value) || 0);
+      const depositDue = Math.min(total, total * (depositPct / 100) + depositFlat);
+      return { subtotal, discountPct, discountFlat, discountAmt, total, depositPct, depositFlat, depositDue };
     }
 
     // Builds the "(10% + £5)" style suffix shown next to "Discount" - a quote
@@ -6349,10 +6361,13 @@
     }
 
     function renderOrderTotals() {
-      const { subtotal, discountAmt, total } = computeOrderPricing();
+      const { subtotal, discountAmt, total, depositDue } = computeOrderPricing();
       document.getElementById('ord-subtotal').textContent = money(subtotal);
       document.getElementById('ord-discount-amt').textContent = money(discountAmt);
       document.getElementById('ord-total').textContent = money(total);
+      const depositRow = document.getElementById('ord-deposit-row');
+      depositRow.classList.toggle('hidden', depositDue <= 0);
+      document.getElementById('ord-deposit-due').textContent = money(depositDue);
     }
 
     // Set while editing an existing quote/invoice in the builder (see
@@ -6413,6 +6428,8 @@
         customer_email: customer.email || '',
         discount_pct: Number(document.getElementById('ord-discount').value) || 0,
         discount_flat: Number(document.getElementById('ord-discount-flat').value) || 0,
+        deposit_pct: Number(document.getElementById('ord-deposit-pct').value) || 0,
+        deposit_amount: Number(document.getElementById('ord-deposit-amount').value) || 0,
         notes: document.getElementById('ord-notes').value,
         due_date: document.getElementById('ord-due-date').value,
         reminder_interval_days: Number(document.getElementById('ord-reminder-interval').value) || null,
@@ -6568,6 +6585,8 @@
       onOrderCustomerChange();
       document.getElementById('ord-discount').value = o.discount_pct || 0;
       document.getElementById('ord-discount-flat').value = o.discount_flat || 0;
+      document.getElementById('ord-deposit-pct').value = o.deposit_pct || 0;
+      document.getElementById('ord-deposit-amount').value = o.deposit_amount || 0;
       document.getElementById('ord-notes').value = o.notes || '';
       document.getElementById('ord-due-date').value = o.due_date || '';
       document.getElementById('ord-reminder-interval').value = o.reminder_interval_days || '';
@@ -6625,12 +6644,14 @@
       onOrderCustomerChange();
       document.getElementById('ord-discount').value = o.discount_pct || 0;
       document.getElementById('ord-discount-flat').value = o.discount_flat || 0;
-      // Notes and due-by are specific to the original job, not carried
-      // forward onto a new one - but the reminder cadence is more of a
-      // customer preference than a per-job detail, so that one does carry
+      // Notes, due-by and deposit are specific to the original job, not
+      // carried forward onto a new one - but the reminder cadence is more of
+      // a customer preference than a per-job detail, so that one does carry
       // over (same treatment as discount above).
       document.getElementById('ord-notes').value = '';
       document.getElementById('ord-due-date').value = '';
+      document.getElementById('ord-deposit-pct').value = 0;
+      document.getElementById('ord-deposit-amount').value = 0;
       document.getElementById('ord-reminder-interval').value = o.reminder_interval_days || '';
       document.getElementById('ord-status-field').classList.add('hidden');
       document.getElementById('ord-cancel-edit-btn').textContent = 'Cancel';
@@ -6665,6 +6686,8 @@
       renderOrderCustomerPicker();
       document.getElementById('ord-discount').value = 0;
       document.getElementById('ord-discount-flat').value = 0;
+      document.getElementById('ord-deposit-pct').value = 0;
+      document.getElementById('ord-deposit-amount').value = 0;
       document.getElementById('ord-notes').value = '';
       document.getElementById('ord-due-date').value = '';
       document.getElementById('ord-reminder-interval').value = '';

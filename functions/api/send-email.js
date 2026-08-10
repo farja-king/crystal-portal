@@ -139,6 +139,19 @@ export async function onRequest(context) {
             <div style="font-size:14px;">Status: ${o.paid_status === "paid" ? "Paid" : "Unpaid"}</div>
             ${o.due_date ? `<div style="font-size:14px;">Due by: ${ukDate(o.due_date)}</div>` : ""}
             <div style="font-size:20px;font-weight:700;margin-top:6px;">Total: ${money(o.total)}</div>
+            ${(() => {
+              if (o.paid_status === "paid") return "";
+              const amountPaid = Number(o.amount_paid || 0);
+              const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+              if (amountPaid > 0) {
+                return `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>
+                  <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
+              }
+              if (depositDue > 0) {
+                return `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`;
+              }
+              return "";
+            })()}
           </div>
           ${o.paid_status !== "paid" ? `
           <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-top:16px;font-size:14px;line-height:1.6;">
@@ -240,6 +253,19 @@ export async function onRequest(context) {
     const discountLine = o.discount_amount ? `Discount: -${money(o.discount_amount)}` : "";
 
     const isUnpaidInvoice = o.doc_type === "invoice" && o.paid_status !== "paid";
+    // Deposit due (nothing paid yet) or paid-to-date/balance due (something
+    // has) - see the matching comment in document-pdf.js/buildOrderPdf.
+    let depositBalanceLine = "";
+    if (isUnpaidInvoice) {
+      const amountPaid = Number(o.amount_paid || 0);
+      const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+      if (amountPaid > 0) {
+        depositBalanceLine = `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>
+          <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
+      } else if (depositDue > 0) {
+        depositBalanceLine = `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`;
+      }
+    }
     const bankBlock = isUnpaidInvoice ? `
         <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-top:16px;font-size:14px;line-height:1.6;">
           <div style="font-weight:600;">We appreciate your business. Please pay via Bank Transfer</div>
@@ -287,6 +313,7 @@ export async function onRequest(context) {
           <div>Subtotal: ${money(o.subtotal)}</div>
           ${discountLine ? `<div style="margin-top:6px;">${discountLine}</div>` : ""}
           <div style="font-size:20px;font-weight:700;margin-top:6px;">Total: ${money(o.total)}</div>
+          ${depositBalanceLine}
           <div style="font-size:12px;color:#64748b;margin-top:4px;">VAT not applicable - not VAT registered.</div>
         </div>
         ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
