@@ -1643,7 +1643,7 @@
 
   <div id="record-payment-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
     <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
-      <h3 class="text-lg font-bold text-slate-900 mb-1">Record a payment</h3>
+      <h3 id="rp-title" class="text-lg font-bold text-slate-900 mb-1">Record a payment</h3>
       <p class="text-sm text-slate-500 mb-4">Against <span id="rp-order-label" class="font-semibold text-slate-700"></span></p>
       <div class="grid gap-3">
         <div class="grid grid-cols-2 gap-3">
@@ -1672,7 +1672,7 @@
       </div>
       <p id="rp-msg" class="text-sm text-red-600 mt-3"></p>
       <div class="flex gap-2 mt-2">
-        <button type="button" onclick="submitRecordPayment()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
+        <button type="button" id="rp-submit-btn" onclick="submitRecordPayment()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
           Save
         </button>
         <button type="button" onclick="closeRecordPaymentModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm">
@@ -7827,24 +7827,46 @@
     }
 
     let recordPaymentOrderId = null;
+    let editingPaymentId = null;
+    const paymentsById = {}; // orderId -> { paymentId -> payment }, refreshed each loadOrderPayments()
 
     function openRecordPaymentModal(id) {
       const o = ordersById[id];
       if (!o) return;
       recordPaymentOrderId = id;
+      editingPaymentId = null;
       const balance = Number(o.total) - Number(o.amount_paid || 0);
+      document.getElementById('rp-title').textContent = 'Record a payment';
       document.getElementById('rp-order-label').textContent = o.invoice_number || o.quote_number || '';
       document.getElementById('rp-amount').value = balance > 0 ? balance.toFixed(2) : '';
       document.getElementById('rp-date').value = new Date().toISOString().slice(0, 10);
       document.getElementById('rp-method').value = 'Bank Transfer';
       document.getElementById('rp-notes').value = '';
       document.getElementById('rp-msg').textContent = '';
+      document.getElementById('rp-submit-btn').textContent = 'Save';
+      document.getElementById('record-payment-modal').classList.remove('hidden');
+    }
+
+    function openEditPaymentModal(orderId, payment) {
+      const o = ordersById[orderId];
+      if (!o) return;
+      recordPaymentOrderId = orderId;
+      editingPaymentId = payment.id;
+      document.getElementById('rp-title').textContent = 'Edit payment';
+      document.getElementById('rp-order-label').textContent = o.invoice_number || o.quote_number || '';
+      document.getElementById('rp-amount').value = Number(payment.amount).toFixed(2);
+      document.getElementById('rp-date').value = (payment.received_at || '').slice(0, 10);
+      document.getElementById('rp-method').value = payment.method || 'Bank Transfer';
+      document.getElementById('rp-notes').value = payment.notes || '';
+      document.getElementById('rp-msg').textContent = '';
+      document.getElementById('rp-submit-btn').textContent = 'Save changes';
       document.getElementById('record-payment-modal').classList.remove('hidden');
     }
 
     function closeRecordPaymentModal() {
       document.getElementById('record-payment-modal').classList.add('hidden');
       recordPaymentOrderId = null;
+      editingPaymentId = null;
     }
 
     async function submitRecordPayment() {
@@ -7860,14 +7882,21 @@
         ? new Date(document.getElementById('rp-date').value).toISOString()
         : new Date().toISOString();
       msg.textContent = 'Saving…';
+      const body = {
+        id, amount,
+        method: document.getElementById('rp-method').value,
+        notes: document.getElementById('rp-notes').value,
+        received_at,
+      };
+      if (editingPaymentId) {
+        body.action = 'edit_payment';
+        body.payment_id = editingPaymentId;
+      } else {
+        body.action = 'record_payment';
+      }
       const res = await fetch(API_ORDERS_URL, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id, action: 'record_payment', amount,
-          method: document.getElementById('rp-method').value,
-          notes: document.getElementById('rp-notes').value,
-          received_at,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         msg.textContent = 'Something went wrong — please try again.';
@@ -7886,6 +7915,11 @@
       const o = ordersById[orderId];
       const res = await fetch(`${API_ORDERS_URL}?payments_for=${encodeURIComponent(orderId)}`);
       const payments = await res.json();
+      // Keyed lookup so the Edit button can hand back the full payment
+      // object without inlining its (potentially quote-containing) notes
+      // into an onclick attribute string.
+      paymentsById[orderId] = {};
+      payments.forEach((p) => { paymentsById[orderId][p.id] = p; });
       const balance = o ? Number(o.total) - Number(o.amount_paid || 0) : null;
       const summary = o
         ? `<div class="text-sm font-medium text-slate-700 mb-2">Paid ${money(o.amount_paid)} of ${money(o.total)} — Balance due ${money(balance)}</div>`
@@ -7901,7 +7935,10 @@
             <span class="text-slate-500"> · ${escapeHtml(ukDate(p.received_at))}${p.method ? ' · ' + escapeHtml(p.method) : ''}</span>
             ${p.notes ? `<div class="text-xs text-slate-400">${escapeHtml(p.notes)}</div>` : ''}
           </div>
-          <button onclick="deletePayment('${escapeAttr(orderId)}', '${escapeAttr(p.id)}')" title="Void this payment" class="text-red-600 hover:text-red-800 text-xs font-semibold">Void</button>
+          <div class="flex gap-3">
+            <button onclick="openEditPaymentModal('${escapeAttr(orderId)}', paymentsById['${escapeAttr(orderId)}']['${escapeAttr(p.id)}'])" title="Edit this payment" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Edit</button>
+            <button onclick="deletePayment('${escapeAttr(orderId)}', '${escapeAttr(p.id)}')" title="Void this payment" class="text-red-600 hover:text-red-800 text-xs font-semibold">Void</button>
+          </div>
         </div>
       `).join('') + '</div>';
     }

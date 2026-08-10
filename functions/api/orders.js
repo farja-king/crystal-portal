@@ -454,6 +454,25 @@ export async function onRequest(context) {
         return json({ success: true, ...summary });
       }
 
+      if (data.action === "edit_payment") {
+        if (!data.payment_id) return json({ error: "payment_id required" }, 400);
+        const amount = Number(data.amount);
+        if (!amount || amount <= 0) return json({ error: "Amount must be greater than zero" }, 400);
+        await db.prepare(`
+          UPDATE payments SET amount = ?, method = ?, notes = ?, received_at = ?
+          WHERE id = ? AND order_id = ?
+        `).bind(
+          amount,
+          data.method || "",
+          data.notes || "",
+          data.received_at || new Date().toISOString(),
+          data.payment_id,
+          data.id
+        ).run();
+        const summary = await recomputePaymentSummary(data.id);
+        return json({ success: true, ...summary });
+      }
+
       if (data.action === "delete_payment") {
         if (!data.payment_id) return json({ error: "payment_id required" }, 400);
         await db.prepare("DELETE FROM payments WHERE id = ? AND order_id = ?").bind(data.payment_id, data.id).run();
