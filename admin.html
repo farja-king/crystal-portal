@@ -1954,12 +1954,20 @@
       }
 
       tbody.innerHTML = customers.map(c => {
-          // lifetime_spend/transaction_count/last_visit only ever come from
-          // a Square import - blank for anyone added by hand in the portal.
-          const hasActivity = c.square_customer_id || Number(c.transaction_count) > 0;
+          // lifetime_spend/transaction_count/last_visit are pure Square-
+          // import figures - combined here (display only, the raw columns
+          // themselves are left untouched) with this customer's own
+          // portal-built invoices (portal_spend/portal_order_count/
+          // portal_last_order, added by functions/api/customers.js's GET),
+          // so a customer with no Square history but real invoices here
+          // doesn't wrongly show "no activity".
+          const combinedSpend = (Number(c.lifetime_spend) || 0) + (Number(c.portal_spend) || 0);
+          const combinedCount = (Number(c.transaction_count) || 0) + (Number(c.portal_order_count) || 0);
+          const combinedLast = [c.last_visit, c.portal_last_order].filter(Boolean).sort().pop();
+          const hasActivity = combinedCount > 0;
           const activityCell = hasActivity
-            ? money(c.lifetime_spend) + ' <span class="text-slate-400">· ' + (c.transaction_count || 0) + ' order' + (c.transaction_count === 1 ? '' : 's') + '</span>' +
-              (c.last_visit ? '<br><span class="text-slate-400">Last: ' + escapeHtml(ukDate(c.last_visit)) + '</span>' : '')
+            ? money(combinedSpend) + ' <span class="text-slate-400">· ' + combinedCount + ' order' + (combinedCount === 1 ? '' : 's') + '</span>' +
+              (combinedLast ? '<br><span class="text-slate-400">Last: ' + escapeHtml(ukDate(combinedLast)) + '</span>' : '')
             : '-';
 
           return `
@@ -7239,7 +7247,7 @@
         el.innerHTML = log.map((e) => `
           <div class="text-sm text-slate-700 border-b border-slate-100 last:border-0 py-1.5">
             <div>Emailed to <span class="font-medium">${escapeHtml(e.sent_to)}</span>
-            <span class="text-slate-400">- ${escapeHtml(ukDate(e.sent_at))} ${escapeHtml(new Date(e.sent_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}</span></div>
+            <span class="text-slate-400">- ${escapeHtml(ukDateTime(e.sent_at))}</span></div>
             ${e.subject ? `<div class="text-xs text-slate-500">Subject: ${escapeHtml(e.subject)}</div>` : ''}
           </div>`).join('');
       } catch (e) {
