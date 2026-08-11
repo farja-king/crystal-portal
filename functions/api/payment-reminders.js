@@ -102,11 +102,23 @@ export async function onRequest(context) {
       const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
       const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
       const subject = `Payment reminder: ${order.invoice_number}`;
+      // The daily sweep (see the candidates query below) already excludes
+      // anything with a payment recorded against it, so this branch should
+      // rarely fire in practice - but "Send reminder now" is still offered
+      // on a partial invoice for the admin to manually chase the remaining
+      // balance, so the wording needs to be right for that case too.
+      const amountPaid = Number(order.amount_paid || 0);
+      const owedLine = amountPaid > 0
+        ? `<strong>${money(order.total - amountPaid)}</strong> still owed (${money(amountPaid)} already paid, out of a total of ${money(order.total)})`
+        : `<strong>${money(order.total)}</strong>`;
+      const stillShowsLine = amountPaid > 0
+        ? "still shows a balance outstanding on our records"
+        : "still shows as unpaid on our records";
       const html = emailShell({
         heading: "Payment reminder",
         bodyHtml: `<p>Hi ${escapeHtml(order.customer_name)},</p>
-          <p>Just a friendly reminder that invoice <strong>${escapeHtml(order.invoice_number)}</strong> for <strong>${money(order.total)}</strong>
-             ${order.due_date ? `was due on ${escapeHtml(order.due_date)}` : "is now overdue"} and still shows as unpaid on our records.</p>
+          <p>Just a friendly reminder that invoice <strong>${escapeHtml(order.invoice_number)}</strong> - ${owedLine} -
+             ${order.due_date ? `was due on ${escapeHtml(order.due_date)}` : "is now overdue"} and ${stillShowsLine}.</p>
           <p>If you've already paid this, please let us know so we can update it - otherwise we'd appreciate payment at your earliest convenience.</p>`,
         ctaColor: "#d97706",
       });
@@ -153,9 +165,14 @@ export async function onRequest(context) {
       const defaultDays = await getDaysAfterDue();
       const now = Date.now();
 
+      // paid_status = 'unpaid' only (not != 'paid') - the moment any
+      // payment lands, even a deposit as small as £1, the automatic chase
+      // stops entirely rather than continuing to remind for the remaining
+      // balance. A partial invoice can still be chased by hand via "Send
+      // reminder now" if Martin wants to follow up on what's left.
       const { results: candidates } = await db.prepare(`
         SELECT * FROM orders
-        WHERE doc_type = 'invoice' AND paid_status != 'paid'
+        WHERE doc_type = 'invoice' AND paid_status = 'unpaid'
           AND due_date IS NOT NULL AND due_date <> ''
       `).all();
 
