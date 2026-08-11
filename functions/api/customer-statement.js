@@ -60,8 +60,12 @@ export async function onRequest(context) {
 
   // One row per invoice - a running summary, not every individual payment
   // across every invoice (that could get very long for a customer with a
-  // lot of history). Archived invoices are included deliberately, same
-  // reasoning as the Dashboard's ?all=1 - archiving tidies the working
+  // lot of history) - but each invoice's own payments are still listed
+  // underneath it, indented, since an invoice date and its actual payment
+  // date(s) are often genuinely different (invoiced for a job on the 8th,
+  // raised on the 11th, paid on the 12th) and that gap is exactly what a
+  // statement needs to show. Archived invoices are included deliberately,
+  // same reasoning as the Dashboard's ?all=1 - archiving tidies the working
   // list, it was never meant to erase a sale from a customer's own record
   // of what they've been billed.
   const { results: invoices } = await db.prepare(
@@ -70,6 +74,18 @@ export async function onRequest(context) {
 
   if (!invoices.length) {
     return json({ success: true, sent: false, reason: "This customer has no invoices yet" });
+  }
+
+  const paymentsByInvoice = {};
+  if (invoices.length) {
+    const placeholders = invoices.map(() => "?").join(",");
+    const { results: payments } = await db.prepare(
+      `SELECT * FROM payments WHERE order_id IN (${placeholders}) ORDER BY received_at ASC, created_at ASC`
+    ).bind(...invoices.map((o) => o.id)).all();
+    payments.forEach((p) => {
+      if (!paymentsByInvoice[p.order_id]) paymentsByInvoice[p.order_id] = [];
+      paymentsByInvoice[p.order_id].push(p);
+    });
   }
 
   const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
@@ -83,7 +99,7 @@ export async function onRequest(context) {
   const invoiceRows = invoices.map((o) => {
     const balance = Number(o.total || 0) - Number(o.amount_paid || 0);
     const statusLabel = o.paid_status === "paid" ? "Paid" : o.paid_status === "partial" ? "Partial" : "Unpaid";
-    return `
+    const mainRow = `
       <tr>
         <td style="padding:4px 12px 4px 0;color:#64748b;">${escapeHtml(o.invoice_number)}</td>
         <td style="padding:4px 12px 4px 0;color:#64748b;">${escapeHtml(ukDate(o.created_at))}</td>
@@ -91,6 +107,12 @@ export async function onRequest(context) {
         <td style="padding:4px 12px 4px 0;">${statusLabel}</td>
         <td style="padding:4px 0;font-weight:600;text-align:right;">${money(balance)}</td>
       </tr>`;
+    const paymentRows = (paymentsByInvoice[o.id] || []).map((p) => `
+      <tr>
+        <td colspan="4" style="padding:1px 12px 1px 20px;color:#94a3b8;font-size:12px;">↳ Paid ${escapeHtml(ukDate(p.received_at))}${p.method ? " (" + escapeHtml(p.method) + ")" : ""}</td>
+        <td style="padding:1px 0;text-align:right;color:#64748b;font-size:12px;">${money(p.amount)}</td>
+      </tr>`).join("");
+    return mainRow + paymentRows;
   }).join("");
 
   const overallLine = totalBalance <= 0
