@@ -67,6 +67,35 @@ export async function onRequest(context) {
   const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
   const subject = `Statement: ${order.invoice_number}`;
 
+  // A per-invoice statement is about this specific invoice, so it should
+  // remind the customer what it was actually for - unlike the customer-
+  // wide statement (customer-statement.js), which stays a summary across
+  // every invoice and deliberately doesn't list line items. Manual
+  // invoices (functions/api/manual-invoice.js) have no items to parse -
+  // items.length is simply 0 there, so this section just doesn't render.
+  const items = JSON.parse(order.items || "[]");
+  const itemsSection = items.length ? `
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:12px 0;font-size:14px;border-collapse:collapse;">
+        <tr style="color:#94a3b8;font-size:12px;text-transform:uppercase;">
+          <td style="padding:0 12px 4px 0;">Item</td>
+          <td style="padding:0 12px 4px 0;">Qty</td>
+          <td style="padding:0 12px 4px 0;">Unit</td>
+          <td style="padding:0 0 4px;text-align:right;">Total</td>
+        </tr>
+        ${items.map((item) => {
+          const baseLabel = item.source === "catalog"
+            ? `${escapeHtml(item.supplier_code || "")} ${escapeHtml(item.title || "")}`.trim()
+            : (escapeHtml([item.description, item.title].filter(Boolean).join(" - ")) || "Customer's own garment");
+          return `
+            <tr>
+              <td style="padding:4px 12px 4px 0;">${baseLabel}</td>
+              <td style="padding:4px 12px 4px 0;color:#64748b;">${escapeHtml(String(item.qty))}</td>
+              <td style="padding:4px 12px 4px 0;color:#64748b;">${money(item.unit_price)}</td>
+              <td style="padding:4px 0;text-align:right;">${money(item.line_total)}</td>
+            </tr>`;
+        }).join("")}
+      </table>` : "";
+
   const balance = Number(order.total) - Number(order.amount_paid || 0);
   const balanceLine = order.paid_status === "paid"
     ? `<p style="font-weight:600;color:#16a34a;">This invoice is paid in full - thank you!</p>`
@@ -85,7 +114,9 @@ export async function onRequest(context) {
     heading: "Statement",
     bodyHtml: `<p>Hi ${escapeHtml(order.customer_name)},</p>
       <p>Here's a summary of invoice <strong>${escapeHtml(order.invoice_number)}</strong> (total ${money(order.total)}):</p>
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:12px 0;font-size:14px;border-collapse:collapse;">
+      ${itemsSection ? `<p style="font-size:12px;color:#94a3b8;text-transform:uppercase;margin:16px 0 0;">Items</p>${itemsSection}` : ""}
+      <p style="font-size:12px;color:#94a3b8;text-transform:uppercase;margin:16px 0 0;">Payments</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:4px 0 12px;font-size:14px;border-collapse:collapse;">
         <tr style="color:#94a3b8;font-size:12px;text-transform:uppercase;">
           <td style="padding:0 12px 4px 0;">Date</td>
           <td style="padding:0 12px 4px 0;">Method</td>
