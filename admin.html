@@ -1376,7 +1376,16 @@
            there, and never leaks into the shared Garment Catalog. -->
       <div class="border-t border-slate-200 pt-4 mb-4">
         <div class="flex items-center justify-between mb-2">
-          <h4 class="font-bold text-slate-900">Custom Price List</h4>
+          <div class="flex items-center gap-2">
+            <h4 class="font-bold text-slate-900">Custom Price List</h4>
+            <!-- Collapsed by default for every customer (see
+                 loadCustomerCatalogItems resetting this on each open) - a
+                 customer with a long price list (many garment allocations)
+                 was pushing Order History and everything else far down the
+                 page; this keeps the record compact until the list is
+                 actually needed. See toggleCvPriceListBody(). -->
+            <button type="button" id="cv-price-list-toggle" onclick="toggleCvPriceListBody()" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold"></button>
+          </div>
           <div class="flex gap-2">
             <button type="button" onclick="toggleCvCatalogPicker()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-semibold shadow-sm">
               + Add from Garment Catalog
@@ -1482,22 +1491,24 @@
           </div>
           <p id="cv-add-item-msg" class="text-xs text-red-600 md:col-span-4"></p>
         </div>
-        <div id="cv-catalog-search-wrap" class="hidden relative mb-3">
-          <input id="cv-catalog-search" type="text" oninput="renderCustomerCatalogItems(); toggleSearchClear(this)" placeholder="Search this price list…" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
-          <button type="button" onclick="clearSearchField('cv-catalog-search')" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
-        </div>
-        <div class="overflow-x-auto border border-slate-200 rounded-lg">
-          <table class="w-full text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-              <tr>
-                <th class="p-2">Item</th>
-                <th class="p-2">SKU</th>
-                <th class="p-2 text-right">Price</th>
-                <th class="p-2 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="cv-catalog-body" class="divide-y divide-slate-100"></tbody>
-          </table>
+        <div id="cv-price-list-body" class="hidden">
+          <div id="cv-catalog-search-wrap" class="hidden relative mb-3">
+            <input id="cv-catalog-search" type="text" oninput="renderCustomerCatalogItems(); toggleSearchClear(this)" placeholder="Search this price list…" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+            <button type="button" onclick="clearSearchField('cv-catalog-search')" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          </div>
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th class="p-2">Item</th>
+                  <th class="p-2">SKU</th>
+                  <th class="p-2 text-right">Price</th>
+                  <th class="p-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="cv-catalog-body" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -2577,6 +2588,11 @@
       cvCatalogCustomerId = customerId;
       cvEditingNameIds = new Set();
       document.getElementById('cv-catalog-search').value = '';
+      // Collapsed on every open, for every customer, regardless of how it
+      // was left last time this modal happened to be open - keeps the
+      // record's height uniform and predictable rather than depending on
+      // whatever state a previous customer's view left behind.
+      document.getElementById('cv-price-list-body').classList.add('hidden');
       const tbody = document.getElementById('cv-catalog-body');
       tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
       try {
@@ -2587,10 +2603,30 @@
       } catch (e) {
         cvCatalogItems = [];
         tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-red-500 text-sm">Could not load price list.</td></tr>';
+        updateCvPriceListToggleLabel();
         return;
       }
       renderCustomerCatalogItems();
+      updateCvPriceListToggleLabel();
       syncOrderCustomerItemsIfActive();
+    }
+
+    // Keeps the "Show/Hide price list" toggle's own label in sync with
+    // both the collapsed state and the item count, so it reads e.g. "▸ Show
+    // price list (35 items)" without needing to expand it just to find out
+    // how many there are.
+    function updateCvPriceListToggleLabel() {
+      const body = document.getElementById('cv-price-list-body');
+      const btn = document.getElementById('cv-price-list-toggle');
+      if (!body || !btn) return;
+      const collapsed = body.classList.contains('hidden');
+      const count = cvCatalogItems.length;
+      btn.textContent = (collapsed ? '▸ Show' : '▾ Hide') + ' price list' + (count ? ` (${count} item${count === 1 ? '' : 's'})` : ' (empty)');
+    }
+
+    function toggleCvPriceListBody() {
+      document.getElementById('cv-price-list-body').classList.toggle('hidden');
+      updateCvPriceListToggleLabel();
     }
 
     // Backup copies of a customer's embroidery design files (DST/EMB/PDF/
