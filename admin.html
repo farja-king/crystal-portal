@@ -320,11 +320,13 @@
           <textarea id="edit-notes" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 min-h-20"></textarea>
         </label>
 
-        <!-- Normally only ever set by a Square customer import or a merge
-             (see performMergeCustomers) - exposed here so a wrong or
-             missing figure (e.g. from a merge that happened before that
-             combined activity correctly) can be corrected by hand against
-             Square's own dashboard, which is the real source of truth. -->
+        <!-- A manual baseline (historically set by a Square customer import
+             or a merge - see performMergeCustomers), not the customer's full
+             activity - invoices built in the portal itself are added to this
+             automatically wherever activity is shown (the Customer Directory
+             list, and the read-only total just below) without needing to be
+             folded into these numbers by hand. Kept editable for correcting
+             a wrong/missing baseline figure, e.g. from historic Square data. -->
         <div class="grid gap-4 md:grid-cols-3 mt-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Lifetime spend (£)</span>
@@ -338,7 +340,8 @@
             <span class="block font-medium text-slate-700 mb-1">Last visit</span>
             <input id="edit-last-visit" type="date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
-          <p class="text-xs text-slate-500 md:col-span-3">Square activity - normally set by importing a Square export or merging a duplicate. Only change this by hand to correct a figure against what Square itself shows.</p>
+          <p class="text-xs text-slate-500 md:col-span-3">Manual baseline - portal invoices are added automatically wherever activity is shown, so they don't need including here.</p>
+          <p id="edit-combined-activity" class="text-xs text-slate-600 font-medium md:col-span-3"></p>
         </div>
 
         <div class="mt-4 flex gap-3">
@@ -1944,6 +1947,21 @@
       input.focus();
     }
 
+    // lifetime_spend/transaction_count/last_visit (the manual baseline -
+    // historically set by a Square import or a merge) combined with this
+    // customer's own portal-built invoices (portal_spend/portal_order_count/
+    // portal_last_order, added by functions/api/customers.js's GET) -
+    // display only, never written back, so a customer with no Square
+    // history but real invoices here doesn't wrongly show "no activity".
+    // Shared by the Directory list and the edit form's read-only total, so
+    // the two can't drift out of sync with each other.
+    function combinedCustomerActivity(c) {
+      const spend = (Number(c.lifetime_spend) || 0) + (Number(c.portal_spend) || 0);
+      const count = (Number(c.transaction_count) || 0) + (Number(c.portal_order_count) || 0);
+      const last = [c.last_visit, c.portal_last_order].filter(Boolean).sort().pop() || null;
+      return { spend, count, last };
+    }
+
     function renderCustomersTable(customers) {
       const tbody = document.getElementById('customers-table-body');
 
@@ -1954,16 +1972,7 @@
       }
 
       tbody.innerHTML = customers.map(c => {
-          // lifetime_spend/transaction_count/last_visit are pure Square-
-          // import figures - combined here (display only, the raw columns
-          // themselves are left untouched) with this customer's own
-          // portal-built invoices (portal_spend/portal_order_count/
-          // portal_last_order, added by functions/api/customers.js's GET),
-          // so a customer with no Square history but real invoices here
-          // doesn't wrongly show "no activity".
-          const combinedSpend = (Number(c.lifetime_spend) || 0) + (Number(c.portal_spend) || 0);
-          const combinedCount = (Number(c.transaction_count) || 0) + (Number(c.portal_order_count) || 0);
-          const combinedLast = [c.last_visit, c.portal_last_order].filter(Boolean).sort().pop();
+          const { spend: combinedSpend, count: combinedCount, last: combinedLast } = combinedCustomerActivity(c);
           const hasActivity = combinedCount > 0;
           const activityCell = hasActivity
             ? money(combinedSpend) + ' <span class="text-slate-400">· ' + combinedCount + ' order' + (combinedCount === 1 ? '' : 's') + '</span>' +
@@ -3601,6 +3610,10 @@
       document.getElementById('edit-lifetime-spend').value = c.lifetime_spend || 0;
       document.getElementById('edit-transaction-count').value = c.transaction_count || 0;
       document.getElementById('edit-last-visit').value = (c.last_visit || '').slice(0, 10);
+      const { spend, count, last } = combinedCustomerActivity(c);
+      document.getElementById('edit-combined-activity').textContent =
+        `Combined total (including portal orders): ${money(spend)} · ${count} order${count === 1 ? '' : 's'}` +
+        (last ? ` · Last activity ${ukDate(last)}` : '');
       document.getElementById('cust-edit-delete-top').classList.remove('hidden');
       document.getElementById('cust-edit-delete-bottom').classList.remove('hidden');
       document.getElementById('customer-edit-form').classList.remove('hidden');
@@ -3625,6 +3638,7 @@
       document.getElementById('edit-lifetime-spend').value = 0;
       document.getElementById('edit-transaction-count').value = 0;
       document.getElementById('edit-last-visit').value = '';
+      document.getElementById('edit-combined-activity').textContent = '';
       document.getElementById('cust-edit-delete-top').classList.add('hidden');
       document.getElementById('cust-edit-delete-bottom').classList.add('hidden');
       document.getElementById('customer-edit-form').classList.remove('hidden');
