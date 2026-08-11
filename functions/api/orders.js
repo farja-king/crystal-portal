@@ -301,6 +301,43 @@ export async function onRequest(context) {
       )
     `).run();
 
+    // One-time backfill: an invoice marked Paid via the old one-click
+    // Mark Paid/Unpaid toggle (before this payments ledger existed) has
+    // paid_status = 'paid' but amount_paid = 0 and zero rows in payments -
+    // that toggle never touched either. Left alone, that invoice shows "£0
+    // paid, full balance due, no payments recorded" in the Payments section
+    // despite genuinely being paid, and contributes nothing to Dashboard
+    // revenue/Top Customers now that both are driven off the real ledger.
+    // Safe to run on every request: once an order gets its backfilled row,
+    // it no longer matches "zero payments rows" and is never touched again.
+    try {
+      const { results: unbackfilled } = await db.prepare(`
+        SELECT id, total, paid_at, created_at FROM orders
+        WHERE doc_type = 'invoice' AND paid_status = 'paid'
+          AND NOT EXISTS (SELECT 1 FROM payments WHERE payments.order_id = orders.id)
+      `).all();
+      if (unbackfilled.length) {
+        const insertStmt = db.prepare(`
+          INSERT INTO payments (id, order_id, amount, method, type, notes, received_at)
+          VALUES (?, ?, ?, ?, 'payment', ?, ?)
+        `);
+        const updateStmt = db.prepare("UPDATE orders SET amount_paid = ? WHERE id = ?");
+        await db.batch(unbackfilled.flatMap((o) => [
+          insertStmt.bind(
+            crypto.randomUUID(),
+            o.id,
+            o.total,
+            "",
+            "Backfilled - this invoice was marked Paid before payment tracking existed",
+            o.paid_at || o.created_at
+          ),
+          updateStmt.bind(o.total, o.id),
+        ]));
+      }
+    } catch {
+      // nothing to backfill, or ran before payments existed - fine either way
+    }
+
     // Recomputes orders.amount_paid/paid_status/paid_at from the payments
     // ledger - called after every insert/delete so the denormalized summary
     // on the order never drifts from the actual rows.
