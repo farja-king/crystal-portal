@@ -50,7 +50,7 @@ export async function onRequest(context) {
     )
   `).run();
 
-  const { order_id } = await request.json();
+  const { order_id, preview } = await request.json();
   if (!order_id) return json({ error: "order_id required" }, 400);
 
   const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(order_id).first();
@@ -96,6 +96,14 @@ export async function onRequest(context) {
       ${balanceLine}`,
     ctaColor: "#4f46e5",
   });
+
+  // Preview mode - builds and returns the exact email (subject/to/html)
+  // without sending or logging anything, so the admin UI can show it in a
+  // "review before sending" popup. The real send below is untouched, and
+  // only ever runs when this isn't set.
+  if (preview) {
+    return json({ success: true, preview: true, to, subject, html });
+  }
 
   try {
     const res = await fetch("https://api.resend.com/emails", {

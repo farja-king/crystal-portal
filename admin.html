@@ -1118,6 +1118,31 @@
     </div>
   </div>
 
+  <!-- Shared "review before sending" popup for both statement flows
+       (sendOrderStatement/sendCustomerStatement, functions/api/statement.js
+       and customer-statement.js) - a ?preview=1-style call builds the exact
+       email without sending it, shown here in an iframe so what you approve
+       is exactly what goes out. z-[110] so it stacks above every other
+       modal it can be opened from (customer-view-modal z-50, order-view-
+       edit-panel z-60, email-compose-modal z-[100]). -->
+  <div id="statement-preview-modal" class="hidden fixed inset-0 bg-black/40 z-[110] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full max-h-[90vh] flex flex-col p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-slate-900">Review before sending</h3>
+        <button type="button" onclick="closeStatementPreviewModal()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
+      </div>
+      <div class="text-sm text-slate-600 mb-3 space-y-0.5">
+        <div>To: <span id="statement-preview-to" class="font-medium text-slate-900"></span></div>
+        <div>Subject: <span id="statement-preview-subject" class="font-medium text-slate-900"></span></div>
+      </div>
+      <iframe id="statement-preview-frame" class="flex-1 w-full border border-slate-200 rounded-lg bg-white" style="min-height:400px;"></iframe>
+      <div class="flex justify-end gap-3 mt-4">
+        <button type="button" onclick="closeStatementPreviewModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancel</button>
+        <button type="button" id="statement-preview-send-btn" onclick="confirmSendStatement()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Send</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Reusable "here's what just happened" confirmation overlay - see
        showActionToast() - a visual confirmation after actions like saving a
        quote that also emails a new design proof version to the customer,
@@ -8067,27 +8092,74 @@
       }
     }
 
+    // Holds whichever "actually send it" callback the preview modal should
+    // run if approved - set by previewStatement(), cleared once used or on
+    // Cancel. Both statement flows below share this one modal/confirm step.
+    let statementPreviewSendFn = null;
+
+    // Fetches the exact email (subject/to/html) via the given endpoint's
+    // preview mode - nothing is sent or logged yet - and shows it in the
+    // shared review modal. sendFn is only ever called if the user hits
+    // Send in that modal.
+    async function previewStatement(url, body, sendFn) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, preview: true }),
+        });
+        const data = await res.json();
+        if (!data.success || !data.html) {
+          showActionToast('⚠', data.reason || data.error || "Couldn't build a preview of this statement.");
+          return;
+        }
+        document.getElementById('statement-preview-to').textContent = data.to || '(no email on file)';
+        document.getElementById('statement-preview-subject').textContent = data.subject || '';
+        document.getElementById('statement-preview-frame').srcdoc = data.html;
+        document.getElementById('statement-preview-send-btn').disabled = !data.to;
+        statementPreviewSendFn = sendFn;
+        document.getElementById('statement-preview-modal').classList.remove('hidden');
+      } catch (e) {
+        showActionToast('⚠', "Couldn't build a preview of this statement: " + e.message);
+      }
+    }
+
+    function closeStatementPreviewModal() {
+      document.getElementById('statement-preview-modal').classList.add('hidden');
+      document.getElementById('statement-preview-send-btn').disabled = false;
+      statementPreviewSendFn = null;
+    }
+
+    async function confirmSendStatement() {
+      const fn = statementPreviewSendFn;
+      closeStatementPreviewModal();
+      if (fn) await fn();
+    }
+
     // Every payment on this invoice plus the balance due, in one email -
     // unlike a per-payment receipt this isn't tied to a specific payment
     // and can be sent any time (e.g. a customer asks for a fresh copy).
+    // Shows a preview (see previewStatement) before anything actually
+    // sends.
     async function sendOrderStatement(orderId) {
-      try {
-        const res = await fetch(API_STATEMENT_URL, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_id: orderId }),
-        });
-        const data = await res.json();
-        if (data.sent) {
-          showActionToast('✓', 'Statement sent.');
-        } else {
-          showActionToast('⚠', "Statement couldn't be sent" + (data.reason ? ': ' + data.reason : '.'));
+      await previewStatement(API_STATEMENT_URL, { order_id: orderId }, async () => {
+        try {
+          const res = await fetch(API_STATEMENT_URL, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order_id: orderId }),
+          });
+          const data = await res.json();
+          if (data.sent) {
+            showActionToast('✓', 'Statement sent.');
+          } else {
+            showActionToast('⚠', "Statement couldn't be sent" + (data.reason ? ': ' + data.reason : '.'));
+          }
+        } catch (e) {
+          showActionToast('⚠', "Statement couldn't be sent: " + e.message);
         }
-      } catch (e) {
-        showActionToast('⚠', "Statement couldn't be sent: " + e.message);
-      }
-      if (document.getElementById('order-comm-history')) {
-        loadOrderCommHistory(orderId);
-      }
+        if (document.getElementById('order-comm-history')) {
+          loadOrderCommHistory(orderId);
+        }
+      });
     }
 
     // Every invoice on this customer's account (number, date, total,
@@ -8096,28 +8168,31 @@
     // the separate functions/api/customer-statement.js endpoint. Uses
     // cvNotesCustomerId (set by viewCustomerHistory) for which customer's
     // modal is currently open - same variable the manual-invoice save
-    // already reuses for "refresh whoever's open".
+    // already reuses for "refresh whoever's open". Shows a preview (see
+    // previewStatement) before anything actually sends.
     async function sendCustomerStatement() {
       const id = cvNotesCustomerId;
       if (!id) return;
-      const btn = document.getElementById('cv-send-statement-btn');
-      const originalText = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-      try {
-        const res = await fetch(API_CUSTOMER_STATEMENT_URL, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customer_id: id }),
-        });
-        const data = await res.json();
-        if (data.sent) {
-          showActionToast('✓', 'Statement sent.');
-        } else {
-          showActionToast('⚠', "Statement couldn't be sent" + (data.reason ? ': ' + data.reason : '.'));
+      await previewStatement(API_CUSTOMER_STATEMENT_URL, { customer_id: id }, async () => {
+        const btn = document.getElementById('cv-send-statement-btn');
+        const originalText = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+        try {
+          const res = await fetch(API_CUSTOMER_STATEMENT_URL, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customer_id: id }),
+          });
+          const data = await res.json();
+          if (data.sent) {
+            showActionToast('✓', 'Statement sent.');
+          } else {
+            showActionToast('⚠', "Statement couldn't be sent" + (data.reason ? ': ' + data.reason : '.'));
+          }
+        } catch (e) {
+          showActionToast('⚠', "Statement couldn't be sent: " + e.message);
         }
-      } catch (e) {
-        showActionToast('⚠', "Statement couldn't be sent: " + e.message);
-      }
-      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      });
     }
 
     async function loadOrderPayments(orderId) {
