@@ -5345,6 +5345,7 @@
     // ============================== Quotes & Invoices (garment orders) ==============================
     const API_ORDERS_URL = '/api/orders';
     const API_ORDER_PDF_URL = '/api/order-pdf';
+    const API_PAYMENTS_URL = '/api/payments';
     const API_RECEIPT_URL = '/api/receipt';
     const API_STATEMENT_URL = '/api/statement';
     let orderLines = [];
@@ -8871,8 +8872,15 @@
     // ============================== Dashboard ==============================
     // Reuses the same /api/orders data the Quotes & Invoices tab already
     // fetches in full (no pagination there), aggregated client-side per the
-    // selected date range - no new backend endpoint needed for this scope.
+    // selected date range. Revenue specifically is bucketed from the raw
+    // payments ledger (/api/payments?all=1) rather than each order's single
+    // paid_at - a customer paying in two installments across two different
+    // months should have each instalment land in the month it actually came
+    // in, not all of it lumped into whichever month the final payment
+    // happened to complete the invoice.
     let dashboardOrders = [];
+    let dashboardPayments = [];
+    let dashboardOrdersById = {};
     let dashboardRangeFrom = null;
     let dashboardRangeTo = null;
     let dashboardActivePreset = 'month';
@@ -8885,10 +8893,18 @@
         // sale still counts towards revenue and stats here (archiving only
         // tidies the Quotes & Invoices list, it shouldn't erase the sale
         // from reporting).
-        const res = await fetch(API_ORDERS_URL + '?all=1', { cache: 'no-store' });
-        dashboardOrders = await res.json();
+        const [ordersRes, paymentsRes] = await Promise.all([
+          fetch(API_ORDERS_URL + '?all=1', { cache: 'no-store' }),
+          fetch(API_PAYMENTS_URL + '?all=1', { cache: 'no-store' }),
+        ]);
+        dashboardOrders = await ordersRes.json();
+        dashboardPayments = await paymentsRes.json();
+        dashboardOrdersById = {};
+        dashboardOrders.forEach((o) => { dashboardOrdersById[o.id] = o; });
       } catch (e) {
         dashboardOrders = [];
+        dashboardPayments = [];
+        dashboardOrdersById = {};
         tiles.innerHTML = '<p class="col-span-4 text-center text-red-500 py-8">Could not load dashboard data.</p>';
         return;
       }
@@ -8950,6 +8966,16 @@
       });
     }
 
+    // Same shape as dashOrdersInRange but for the payments ledger, keyed off
+    // each payment's own received_at (always set - payments never have a
+    // blank date the way an unpaid order's paid_at would).
+    function dashPaymentsInRange(payments, from, to) {
+      return payments.filter((p) => {
+        const d = new Date(p.received_at);
+        return d >= from && d <= to;
+      });
+    }
+
     // vs the immediately preceding period of equal length - "vs previous
     // period" rather than a fixed comparison, so it stays meaningful
     // whichever preset or custom range is selected.
@@ -8977,17 +9003,23 @@
       const prevTo = new Date(from.getTime() - 1);
       const prevFrom = new Date(prevTo.getTime() - rangeMs);
 
-      const paidInRange = dashOrdersInRange(dashboardOrders, from, to, 'paid_at').filter((o) => o.paid_status === 'paid');
-      const paidInPrev = dashOrdersInRange(dashboardOrders, prevFrom, prevTo, 'paid_at').filter((o) => o.paid_status === 'paid');
+      const paymentsInRange = dashPaymentsInRange(dashboardPayments, from, to);
+      const paymentsInPrev = dashPaymentsInRange(dashboardPayments, prevFrom, prevTo);
       const createdInRange = dashOrdersInRange(dashboardOrders, from, to, 'created_at');
       const createdInPrev = dashOrdersInRange(dashboardOrders, prevFrom, prevTo, 'created_at');
       const quotesInRange = createdInRange.filter((o) => o.doc_type === 'quote');
       const quotesInPrev = createdInPrev.filter((o) => o.doc_type === 'quote');
 
-      const revenue = paidInRange.reduce((s, o) => s + (Number(o.total) || 0), 0);
-      const revenuePrev = paidInPrev.reduce((s, o) => s + (Number(o.total) || 0), 0);
-      const avgOrder = paidInRange.length ? revenue / paidInRange.length : 0;
-      const avgOrderPrev = paidInPrev.length ? revenuePrev / paidInPrev.length : 0;
+      const revenue = paymentsInRange.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const revenuePrev = paymentsInPrev.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      // "Avg order value" is per invoice, not per payment - averaged over
+      // the distinct invoices that received at least one payment in range,
+      // not the raw payment count (an invoice paid in two instalments
+      // shouldn't drag the average down just for being split into two rows).
+      const invoicesPaidInRange = new Set(paymentsInRange.map((p) => p.order_id)).size;
+      const invoicesPaidInPrev = new Set(paymentsInPrev.map((p) => p.order_id)).size;
+      const avgOrder = invoicesPaidInRange ? revenue / invoicesPaidInRange : 0;
+      const avgOrderPrev = invoicesPaidInPrev ? revenuePrev / invoicesPaidInPrev : 0;
 
       document.getElementById('dash-tiles').innerHTML = [
         dashStatTile('Revenue (paid)', money(revenue), dashDeltaPct(revenue, revenuePrev)),
@@ -8996,8 +9028,8 @@
         dashStatTile('New quotes', String(quotesInRange.length), dashDeltaPct(quotesInRange.length, quotesInPrev.length)),
       ].join('');
 
-      renderDashboardChart(paidInRange, from, to);
-      renderDashboardTopCustomers(paidInRange);
+      renderDashboardChart(paymentsInRange, from, to);
+      renderDashboardTopCustomers(paymentsInRange);
     }
 
     // Adaptive bucket size so the chart stays readable whether the range is
@@ -9026,7 +9058,7 @@
       return { unit, buckets };
     }
 
-    function renderDashboardChart(paidOrders, from, to) {
+    function renderDashboardChart(payments, from, to) {
       const { unit, buckets } = dashBucketDates(from, to);
       const bucketMs = unit === 'day' ? 86400000 : unit === 'week' ? 7 * 86400000 : null;
 
@@ -9034,9 +9066,9 @@
         const bucketEnd = unit === 'month'
           ? new Date(b.start.getFullYear(), b.start.getMonth() + 1, 1)
           : new Date(b.start.getTime() + bucketMs);
-        return paidOrders.reduce((s, o) => {
-          const d = new Date(o.paid_at);
-          return (d >= b.start && d < bucketEnd) ? s + (Number(o.total) || 0) : s;
+        return payments.reduce((s, p) => {
+          const d = new Date(p.received_at);
+          return (d >= b.start && d < bucketEnd) ? s + (Number(p.amount) || 0) : s;
         }, 0);
       });
 
@@ -9126,16 +9158,23 @@
       if (tip) tip.classList.add('hidden');
     }
 
-    function renderDashboardTopCustomers(paidOrders) {
+    function renderDashboardTopCustomers(payments) {
       const byCustomer = {};
-      paidOrders.forEach((o) => {
+      payments.forEach((p) => {
+        // Payments only ever carry order_id - customer name/id lives on the
+        // order itself, looked up via dashboardOrdersById (built alongside
+        // dashboardOrders in loadDashboard()). A payment whose order can't
+        // be found (shouldn't normally happen) is skipped here rather than
+        // showing up as an "Unknown" customer.
+        const o = dashboardOrdersById[p.order_id];
+        if (!o) return;
         const key = o.customer_id || o.customer_name || 'unknown';
         if (!byCustomer[key]) byCustomer[key] = { name: o.customer_name || 'Unknown', total: 0 };
-        byCustomer[key].total += Number(o.total) || 0;
+        byCustomer[key].total += Number(p.amount) || 0;
       });
       const top = Object.values(byCustomer).sort((a, b) => b.total - a.total).slice(0, 8);
       const el = document.getElementById('dash-top-customers');
-      if (!top.length) { el.innerHTML = '<p class="text-sm text-slate-400">No paid invoices in this period.</p>'; return; }
+      if (!top.length) { el.innerHTML = '<p class="text-sm text-slate-400">No payments in this period.</p>'; return; }
       const maxTotal = top[0].total;
       el.innerHTML = top.map((c) => `
         <div>
