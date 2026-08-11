@@ -485,6 +485,17 @@ export async function onRequest(context) {
         return json({ success: true, value });
       }
 
+      // Same as set_invoice_counter above, for the quote sequence (Q-XXXX)
+      // instead - see admin.html's resetQuoteCounter().
+      if (data.action === "set_quote_counter") {
+        const value = Math.max(0, parseInt(data.value, 10) || 0);
+        await db.prepare(`
+          INSERT INTO counters (name, value) VALUES ('quote', ?)
+          ON CONFLICT(name) DO UPDATE SET value = excluded.value
+        `).bind(value).run();
+        return json({ success: true, value });
+      }
+
       const existing = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.id).first();
       if (!existing) return json({ error: "Order not found" }, 404);
 

@@ -785,9 +785,14 @@
           <button onclick="cleanUpOrphanedProofs()" title="Design proof files left over from quotes deleted before this cleanup existed - a one-off backlog, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🧹 Clean Up Old Files
           </button>
-          <button onclick="resetInvoiceCounter()" title="Only changes where the NEXT invoice number starts counting from - doesn't touch, renumber, or delete any existing invoice" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            🔢 Renumber Invoices
-          </button>
+          <div class="flex flex-col gap-2">
+            <button onclick="resetInvoiceCounter()" title="Only changes where the NEXT invoice number starts counting from - doesn't touch, renumber, or delete any existing invoice" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              🔢 Renumber Invoices
+            </button>
+            <button onclick="resetQuoteCounter()" title="Only changes where the NEXT quote number starts counting from - doesn't touch, renumber, or delete any existing quote" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              🔢 Renumber Quotes
+            </button>
+          </div>
         </div>
       </div>
 
@@ -8426,6 +8431,28 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
         showActionToast('✓', `Done - the next invoice created will be INV-${String(value + 1).padStart(4, '0')}.`);
+      } catch (e) {
+        showActionToast('⚠', 'Could not update the counter: ' + e.message);
+      }
+    }
+
+    // Same as resetInvoiceCounter() above, for the quote sequence (Q-XXXX)
+    // instead - see the "set_quote_counter" PUT action in
+    // functions/api/orders.js.
+    async function resetQuoteCounter() {
+      const input = await promptModal('What was the last real quote number (not counting any test ones)? The next quote created will be one higher than this. This does not change any existing quote.', '', 'number');
+      if (input === null) return;
+      const value = parseInt(input, 10);
+      if (!Number.isFinite(value) || value < 0) { showActionToast('⚠', 'Enter a whole number, 0 or higher.'); return; }
+      if (!(await confirmModal(`Set the next quote number to Q-${String(value + 1).padStart(4, '0')}? This only changes future numbering, nothing existing.`))) return;
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_quote_counter', value }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast('✓', `Done - the next quote created will be Q-${String(value + 1).padStart(4, '0')}.`);
       } catch (e) {
         showActionToast('⚠', 'Could not update the counter: ' + e.message);
       }
