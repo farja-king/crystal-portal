@@ -254,6 +254,11 @@ export default {
     ctx.waitUntil(Promise.all([
       sweep("/api/payment-reminders"),
       sweep("/api/review-requests"),
+      // Self-throttled to ~once every 24 hours inside functions/api/
+      // backup.js itself (checks the last successful backup_log row) -
+      // safe to hit every 15 minutes like the other two sweeps, it just
+      // no-ops most of the time.
+      sweep("/api/backup"),
     ]));
   },
 };

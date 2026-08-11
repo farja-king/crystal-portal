@@ -42,6 +42,9 @@
             Inbox
             <span id="inbox-unread-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
           </button>
+          <button id="tab-backups" onclick="switchTab('backups')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            🗄 Backups
+          </button>
         </div>
         <button id="api-key-btn" onclick="generateApiKey()" title="Generate/reveal an API key - lets the crystal-inbox-worker call the portal's payment-reminder cron endpoint without the portal password" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
           API Key
@@ -1071,6 +1074,47 @@
       </div>
     </section>
 
+    <!-- Full-system backup & restore - see functions/api/backup.js. Runs
+         automatically ~once every 24 hours (the crystal-inbox-worker cron
+         hits this endpoint every 15 min, backup.js self-throttles), or on
+         demand via Backup Now. Restore is the one genuinely destructive
+         action in this whole app - see confirmRestoreBackup(), which always
+         takes a fresh safety backup first and requires typing an exact
+         confirmation phrase before it proceeds. -->
+    <section id="section-backups" class="hidden">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Backups</h2>
+          <p class="text-slate-500 text-sm">Every customer, quote/invoice, payment and stored file, snapshotted automatically once a day.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="loadBackups()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🔄 Refresh
+          </button>
+          <button id="backup-now-btn" onclick="runBackupNow()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            💾 Backup Now
+          </button>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+            <tr>
+              <th class="text-left px-4 py-3">Date &amp; Time</th>
+              <th class="text-left px-4 py-3">Status</th>
+              <th class="text-left px-4 py-3">Triggered By</th>
+              <th class="text-left px-4 py-3">Contents</th>
+              <th class="text-left px-4 py-3">Size</th>
+              <th class="text-left px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="backups-table-body">
+            <tr><td colspan="6" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 
   <!-- Reusable Yes/No confirm overlay - see confirmModal() - replaces the
@@ -1147,6 +1191,32 @@
       <div class="flex justify-end gap-3 mt-4">
         <button type="button" onclick="closeStatementPreviewModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancel</button>
         <button type="button" id="statement-preview-send-btn" onclick="confirmSendStatement()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The one genuinely destructive action in this app - overwrites live
+       data with an old snapshot. See confirmRestoreBackup(). Restore stays
+       disabled until the typed phrase exactly matches #restore-modal-phrase
+       (also re-validated server-side in functions/api/backup.js - never
+       trust a client-side-only check for something this destructive). A
+       fresh safety backup of the CURRENT state is always taken first,
+       automatically, no way to skip it. -->
+  <div id="restore-modal" class="hidden fixed inset-0 bg-black/40 z-[110] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
+      <h3 class="font-bold text-rose-700 mb-3">⚠ Restore backup</h3>
+      <div class="text-sm text-slate-700 space-y-2 mb-4">
+        <p>This will replace <strong>all current data</strong> - customers, quotes, invoices, payments, stored files, everything except your login - with the snapshot from <strong id="restore-modal-date"></strong>.</p>
+        <p>A fresh backup of what you have <strong>right now</strong> will be taken automatically first, so this can be undone by restoring that one afterward if needed.</p>
+      </div>
+      <label class="text-sm block mb-1">
+        <span class="block font-medium text-slate-700 mb-1">Type <span id="restore-modal-phrase" class="font-mono bg-slate-100 px-1.5 py-0.5 rounded"></span> to confirm</span>
+        <input id="restore-modal-input" type="text" autocomplete="off" oninput="updateRestoreButtonState()" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+      </label>
+      <p id="restore-modal-msg" class="text-xs text-red-600 mt-2 mb-2"></p>
+      <div class="flex justify-end gap-3 mt-3">
+        <button type="button" onclick="closeRestoreModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancel</button>
+        <button type="button" id="restore-modal-confirm-btn" disabled onclick="confirmRestoreBackup()" class="bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">Restore</button>
       </div>
     </div>
   </div>
@@ -1832,7 +1902,7 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'orders', 'inbox', 'proofs'];
+    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'orders', 'inbox', 'proofs', 'backups'];
     function switchTab(tab) {
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
@@ -1863,6 +1933,7 @@
       if (tab === 'inbox') loadInbox();
       if (tab === 'dashboard') loadDashboard();
       if (tab === 'proofs') loadProofsDashboard();
+      if (tab === 'backups') loadBackups();
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
@@ -5426,6 +5497,7 @@
     const API_RECEIPT_URL = '/api/receipt';
     const API_STATEMENT_URL = '/api/statement';
     const API_CUSTOMER_STATEMENT_URL = '/api/customer-statement';
+    const API_BACKUP_URL = '/api/backup';
     let orderLines = [];
     let ordersLoaded = false;
     let ordersById = {};
@@ -7663,6 +7735,138 @@
         }).join('');
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-red-500 text-sm">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    // ============================== Backups ==============================
+    // Full-system backup/restore - see functions/api/backup.js. Runs
+    // automatically ~once every 24h (self-throttled server-side against the
+    // crystal-inbox-worker cron, which fires every 15 min); this tab is
+    // just the visible history + manual trigger + restore UI on top of it.
+    let backupsById = {};
+
+    function backupBytesLabel(n) {
+      n = Number(n) || 0;
+      if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+      if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+      return n + ' B';
+    }
+
+    async function loadBackups() {
+      const tbody = document.getElementById('backups-table-body');
+      tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      try {
+        const res = await fetch(API_BACKUP_URL, { cache: 'no-store' });
+        const rows = await res.json();
+        if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
+        backupsById = {};
+        rows.forEach((b) => { backupsById[b.id] = b; });
+
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-slate-400 text-sm">No backups yet - click "Backup Now" to create the first one.</td></tr>';
+          return;
+        }
+
+        const statusBadge = (status) => {
+          if (status === 'success') return '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">Success</span>';
+          if (status === 'error') return '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">Failed</span>';
+          return '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">Running…</span>';
+        };
+        const triggerLabel = { cron: 'Automatic', manual: 'Manual', pre_restore: 'Pre-restore safety copy' };
+
+        tbody.innerHTML = rows.map((b) => {
+          const counts = b.table_counts
+            ? Object.entries(b.table_counts).filter(([, c]) => c > 0).map(([t, c]) => `${t} (${c})`).join(', ')
+            : (b.status === 'error' ? escapeHtml(b.error_message || 'Unknown error') : '-');
+          return `
+          <tr class="border-t border-slate-100">
+            <td class="px-4 py-3 text-slate-700">${escapeHtml(ukDateTime(b.started_at))}</td>
+            <td class="px-4 py-3">${statusBadge(b.status)}</td>
+            <td class="px-4 py-3 text-slate-500">${escapeHtml(triggerLabel[b.triggered_by] || b.triggered_by || '-')}</td>
+            <td class="px-4 py-3 text-slate-500 text-xs max-w-xs truncate" title="${escapeAttr(counts)}">${counts}${b.files_count ? ' · ' + b.files_count + ' file' + (b.files_count === 1 ? '' : 's') : ''}</td>
+            <td class="px-4 py-3 text-slate-500">${b.status === 'success' ? backupBytesLabel(b.total_bytes) : '-'}</td>
+            <td class="px-4 py-3">${b.status === 'success'
+              ? `<button type="button" onclick="openRestoreModal('${escapeAttr(b.id)}')" class="text-xs bg-white border border-rose-300 hover:bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">Restore to this point</button>`
+              : ''}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-red-500 text-sm">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    async function runBackupNow() {
+      const btn = document.getElementById('backup-now-btn');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Backing up…';
+      try {
+        const res = await fetch(API_BACKUP_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'run', force: true }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast('✓', `Backup complete - ${data.filesCount || 0} file(s), ${backupBytesLabel(data.totalBytes)}.`);
+        loadBackups();
+      } catch (e) {
+        showActionToast('⚠', 'Backup failed: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    let restoreTargetId = null;
+
+    function openRestoreModal(id) {
+      const b = backupsById[id];
+      if (!b) return;
+      restoreTargetId = id;
+      const dateStr = ukDateTime(b.started_at);
+      const phrase = `RESTORE ${String(b.started_at).slice(0, 10)}`;
+      document.getElementById('restore-modal-date').textContent = dateStr;
+      document.getElementById('restore-modal-phrase').textContent = phrase;
+      document.getElementById('restore-modal-input').value = '';
+      document.getElementById('restore-modal-msg').textContent = '';
+      document.getElementById('restore-modal-confirm-btn').disabled = true;
+      document.getElementById('restore-modal').classList.remove('hidden');
+    }
+
+    function closeRestoreModal() {
+      document.getElementById('restore-modal').classList.add('hidden');
+      restoreTargetId = null;
+    }
+
+    function updateRestoreButtonState() {
+      const expected = document.getElementById('restore-modal-phrase').textContent;
+      const typed = document.getElementById('restore-modal-input').value;
+      document.getElementById('restore-modal-confirm-btn').disabled = typed !== expected;
+    }
+
+    async function confirmRestoreBackup() {
+      const id = restoreTargetId;
+      if (!id) return;
+      const confirmPhrase = document.getElementById('restore-modal-input').value;
+      const btn = document.getElementById('restore-modal-confirm-btn');
+      const msg = document.getElementById('restore-modal-msg');
+      btn.disabled = true;
+      msg.className = 'text-xs text-slate-500 mt-2 mb-2';
+      msg.textContent = 'Restoring - this takes a safety backup first, please wait…';
+      try {
+        const res = await fetch(API_BACKUP_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'restore', backup_id: id, confirm_phrase: confirmPhrase }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        closeRestoreModal();
+        showActionToast('✓', `Restored to ${ukDateTime(data.restored_to)}. Your data right before this is safely backed up too.`);
+        loadBackups();
+      } catch (e) {
+        msg.className = 'text-xs text-red-600 mt-2 mb-2';
+        msg.textContent = 'Restore failed: ' + e.message;
+        btn.disabled = false;
       }
     }
 
