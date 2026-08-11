@@ -9172,10 +9172,20 @@
         if (!byCustomer[key]) byCustomer[key] = { name: o.customer_name || 'Unknown', total: 0 };
         byCustomer[key].total += Number(p.amount) || 0;
       });
-      const top = Object.values(byCustomer).sort((a, b) => b.total - a.total).slice(0, 8);
+      const all = Object.values(byCustomer).sort((a, b) => b.total - a.total);
+      const top = all.slice(0, 8);
       const el = document.getElementById('dash-top-customers');
       if (!top.length) { el.innerHTML = '<p class="text-sm text-slate-400">No payments in this period.</p>'; return; }
       const maxTotal = top[0].total;
+      // The Revenue tile sums every payment in range; this list only ever
+      // shows the top 8 - without this line the two totals silently
+      // disagree the moment there are more than 8 distinct payers, which
+      // reads as a bug (a customer paying in one month and not another)
+      // rather than what it actually is (everyone past #8 just isn't drawn).
+      const rest = all.slice(8);
+      const restNote = rest.length
+        ? `<p class="text-xs text-slate-400 pt-1 border-t border-slate-100 mt-2">+ ${rest.length} more customer${rest.length === 1 ? '' : 's'}, totalling ${money(rest.reduce((s, c) => s + c.total, 0))}</p>`
+        : '';
       el.innerHTML = top.map((c) => `
         <div>
           <div class="flex items-center justify-between text-sm mb-0.5 gap-2">
@@ -9185,7 +9195,7 @@
           <div class="h-1.5 bg-slate-100 rounded-full overflow-hidden">
             <div class="h-full bg-indigo-500 rounded-full" style="width:${maxTotal ? (c.total / maxTotal * 100) : 0}%"></div>
           </div>
-        </div>`).join('');
+        </div>`).join('') + restNote;
     }
 
     renderOrderLines();
