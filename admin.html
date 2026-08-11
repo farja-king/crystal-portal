@@ -97,6 +97,20 @@
         <p class="col-span-4 text-center text-slate-400 py-8">Loading…</p>
       </div>
 
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+        <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+          <div>
+            <h3 class="font-bold text-slate-900">VAT Registration Threshold</h3>
+            <p class="text-xs text-slate-500">Rolling 12-month revenue vs the £90,000 UK VAT threshold. Not VAT registered - this is just so it's never a surprise.</p>
+          </div>
+          <div id="dash-vat-figure" class="text-sm font-semibold text-slate-700"></div>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-4 overflow-hidden">
+          <div id="dash-vat-bar" class="h-4 rounded-full transition-all" style="width:0%"></div>
+        </div>
+        <p id="dash-vat-note" class="text-xs text-slate-500 mt-2"></p>
+      </div>
+
       <div class="grid gap-6 lg:grid-cols-3 mb-6">
         <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-5">
           <h3 class="font-bold text-slate-900 mb-1">Revenue</h3>
@@ -106,6 +120,32 @@
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
           <h3 class="font-bold text-slate-900 mb-3">Top Customers</h3>
           <div id="dash-top-customers" class="space-y-2"></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+        <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
+          <div>
+            <h3 class="font-bold text-slate-900">Aged Debtors</h3>
+            <p class="text-xs text-slate-500">Every unpaid/partial invoice, by how overdue it is. Always shows the current picture, not the date range above.</p>
+          </div>
+          <div id="dash-aged-total" class="text-sm font-semibold text-slate-700"></div>
+        </div>
+        <div id="dash-aged-buckets" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5"></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="py-2 pr-4">Invoice</th>
+                <th class="py-2 pr-4">Customer</th>
+                <th class="py-2 pr-4">Due date</th>
+                <th class="py-2 pr-4">Days overdue</th>
+                <th class="py-2 pr-4">Balance</th>
+                <th class="py-2 pr-4">Reminders</th>
+              </tr>
+            </thead>
+            <tbody id="dash-aged-table" class="divide-y divide-slate-100"></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -1096,6 +1136,18 @@
           </button>
         </div>
       </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+        <h3 class="font-bold text-slate-900 mb-1">Data Export</h3>
+        <p class="text-xs text-slate-500 mb-4">One-click CSV/JSON copies of your records - readable in Excel or any text editor, separate from the full restorable snapshots above.</p>
+        <div class="flex flex-wrap gap-2">
+          <button onclick="exportData('customers','csv')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold shadow-sm">⬇ Customers (CSV)</button>
+          <button onclick="exportData('orders','csv')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold shadow-sm">⬇ Quotes/Invoices (CSV)</button>
+          <button onclick="exportData('payments','csv')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold shadow-sm">⬇ Payments (CSV)</button>
+          <button onclick="exportData(null,'json')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold shadow-sm">⬇ Everything (JSON)</button>
+        </div>
+      </div>
+
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
@@ -7775,6 +7827,15 @@
       }
     }
 
+    // Data Export - lightweight CSV/JSON downloads, see functions/api/
+    // export.js. Just navigates the browser to the URL so it downloads via
+    // the Content-Disposition header - no fetch/blob dance needed.
+    function exportData(table, format) {
+      const params = new URLSearchParams({ format });
+      if (table) params.set('table', table);
+      window.location.href = '/api/export?' + params.toString();
+    }
+
     // ============================== Backups ==============================
     // Full-system backup/restore - see functions/api/backup.js. Runs
     // automatically ~once every 24h (self-throttled server-side against the
@@ -9506,6 +9567,115 @@
 
       renderDashboardChart(paymentsInRange, from, to);
       renderDashboardTopCustomers(paymentsInRange);
+      renderAgedDebtors();
+      renderVatTracker();
+    }
+
+    // VAT threshold tracker - HMRC looks at a rolling 12-month total, not a
+    // calendar year, so this is trailing-365-days-from-today regardless of
+    // whatever range is selected above (same "always current" reasoning as
+    // Aged Debtors). £90,000 is the current UK VAT registration threshold.
+    const VAT_THRESHOLD = 90000;
+    function renderVatTracker() {
+      const now = new Date();
+      const yearAgo = new Date(now.getTime() - 365 * 86400000);
+      const revenue12mo = dashboardPayments
+        .filter((p) => { const d = new Date(p.received_at); return d >= yearAgo && d <= now; })
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const pct = Math.min(100, (revenue12mo / VAT_THRESHOLD) * 100);
+
+      document.getElementById('dash-vat-figure').textContent = `${money(revenue12mo)} of £90,000 (${pct.toFixed(1)}%)`;
+      const bar = document.getElementById('dash-vat-bar');
+      bar.style.width = pct + '%';
+      bar.className = 'h-4 rounded-full transition-all ' + (pct >= 90 ? 'bg-rose-600' : pct >= 75 ? 'bg-amber-500' : 'bg-emerald-500');
+
+      const note = document.getElementById('dash-vat-note');
+      const remaining = VAT_THRESHOLD - revenue12mo;
+      if (revenue12mo >= VAT_THRESHOLD) {
+        note.textContent = "You're over the threshold on a rolling 12-month basis - worth checking your VAT registration position.";
+        note.className = 'text-xs text-rose-600 font-semibold mt-2';
+      } else if (pct >= 90) {
+        note.textContent = `Only ${money(remaining)} of headroom left before you'd need to register - getting close.`;
+        note.className = 'text-xs text-rose-600 font-semibold mt-2';
+      } else if (pct >= 75) {
+        note.textContent = `${money(remaining)} of headroom left on a rolling 12-month basis.`;
+        note.className = 'text-xs text-amber-600 mt-2';
+      } else {
+        note.textContent = `${money(remaining)} of headroom left on a rolling 12-month basis.`;
+        note.className = 'text-xs text-slate-500 mt-2';
+      }
+    }
+
+    // Aged Debtors - a proper accounting breakdown of every unpaid/partial
+    // invoice by how many days overdue it is, not just a row-by-row list
+    // like the reminder emails already send individually. Deliberately
+    // ignores the Dashboard's date-range picker above (it's always "the
+    // current picture", the same as a real aged-debtors report would be) -
+    // due_date is what ages, not created_at.
+    function dashAgedBuckets() {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const buckets = [
+        { key: 'not_due', label: 'Not yet due', min: -Infinity, max: -1 },
+        { key: 'b1', label: '0-30 days', min: 0, max: 30 },
+        { key: 'b2', label: '31-60 days', min: 31, max: 60 },
+        { key: 'b3', label: '61-90 days', min: 61, max: 90 },
+        { key: 'b4', label: '90+ days', min: 91, max: Infinity },
+      ];
+      const rows = [];
+      dashboardOrders.forEach((o) => {
+        if (o.doc_type !== 'invoice' || o.paid_status === 'paid') return;
+        const balance = Number(o.total || 0) - Number(o.amount_paid || 0);
+        if (balance <= 0.004) return;
+        if (!o.due_date) return; // no due date set - can't age it, skip rather than guess
+        const due = new Date(o.due_date); due.setHours(0, 0, 0, 0);
+        const daysOverdue = Math.round((today - due) / 86400000);
+        const bucket = buckets.find((b) => daysOverdue >= b.min && daysOverdue <= b.max);
+        rows.push({ order: o, balance, daysOverdue, bucketKey: bucket ? bucket.key : 'b4' });
+      });
+      return { buckets, rows };
+    }
+
+    function renderAgedDebtors() {
+      const { buckets, rows } = dashAgedBuckets();
+      const totalsByBucket = {};
+      buckets.forEach((b) => { totalsByBucket[b.key] = { count: 0, total: 0 }; });
+      rows.forEach((r) => {
+        totalsByBucket[r.bucketKey].count += 1;
+        totalsByBucket[r.bucketKey].total += r.balance;
+      });
+      const grandTotal = rows.reduce((s, r) => s + r.balance, 0);
+
+      document.getElementById('dash-aged-total').textContent = rows.length
+        ? `${money(grandTotal)} outstanding across ${rows.length} invoice${rows.length === 1 ? '' : 's'}`
+        : '';
+
+      document.getElementById('dash-aged-buckets').innerHTML = buckets.map((b) => {
+        const t = totalsByBucket[b.key];
+        const overdue = b.key !== 'not_due';
+        return `<div class="rounded-lg border ${overdue && t.total > 0 ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'} p-3">
+          <p class="text-xs font-medium ${overdue && t.total > 0 ? 'text-rose-600' : 'text-slate-500'}">${b.label}</p>
+          <p class="text-lg font-bold ${overdue && t.total > 0 ? 'text-rose-700' : 'text-slate-900'}">${money(t.total)}</p>
+          <p class="text-xs text-slate-400">${t.count} invoice${t.count === 1 ? '' : 's'}</p>
+        </div>`;
+      }).join('');
+
+      const tbody = document.getElementById('dash-aged-table');
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-slate-400">Nothing outstanding with a due date set - fully caught up.</td></tr>';
+        return;
+      }
+      rows.sort((a, b) => b.daysOverdue - a.daysOverdue);
+      tbody.innerHTML = rows.map((r) => {
+        const o = r.order;
+        return `<tr>
+          <td class="py-2 pr-4 font-medium text-slate-900">${escapeHtml(o.invoice_number || '')}</td>
+          <td class="py-2 pr-4">${escapeHtml(o.customer_name || '')}</td>
+          <td class="py-2 pr-4">${escapeHtml(ukDate(o.due_date))}</td>
+          <td class="py-2 pr-4 ${r.daysOverdue > 0 ? 'text-rose-600 font-semibold' : 'text-slate-500'}">${r.daysOverdue > 0 ? r.daysOverdue + ' days' : 'Not yet due'}</td>
+          <td class="py-2 pr-4 font-semibold">${money(r.balance)}</td>
+          <td class="py-2 pr-4 text-xs">${o.reminder_paused ? '<span class="text-slate-400">🔕 Paused</span>' : '<span class="text-slate-500">Active</span>'}</td>
+        </tr>`;
+      }).join('');
     }
 
     // Adaptive bucket size so the chart stays readable whether the range is
