@@ -114,6 +114,20 @@ export async function onRequest(context) {
         return json(results);
       }
 
+      // ?customer_id=X&count_all=1 - how many inbox_emails rows actually
+      // match this customer_id, ignoring saved_to_customer/deleted_at
+      // entirely - the real scope purge_customer_history (DELETE below)
+      // would remove, used to show an accurate count before that
+      // permanent action is confirmed (see admin.html's
+      // clearCustomerInboxHistory()). Deliberately broader than the
+      // ?customer_id=X view below.
+      if (url.searchParams.get("customer_id") && url.searchParams.get("count_all")) {
+        const row = await db.prepare(
+          "SELECT COUNT(*) AS cnt FROM inbox_emails WHERE customer_id = ?"
+        ).bind(url.searchParams.get("customer_id")).first();
+        return json({ count: row ? row.cnt : 0 });
+      }
+
       // ?customer_id=X is specifically "this customer's saved record" (the
       // Customer View's Email Conversation card) - only emails explicitly
       // marked saved_to_customer, not every auto-matched one, so a
@@ -152,6 +166,27 @@ export async function onRequest(context) {
 
     if (request.method === "DELETE") {
       const data = await request.json();
+
+      // Genuinely permanent, unlike every other delete below (those are all
+      // soft - deleted_at, recoverable, keeps the raw R2 file). This is for
+      // deliberately clearing a customer's message history for good - e.g.
+      // a test customer's inbox after testing is done - not day-to-day
+      // Inbox tidying, so it's scoped by customer_id rather than exposed as
+      // a normal message action, and always confirmed client-side first
+      // (see admin.html's clearCustomerInboxHistory()).
+      if (data.action === "purge_customer_history") {
+        if (!data.customer_id) return json({ error: "customer_id required" }, 400);
+        const { results: rows } = await db.prepare(
+          "SELECT id, raw_r2_key FROM inbox_emails WHERE customer_id = ?"
+        ).bind(data.customer_id).all();
+        if (!rows.length) return json({ success: true, purged: 0 });
+        if (bucket) {
+          await Promise.all(rows.filter((r) => r.raw_r2_key).map((r) => bucket.delete(r.raw_r2_key).catch(() => {})));
+        }
+        await db.prepare("DELETE FROM inbox_emails WHERE customer_id = ?").bind(data.customer_id).run();
+        return json({ success: true, purged: rows.length });
+      }
+
       // Bulk: either a list of individual email ids, or a list of thread
       // ids (deletes every message in each thread) - the Inbox tab's
       // checkbox UI uses whichever matches what was selected.

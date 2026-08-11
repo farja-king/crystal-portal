@@ -1438,6 +1438,14 @@
         <h4 class="font-bold text-slate-900 mb-2">Notes</h4>
         <textarea id="cv-notes" rows="3" onblur="saveCvNotes()" placeholder="Anything worth remembering about this customer…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"></textarea>
         <p id="cv-notes-status" class="text-xs mt-1 hidden"></p>
+        <!-- Permanently clears this customer's Inbox message history (raw
+             files included) - not the customer record itself. Genuinely
+             destructive (unlike the Inbox tab's own Delete, which is
+             recoverable) - see clearCustomerInboxHistory(), always
+             confirmed first with the exact count found. -->
+        <button type="button" onclick="clearCustomerInboxHistory()" class="text-xs text-rose-600 hover:text-rose-800 font-semibold mt-2">
+          Clear inbox history for this customer
+        </button>
       </div>
 
       <!-- A customer-specific price list (e.g. imported from their Square
@@ -2548,6 +2556,35 @@
         status.className = 'text-xs mt-1 text-red-600';
         status.textContent = 'Could not save: ' + e.message;
         status.classList.remove('hidden');
+      }
+    }
+
+    // Permanently clears this customer's Inbox message history - genuinely
+    // destructive (unlike the Inbox tab's own Delete, which just sets
+    // deleted_at and keeps the raw file) - see the "purge_customer_history"
+    // DELETE action in functions/api/inbox.js. Doesn't touch the customer
+    // record itself. Generic to whichever customer's record is currently
+    // open (cvNotesCustomerId), not specific to any one customer.
+    async function clearCustomerInboxHistory() {
+      const id = cvNotesCustomerId;
+      if (!id) return;
+      const c = customersById[id];
+      try {
+        const res = await fetch(API_INBOX_URL + '?customer_id=' + encodeURIComponent(id) + '&count_all=1', { cache: 'no-store' });
+        const data = await res.json();
+        const count = data.count || 0;
+        if (!count) { showActionToast('⚠', 'No inbox history found for this customer - nothing to clear.'); return; }
+        if (!(await confirmModal(`Permanently delete ${count} email(s) (including any stored raw files) for ${c ? c.name : 'this customer'}? This cannot be undone. The customer record itself is not affected.`))) return;
+
+        const delRes = await fetch(API_INBOX_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'purge_customer_history', customer_id: id }),
+        });
+        const delData = await delRes.json();
+        if (!delRes.ok || !delData.success) throw new Error(delData.error || 'Failed');
+        showActionToast('✓', `Cleared ${delData.purged} email(s) from this customer's inbox history.`);
+      } catch (e) {
+        showActionToast('⚠', 'Could not clear inbox history: ' + e.message);
       }
     }
 
@@ -8645,36 +8682,42 @@
     // purely so there's one button and one report instead of three.
     async function cleanUpOrphanedProofs() {
       const SOURCES = [
-        { label: 'design proof/mockup', url: API_DESIGN_PROOFS_URL, nameOf: (r) => `${r.filename} (v${r.version})` },
-        { label: 'production tracker photo', url: API_PRODUCTION_STEPS_URL, nameOf: (r) => r.filename },
-        { label: 'customer design file backup', url: '/api/design-files', nameOf: (r) => r.filename },
+        { label: 'design proof/mockup', url: API_DESIGN_PROOFS_URL, param: 'orphaned', purgeAction: 'purge_orphaned', nameOf: (r) => `${r.filename} (v${r.version})` },
+        { label: 'production tracker photo', url: API_PRODUCTION_STEPS_URL, param: 'orphaned', purgeAction: 'purge_orphaned', nameOf: (r) => r.filename },
+        { label: 'customer design file backup', url: '/api/design-files', param: 'orphaned', purgeAction: 'purge_orphaned', nameOf: (r) => r.filename },
+        // Not files - database-only records (payments/sent-email log rows)
+        // left behind by an order deleted before this cascade covered them
+        // too (see functions/api/orders.js's deleteOrderPaymentsAndLogs).
+        // Same "orphaned" maintenance pattern, just no R2 bytes to free.
+        { label: 'payment record', url: API_ORDERS_URL, param: 'orphaned_payments', purgeAction: 'purge_orphaned_payments', nameOf: (r) => `${money(r.amount)} (${ukDate(r.received_at)})` },
+        { label: 'sent-email log entry', url: API_ORDERS_URL, param: 'orphaned_email_log', purgeAction: 'purge_orphaned_email_log', nameOf: (r) => r.subject || '(no subject)' },
       ];
       try {
         const found = await Promise.all(SOURCES.map(async (s) => {
-          const res = await fetch(s.url + '?orphaned=1', { cache: 'no-store' });
+          const res = await fetch(s.url + '?' + s.param + '=1', { cache: 'no-store' });
           const rows = await res.json();
           return { ...s, rows: Array.isArray(rows) ? rows : [] };
         }));
 
         const totalCount = found.reduce((sum, s) => sum + s.rows.length, 0);
-        if (!totalCount) { showActionToast('⚠', 'No leftover files found - nothing to clean up.'); return; }
+        if (!totalCount) { showActionToast('⚠', 'Nothing leftover found - nothing to clean up.'); return; }
 
         const totalSize = found.reduce((sum, s) => sum + s.rows.reduce((a, r) => a + (Number(r.size_bytes) || 0), 0), 0);
         const sizeLabel = totalSize > 1024 * 1024 ? (totalSize / (1024 * 1024)).toFixed(1) + ' MB' : (totalSize / 1024).toFixed(0) + ' KB';
         const summaryLines = found.filter((s) => s.rows.length).map((s) => `- ${s.rows.length} ${s.label}(s)`).join('\n');
-        if (!(await confirmModal(`Found ${totalCount} leftover file(s) left over from deleted quotes/orders/customers (~${sizeLabel}):\n\n${summaryLines}\n\nDelete them permanently to free up storage?`))) return;
+        if (!(await confirmModal(`Found ${totalCount} leftover record(s)/file(s) left over from deleted quotes/orders/customers (~${sizeLabel} of files among them):\n\n${summaryLines}\n\nDelete them permanently to free up storage and clear this history?`))) return;
 
         let purged = 0;
         for (const s of found) {
           if (!s.rows.length) continue;
           const res = await fetch(s.url, {
             method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'purge_orphaned' }),
+            body: JSON.stringify({ action: s.purgeAction }),
           });
           const data = await res.json();
           if (res.ok && data.success) purged += data.purged || 0;
         }
-        showActionToast('✓', `Cleaned up ${purged} leftover file(s).`);
+        showActionToast('✓', `Cleaned up ${purged} leftover record(s)/file(s).`);
       } catch (e) {
         showActionToast('⚠', 'Could not clean up: ' + e.message);
       }

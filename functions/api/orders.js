@@ -380,6 +380,22 @@ export async function onRequest(context) {
         ).bind(paymentsFor).all();
         return json(results);
       }
+      // ?orphaned_payments=1 / ?orphaned_email_log=1 - the maintenance
+      // backlog left behind by orders deleted before deleteOrderPaymentsAndLogs
+      // existed. Same pattern as design-proofs.js's ?orphaned=1 - see
+      // admin.html's cleanUpOrphanedProofs().
+      if (url.searchParams.get("orphaned_payments")) {
+        const { results } = await db.prepare(
+          `SELECT p.id, p.amount, p.method, p.received_at FROM payments p LEFT JOIN orders o ON o.id = p.order_id WHERE o.id IS NULL ORDER BY p.received_at DESC`
+        ).all();
+        return json(results);
+      }
+      if (url.searchParams.get("orphaned_email_log")) {
+        const { results } = await db.prepare(
+          `SELECT e.id, e.sent_to, e.subject, e.sent_at FROM email_log e LEFT JOIN orders o ON o.id = e.order_id WHERE o.id IS NULL ORDER BY e.sent_at DESC`
+        ).all();
+        return json(results);
+      }
       if (id) {
         const row = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(id).first();
         if (!row) return json({ error: "Not found" }, 404);
@@ -723,12 +739,61 @@ export async function onRequest(context) {
       await Promise.all(results.map((r) => env.DESIGN_FILES.delete(r.manual_pdf_r2_key).catch(() => {})));
     }
 
+    // payments/email_log rows belong to an order the same way design proofs
+    // do, but were missed when this cascade was first written - deleting an
+    // order left them behind forever with no valid order_id to ever find
+    // them by again. Found via a real backlog of exactly this (payments and
+    // email_log rows orphaned by already-deleted test invoices) - see the
+    // ?orphaned_payments=1/?orphaned_email_log=1 GETs and
+    // purge_orphaned_payments/purge_orphaned_email_log DELETE actions below
+    // for cleaning up that existing backlog; this is what stops it
+    // recurring for every deletion from now on.
+    async function deleteOrderPaymentsAndLogs(orderIds) {
+      if (!orderIds.length) return;
+      const placeholders = orderIds.map(() => "?").join(",");
+      try {
+        await db.prepare(`DELETE FROM payments WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
+      } catch { /* payments table doesn't exist yet - nothing to clean up */ }
+      try {
+        await db.prepare(`DELETE FROM email_log WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
+      } catch { /* email_log table doesn't exist yet - nothing to clean up */ }
+    }
+
     if (request.method === "DELETE") {
-      const { id, ids } = await request.json();
+      const data = await request.json();
+
+      // One-off cleanup for the backlog of payments/email_log rows left
+      // behind by orders deleted before deleteOrderPaymentsAndLogs existed -
+      // same "orphaned" maintenance pattern already used for design proofs/
+      // production photos/design files (see design-proofs.js, production-
+      // steps.js, design-files.js's own ?orphaned=1/purge_orphaned).
+      if (data.action === "purge_orphaned_payments") {
+        const { results: orphaned } = await db.prepare(
+          `SELECT p.id FROM payments p LEFT JOIN orders o ON o.id = p.order_id WHERE o.id IS NULL`
+        ).all();
+        if (!orphaned.length) return json({ success: true, purged: 0 });
+        const ids = orphaned.map((r) => r.id);
+        const placeholders = ids.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM payments WHERE id IN (${placeholders})`).bind(...ids).run();
+        return json({ success: true, purged: orphaned.length });
+      }
+      if (data.action === "purge_orphaned_email_log") {
+        const { results: orphaned } = await db.prepare(
+          `SELECT e.id FROM email_log e LEFT JOIN orders o ON o.id = e.order_id WHERE o.id IS NULL`
+        ).all();
+        if (!orphaned.length) return json({ success: true, purged: 0 });
+        const ids = orphaned.map((r) => r.id);
+        const placeholders = ids.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM email_log WHERE id IN (${placeholders})`).bind(...ids).run();
+        return json({ success: true, purged: orphaned.length });
+      }
+
+      const { id, ids } = data;
       if (Array.isArray(ids) && ids.length) {
         await deleteOrphanedDesignProofs(ids);
         await deleteOrphanedProductionSteps(ids);
         await deleteManualInvoicePdfs(ids);
+        await deleteOrderPaymentsAndLogs(ids);
         const placeholders = ids.map(() => "?").join(",");
         await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...ids).run();
         return json({ success: true, count: ids.length });
@@ -736,6 +801,7 @@ export async function onRequest(context) {
       await deleteOrphanedDesignProofs([id]);
       await deleteOrphanedProductionSteps([id]);
       await deleteManualInvoicePdfs([id]);
+      await deleteOrderPaymentsAndLogs([id]);
       await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
       return json({ success: true });
     }
