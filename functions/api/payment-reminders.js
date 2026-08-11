@@ -170,10 +170,14 @@ export async function onRequest(context) {
       // stops entirely rather than continuing to remind for the remaining
       // balance. A partial invoice can still be chased by hand via "Send
       // reminder now" if Martin wants to follow up on what's left.
+      // reminder_paused = 0 (or unset) excludes anything explicitly paused
+      // via the row actions' Pause Reminders toggle - a full opt-out,
+      // regardless of due date or cadence.
       const { results: candidates } = await db.prepare(`
         SELECT * FROM orders
         WHERE doc_type = 'invoice' AND paid_status = 'unpaid'
           AND due_date IS NOT NULL AND due_date <> ''
+          AND (reminder_paused IS NULL OR reminder_paused = 0)
       `).all();
 
       let checked = 0;

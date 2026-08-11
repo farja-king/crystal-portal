@@ -242,6 +242,16 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // reminder_paused - a full opt-out for this one invoice, distinct from
+    // reminder_interval_days above (which only changes how OFTEN it's
+    // chased, not whether). Toggled via the row actions' Pause/Resume
+    // Reminders button - see admin.html's toggleReminderPause() and the
+    // "toggle_reminder_pause" PUT action below.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN reminder_paused INTEGER DEFAULT 0`).run();
+    } catch {
+      // already exists
+    }
     // is_manual - an invoice already produced in a separate app (e.g. Karl
     // Sports' own invoicing) and just uploaded here as a PDF, rather than
     // built from garment lines - see functions/api/manual-invoice.js. Still
@@ -508,6 +518,18 @@ export async function onRequest(context) {
       if (data.action === "unarchive") {
         await db.prepare("UPDATE orders SET archived_at = NULL, archive_bucket = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
         return json({ success: true });
+      }
+
+      // Toggles the full opt-out for this one invoice - unlike
+      // reminder_interval_days (which only changes how often it's chased),
+      // a paused invoice is skipped by the daily sweep entirely regardless
+      // of due date/cadence (see payment-reminders.js's candidates query).
+      // "Send reminder now" still works while paused - pausing only stops
+      // the automatic chase, not a deliberate manual one.
+      if (data.action === "toggle_reminder_pause") {
+        const paused = existing.reminder_paused ? 0 : 1;
+        await db.prepare("UPDATE orders SET reminder_paused = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(paused, data.id).run();
+        return json({ success: true, reminder_paused: paused });
       }
 
       // Fixes a mis-filed archived item (Completed <-> Pending) without

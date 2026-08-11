@@ -6902,6 +6902,25 @@
       }
     }
 
+    // Full opt-out from the automatic daily reminder sweep for this one
+    // invoice - see the "toggle_reminder_pause" PUT action in
+    // functions/api/orders.js. "Send reminder now" still works while
+    // paused, this only stops the automatic chase.
+    async function toggleReminderPause(id) {
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, action: 'toggle_reminder_pause' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast('✓', data.reminder_paused ? 'Reminders paused for this invoice.' : 'Reminders resumed for this invoice.');
+        loadOrders();
+      } catch (e) {
+        showActionToast('⚠', 'Could not update reminders: ' + e.message);
+      }
+    }
+
     // Merged into the Production Tracker's "Order collected" step (was
     // previously a separate "Confirmed Pickup?" checkbox on the main list) -
     // ticking that specific step done is what opens this popup, via
@@ -7054,6 +7073,12 @@
             if (o.paid_status !== 'paid') {
               actions.push(`<button onclick="openRecordPaymentModal('${escapeAttr(o.id)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Record Payment</button>`);
               actions.push(`<button onclick="sendReminderNow('${escapeAttr(o.id)}')" title="Emails this customer a payment reminder right now, regardless of the automatic schedule" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Send reminder now</button>`);
+              // Full opt-out from the automatic daily chase - distinct from
+              // "Send reminder now" above, which still works while paused
+              // (pausing only stops the automatic sweep, not a deliberate
+              // manual send). See toggle_reminder_pause in
+              // functions/api/orders.js.
+              actions.push(`<button onclick="toggleReminderPause('${escapeAttr(o.id)}')" title="${o.reminder_paused ? 'Resume automatic payment reminders for this invoice' : 'Stop automatic payment reminders for this invoice - Send reminder now still works'}" class="bg-white border border-slate-300 hover:bg-slate-50 ${o.reminder_paused ? 'text-amber-600' : 'text-slate-700'} px-3 py-1 rounded text-xs font-semibold">${o.reminder_paused ? '▶ Resume Reminders' : '⏸ Pause Reminders'}</button>`);
             }
           } else {
             actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
@@ -7082,7 +7107,7 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}${productionBadge}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}</td>
+              <td class="p-4">${statusBadge}${productionBadge}${o.reminder_paused ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-600" title="Automatic payment reminders are stopped for this invoice">🔕 Paused</span>` : ''}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
