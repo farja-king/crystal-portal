@@ -281,6 +281,17 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    // accept_token - unguessable link identifier for the customer-facing
+    // "Accept & Confirm" button on a quote email (see send-email.js, which
+    // lazily generates this the first time a quote is emailed, and the new
+    // functions/api/accept-quote.js, which is the only thing that ever reads
+    // it - same self-serve pattern as design_proofs.token, just one step
+    // earlier in the pipeline).
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN accept_token TEXT`).run();
+    } catch {
+      // already exists
+    }
     // amount_paid - running total of everything recorded against this
     // invoice in the payments ledger below, kept denormalized on the order
     // itself so every existing place that reads orders.* (list badges,

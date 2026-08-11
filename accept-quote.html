@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Accept Quote - Crystal Custom Embroidery</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen flex items-center justify-center p-4">
+  <div class="max-w-lg w-full">
+    <div class="flex items-center gap-3 mb-6 justify-center">
+      <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-lg text-white">C</div>
+      <h1 class="text-lg font-bold text-slate-900">Crystal Custom Embroidery</h1>
+    </div>
+
+    <div id="quote-card" class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+      <p class="text-center text-slate-400">Loading…</p>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = '/api/accept-quote';
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token');
+    const card = document.getElementById('quote-card');
+
+    function escapeHtml(str) {
+      return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function money(n) {
+      return '£' + Number(n || 0).toFixed(2);
+    }
+
+    async function load() {
+      if (!token) {
+        card.innerHTML = '<p class="text-center text-red-600">This link is missing its quote reference - please use the link exactly as sent in the email.</p>';
+        return;
+      }
+      try {
+        const res = await fetch(API_URL + '?token=' + encodeURIComponent(token), { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not load this quote.');
+        render(data);
+      } catch (e) {
+        card.innerHTML = `<p class="text-center text-red-600">${escapeHtml(e.message)}</p>`;
+      }
+    }
+
+    function render(q) {
+      if (q.status === 'approved' || q.status === 'declined') {
+        const isApproved = q.status === 'approved';
+        card.innerHTML = `
+          <p class="text-sm text-slate-500 mb-1">${escapeHtml(q.quote_number)}</p>
+          <h2 class="text-lg font-bold text-slate-900 mb-4">Total: ${money(q.total)}</h2>
+          <div class="text-center py-4 rounded-lg ${isApproved ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'} font-semibold">
+            ${isApproved ? '✓ You already accepted this quote' : '✕ You already declined this quote'}
+          </div>
+          ${isApproved ? '<p class="text-sm text-slate-500 mt-4 text-center">Your invoice has been emailed separately.</p>' : ''}
+          <p class="text-sm text-slate-400 mt-4 text-center">You may now close this window.</p>
+        `;
+        return;
+      }
+
+      card.innerHTML = `
+        <p class="text-sm text-slate-500 mb-1">${escapeHtml(q.quote_number)}</p>
+        <h2 class="text-2xl font-bold text-slate-900 mb-1">${money(q.total)}</h2>
+        ${q.deposit_due > 0 ? `<p class="text-sm text-amber-600 font-medium mb-4">Deposit due on acceptance: ${money(q.deposit_due)}</p>` : '<div class="mb-4"></div>'}
+        <p class="text-sm text-slate-600 mb-4">Hi ${escapeHtml(q.customer_name)}, ready to go ahead with this quote? Accepting will automatically raise your invoice and email it straight to you.</p>
+        <div id="quote-actions" class="flex gap-3">
+          <button id="approve-btn" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-lg font-semibold">✓ Accept &amp; Confirm</button>
+          <button id="decline-btn" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-3 rounded-lg font-semibold">✕ Not this time</button>
+        </div>
+        <div id="decline-form" class="hidden mt-3">
+          <textarea id="decline-notes" rows="3" placeholder="Anything you'd like us to know? (optional)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-2"></textarea>
+          <div class="flex gap-2">
+            <button id="decline-submit" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg font-semibold text-sm">Submit</button>
+            <button id="decline-cancel" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg font-semibold text-sm">Cancel</button>
+          </div>
+        </div>
+        <p id="quote-msg" class="text-sm text-red-600 mt-3"></p>
+      `;
+
+      document.getElementById('approve-btn').onclick = () => submitDecision('approved', '');
+      document.getElementById('decline-btn').onclick = () => {
+        document.getElementById('quote-actions').classList.add('hidden');
+        document.getElementById('decline-form').classList.remove('hidden');
+      };
+      document.getElementById('decline-cancel').onclick = () => {
+        document.getElementById('decline-form').classList.add('hidden');
+        document.getElementById('quote-actions').classList.remove('hidden');
+      };
+      document.getElementById('decline-submit').onclick = () => {
+        submitDecision('declined', document.getElementById('decline-notes').value.trim());
+      };
+    }
+
+    async function submitDecision(decision, notes) {
+      const msg = document.getElementById('quote-msg');
+      const buttons = card.querySelectorAll('button');
+      buttons.forEach((b) => { b.disabled = true; });
+      if (msg) msg.textContent = '';
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, decision, notes }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not record your response.');
+        load();
+      } catch (e) {
+        if (msg) msg.textContent = e.message;
+        buttons.forEach((b) => { b.disabled = false; });
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

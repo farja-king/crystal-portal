@@ -35,7 +35,7 @@ export async function onRequest(context) {
     // Same "already exists" tolerance as every other API here - these
     // columns were added after orders already went live, so an ALTER on a
     // fresh table (which already has them from CREATE) just no-ops.
-    for (const col of ["email_sent_at TEXT", "email_sent_to TEXT", "email_sent_count INTEGER DEFAULT 0"]) {
+    for (const col of ["email_sent_at TEXT", "email_sent_to TEXT", "email_sent_count INTEGER DEFAULT 0", "accept_token TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE orders ADD COLUMN ${col}`).run();
       } catch {
@@ -94,8 +94,18 @@ export async function onRequest(context) {
     const data = await request.json();
     if (!data.order_id) return json({ error: "order_id is required" }, 400);
 
-    const o = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.order_id).first();
+    let o = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.order_id).first();
     if (!o) return json({ error: "Quote/invoice not found" }, 404);
+
+    // Lazily generated the first time a quote is ever emailed - this is
+    // the token behind the "Accept & Confirm" button below, and the only
+    // thing functions/api/accept-quote.js looks up by. An invoice never
+    // needs one (it's already agreed to and being paid for, not accepted).
+    if (o.doc_type === "quote" && !o.accept_token) {
+      const acceptToken = crypto.randomUUID();
+      await db.prepare("UPDATE orders SET accept_token = ? WHERE id = ?").bind(acceptToken, o.id).run();
+      o = { ...o, accept_token: acceptToken };
+    }
 
     const to = (data.to || o.customer_email || "").trim();
     if (!to) return json({ error: "No email address on file for this customer" }, 400);
@@ -285,6 +295,17 @@ export async function onRequest(context) {
           <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
       }
     }
+    // Lets the customer approve the quote themselves - no login, just the
+    // unguessable accept_token above - instead of Martin having to come
+    // back and convert/send it by hand. Only shown while there's still a
+    // decision to make; once they've approved or declined it (via this
+    // link or the design-proof approval flow, which sets the same status)
+    // showing it again would be confusing.
+    const acceptBlock = (o.doc_type === "quote" && o.status !== "approved" && o.status !== "declined" && o.accept_token) ? `
+      <div style="margin:20px 0;text-align:center;">
+        <a href="${new URL(request.url).origin}/accept-quote.html?token=${o.accept_token}" style="display:inline-block;background:#059669;color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:600;font-size:16px;">Accept &amp; Confirm</a>
+        <div style="color:#64748b;font-size:12px;margin-top:8px;">No account needed - one click to confirm you'd like to go ahead.</div>
+      </div>` : "";
     const bankBlock = isUnpaidInvoice ? `
         <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-top:16px;font-size:14px;line-height:1.6;">
           <div style="font-weight:600;">We appreciate your business. Please pay via Bank Transfer</div>
@@ -300,6 +321,7 @@ export async function onRequest(context) {
         ${personalMessage ? `<div style="background:#f8fafc;border-left:3px solid #4f46e5;border-radius:6px;padding:12px 16px;margin-bottom:20px;white-space:pre-line;">${escapeHtml(personalMessage)}</div>` : ""}
         <p>Hi ${escapeHtml(o.customer_name)},</p>
         <p>Please find your ${docLabel.toLowerCase()} below${o.doc_type === "quote" ? " - let us know if you'd like to go ahead" : ""}.</p>
+        ${acceptBlock}
 
         <div style="display:flex;gap:16px;margin-top:16px;">
           <div style="flex:1;border:1px solid #e2e8f0;border-radius:12px;padding:14px;">
