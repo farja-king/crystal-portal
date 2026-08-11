@@ -467,6 +467,24 @@ export async function onRequest(context) {
     // ------------------------------------------------------------------ PUT --
     if (request.method === "PUT") {
       const data = await request.json();
+
+      // Not scoped to any one order (no data.id involved) - lets an admin
+      // correct the invoice numbering sequence, e.g. after a batch of test
+      // invoices got numbered ahead of where real numbering should resume.
+      // Only ever moves the counter to an explicit value the admin typed in
+      // (used by admin.html's resetInvoiceCounter(), which asks for that
+      // value up front) - it never touches, renumbers, or deletes any
+      // existing invoice, only where nextNumber('invoice') starts counting
+      // from next.
+      if (data.action === "set_invoice_counter") {
+        const value = Math.max(0, parseInt(data.value, 10) || 0);
+        await db.prepare(`
+          INSERT INTO counters (name, value) VALUES ('invoice', ?)
+          ON CONFLICT(name) DO UPDATE SET value = excluded.value
+        `).bind(value).run();
+        return json({ success: true, value });
+      }
+
       const existing = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.id).first();
       if (!existing) return json({ error: "Order not found" }, 404);
 
