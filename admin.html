@@ -1375,17 +1375,8 @@
            shows as quick-picks in the quote builder once they're selected
            there, and never leaks into the shared Garment Catalog. -->
       <div class="border-t border-slate-200 pt-4 mb-4">
-        <div class="flex items-center justify-between mb-2">
-          <div class="flex items-center gap-2">
-            <h4 class="font-bold text-slate-900">Custom Price List</h4>
-            <!-- Collapsed by default for every customer (see
-                 loadCustomerCatalogItems resetting this on each open) - a
-                 customer with a long price list (many garment allocations)
-                 was pushing Order History and everything else far down the
-                 page; this keeps the record compact until the list is
-                 actually needed. See toggleCvPriceListBody(). -->
-            <button type="button" id="cv-price-list-toggle" onclick="toggleCvPriceListBody()" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold"></button>
-          </div>
+        <div class="flex items-center justify-between mb-3">
+          <h4 class="font-bold text-slate-900">Custom Price List</h4>
           <div class="flex gap-2">
             <button type="button" onclick="toggleCvCatalogPicker()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-semibold shadow-sm">
               + Add from Garment Catalog
@@ -1404,6 +1395,18 @@
               ✓ Done
             </button>
           </div>
+        </div>
+
+        <!-- Its own row, on its own line, rather than crammed next to the
+             heading - a proper button, not an inline text link, so it
+             doesn't wrap awkwardly at any modal width. Collapsed by default
+             for every customer (see loadCustomerCatalogItems resetting this
+             on each open) - a long price list (many garment allocations)
+             was pushing Order History and everything else far down the
+             page; this keeps the record compact until the list is actually
+             needed. See toggleCvPriceListBody(). -->
+        <div class="mb-3">
+          <button type="button" id="cv-price-list-toggle" onclick="toggleCvPriceListBody()" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm"></button>
         </div>
 
         <!-- Pick an existing garment from the shared catalog (e.g. RX101)
