@@ -73,7 +73,48 @@ export async function onRequest(context) {
           ? "SELECT * FROM customers WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
           : "SELECT * FROM customers WHERE deleted_at IS NULL ORDER BY name ASC"
       ).all();
-      return new Response(JSON.stringify(results), { headers: corsHeaders });
+
+      // lifetime_spend/transaction_count/last_visit above are pure Square-
+      // import figures (see the comment on those columns further down, and
+      // admin.html's renderCustomersTable) - left untouched here since a lot
+      // of other code (the merge-customers flow especially) assumes they
+      // mean exactly that. Instead, fold in a customer's own portal-built
+      // invoices as separate portal_* fields, so the Directory's Activity
+      // column can show combined totals without a customer who's never
+      // synced from Square (or has invoices this app built directly)
+      // wrongly showing "no activity" just because Square never saw them.
+      // Order count includes every invoice regardless of paid status (an
+      // unpaid invoice is still a real job on the books); spend only counts
+      // what's actually been paid (paid_status 'paid'/'partial'), via
+      // amount_paid rather than the invoice's full total.
+      let portalByCustomer = {};
+      try {
+        const { results: portalRows } = await db.prepare(`
+          SELECT customer_id,
+            COUNT(*) AS portal_order_count,
+            SUM(CASE WHEN paid_status IN ('paid', 'partial') THEN amount_paid ELSE 0 END) AS portal_spend,
+            MAX(created_at) AS portal_last_order
+          FROM orders
+          WHERE doc_type = 'invoice' AND customer_id IS NOT NULL AND customer_id <> ''
+          GROUP BY customer_id
+        `).all();
+        portalRows.forEach((r) => { portalByCustomer[r.customer_id] = r; });
+      } catch {
+        // orders table doesn't exist yet on a brand-new DB - no portal
+        // activity to fold in, Square-only figures still work fine.
+      }
+
+      const withPortalActivity = results.map((c) => {
+        const p = portalByCustomer[c.id];
+        return {
+          ...c,
+          portal_order_count: p ? p.portal_order_count : 0,
+          portal_spend: p ? p.portal_spend : 0,
+          portal_last_order: p ? p.portal_last_order : null,
+        };
+      });
+
+      return new Response(JSON.stringify(withPortalActivity), { headers: corsHeaders });
     }
 
     // POST: Save a new customer, or bulk-import { rows: [...] } from a Square
