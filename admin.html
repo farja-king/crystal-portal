@@ -851,6 +851,18 @@
         <span id="reminder-days-msg" class="text-xs"></span>
       </div>
 
+      <!-- A quote sent but never accepted/declined gets exactly ONE gentle
+           "still interested?" nudge, this many days after it was sent - see
+           functions/api/quote-followups.js. Not repeating like the payment
+           chase above, a stale quote was never a firm commitment. -->
+      <div class="flex items-center gap-2 mb-4 text-sm">
+        <span class="text-slate-600">Follow up on quiet quotes</span>
+        <input id="followup-days" type="number" min="1" max="90" class="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-slate-900" />
+        <span class="text-slate-600">days after sending, one nudge only</span>
+        <button onclick="saveFollowupDays()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">Save</button>
+        <span id="followup-days-msg" class="text-xs"></span>
+      </div>
+
       <!-- Quotes nobody ever responded to, tucked out of the way without
            deleting them - see openOrderArchive/restoreOrder. -->
       <div id="order-archive-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -7045,6 +7057,65 @@
       }
     }
 
+    async function loadFollowupDays() {
+      try {
+        const res = await fetch('/api/quote-followups');
+        const data = await res.json();
+        document.getElementById('followup-days').value = data.days_after_sent || 5;
+      } catch (e) {}
+    }
+
+    async function saveFollowupDays() {
+      const msg = document.getElementById('followup-days-msg');
+      const days = Number(document.getElementById('followup-days').value) || 5;
+      try {
+        const res = await fetch('/api/quote-followups', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days_after_sent: days }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+        msg.className = 'text-xs text-emerald-600 font-semibold';
+        msg.textContent = 'Saved.';
+        setTimeout(() => { msg.textContent = ''; }, 2000);
+      } catch (e) {
+        msg.className = 'text-xs text-red-600';
+        msg.textContent = 'Could not save: ' + e.message;
+      }
+    }
+
+    // Which quote ids are currently stale (sent, undecided, past the
+    // follow-up threshold) - fetched once per Quotes list load so the
+    // "Stale" badge (renderOrderRow, see paidStatusBadgeClass area) doesn't
+    // have to duplicate the eligibility math client-side.
+    let staleQuoteIds = new Set();
+    async function loadStaleQuoteIds() {
+      try {
+        const res = await fetch('/api/quote-followups?stale=1');
+        const data = await res.json();
+        staleQuoteIds = new Set(data.stale_ids || []);
+      } catch (e) {
+        staleQuoteIds = new Set();
+      }
+    }
+
+    async function sendFollowupNow(id) {
+      try {
+        const res = await fetch('/api/quote-followups', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'run_one', id }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        if (data.sent) {
+          showActionToast('✓', 'Follow-up emailed.');
+        } else {
+          showActionToast('⚠', 'Not sent: ' + (data.reason || 'unknown reason'));
+        }
+        loadOrders();
+      } catch (e) {
+        showActionToast('⚠', 'Could not send follow-up: ' + e.message);
+      }
+    }
+
     async function sendReminderNow(id) {
       try {
         const res = await fetch('/api/payment-reminders', {
@@ -7178,6 +7249,8 @@
     async function loadOrders() {
       ordersLoaded = true;
       loadReminderDays();
+      loadFollowupDays();
+      loadStaleQuoteIds();
       const tbody = document.getElementById('orders-table-body');
       tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       try {
@@ -7214,6 +7287,12 @@
           const statusBadge = isInvoice
             ? `<span class="px-2 py-1 text-xs font-semibold rounded-full ${paidStatusBadgeClass(o.paid_status)}">${paidStatusBadgeLabel(o)}</span>`
             : `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(o.status || 'draft')}</span>`;
+          // See functions/api/quote-followups.js - a quote that's been sent
+          // but sat undecided past the follow-up threshold, still eligible
+          // for its one-off nudge (followup_sent_at not yet set).
+          const staleBadge = (!isInvoice && staleQuoteIds.has(o.id) && !o.followup_sent_at)
+            ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700" title="Sent but never accepted/declined - eligible for a follow-up nudge">⏳ Stale</span>`
+            : '';
 
           // Small at-a-glance echo of the Production Tracker's current step
           // (see viewOrder()'s "Production Tracker" section) - no badge at
@@ -7243,6 +7322,9 @@
             }
           } else {
             actions.push(`<button onclick="convertOrderToInvoice('${o.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-semibold">Convert to Invoice</button>`);
+            if (staleQuoteIds.has(o.id) && !o.followup_sent_at) {
+              actions.push(`<button onclick="sendFollowupNow('${escapeAttr(o.id)}')" title="Emails this customer a 'still interested?' nudge right now" class="bg-white border border-slate-300 hover:bg-slate-50 text-amber-600 px-3 py-1 rounded text-xs font-semibold">Send follow-up now</button>`);
+            }
           }
           actions.push(`<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">View</button>`);
           if (o.is_manual) {
@@ -7268,7 +7350,7 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}${productionBadge}${o.reminder_paused ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-600" title="Automatic payment reminders are stopped for this invoice">🔕 Paused</span>` : ''}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}</td>
+              <td class="p-4">${statusBadge}${staleBadge}${productionBadge}${o.reminder_paused ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-600" title="Automatic payment reminders are stopped for this invoice">🔕 Paused</span>` : ''}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}${o.followup_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Follow-up sent ${escapeHtml(ukDate(o.followup_sent_at))}</span>` : ''}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');

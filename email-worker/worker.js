@@ -254,6 +254,11 @@ export default {
     ctx.waitUntil(Promise.all([
       sweep("/api/payment-reminders"),
       sweep("/api/review-requests"),
+      // Stale-quote follow-up - a quote sent but never accepted/declined
+      // gets one gentle nudge past the configured threshold. See
+      // functions/api/quote-followups.js - self-limiting the same way
+      // (only sends once per quote), safe to hit every 15 min.
+      sweep("/api/quote-followups"),
       // Self-throttled to ~once every 24 hours inside functions/api/
       // backup.js itself (checks the last successful backup_log row) -
       // safe to hit every 15 minutes like the other two sweeps, it just
