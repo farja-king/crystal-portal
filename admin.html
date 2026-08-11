@@ -2356,11 +2356,15 @@
       document.getElementById('cv-notes').value = c.notes || '';
       document.getElementById('cv-notes-status').classList.add('hidden');
 
+      // Same combined figure (Square baseline + this customer's own portal
+      // invoices) as the Customer Directory list and the edit form's
+      // Activity line - shown here too so all three can never disagree.
       const squareSummary = document.getElementById('cv-square-summary');
-      if (c.square_customer_id) {
+      const { spend: cvSpend, count: cvCount, last: cvLast } = combinedCustomerActivity(c);
+      if (cvCount > 0) {
         squareSummary.classList.remove('hidden');
-        squareSummary.innerHTML = '<strong>Square activity:</strong> ' + money(c.lifetime_spend) + ' across ' + (c.transaction_count || 0) + ' transaction' + (c.transaction_count === 1 ? '' : 's') +
-          (c.last_visit ? ', last ' + escapeHtml(ukDate(c.last_visit)) : '') + ' - separate from the quote/invoice history below.';
+        squareSummary.innerHTML = '<strong>Activity:</strong> ' + money(cvSpend) + ' across ' + cvCount + ' order' + (cvCount === 1 ? '' : 's') +
+          (cvLast ? ', last ' + escapeHtml(ukDate(cvLast)) : '') + '.';
       } else {
         squareSummary.classList.add('hidden');
       }
