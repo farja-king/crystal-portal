@@ -42,6 +42,16 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    // customers.portal_token - this file is the one that actually writes it
+    // (see the "My Orders" link generation below), so it needs its own
+    // guard here too rather than relying on customers.js having already run
+    // - each Function's D1 guards are independent, not shared just because
+    // another file also touches the same table.
+    try {
+      await db.prepare(`ALTER TABLE customers ADD COLUMN portal_token TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // Every send is logged as its own row here (order_id, recipient, when) -
     // separate from orders.email_sent_at/email_sent_to, which only ever hold
