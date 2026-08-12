@@ -53,6 +53,13 @@ export async function onRequest(context) {
     for (const col of [
       "square_customer_id TEXT", "lifetime_spend REAL DEFAULT 0", "transaction_count INTEGER DEFAULT 0", "last_visit TEXT",
       "address_1 TEXT", "address_2 TEXT", "city TEXT", "county TEXT", "postcode TEXT", "deleted_at TEXT",
+      // portal_token - this customer's own unguessable "my orders" link
+      // identifier (see functions/api/my-orders.js and my-orders.html).
+      // One per customer, not per-order like accept_token/pay_token -
+      // generated lazily by send-email.js the first time anything's ever
+      // emailed to them, and never regenerated after that, so the link
+      // they're given stays good indefinitely rather than going stale.
+      "portal_token TEXT",
     ]) {
       try {
         await db.prepare(`ALTER TABLE customers ADD COLUMN ${col}`).run();

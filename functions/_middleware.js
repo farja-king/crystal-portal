@@ -73,6 +73,15 @@ export async function onRequest(context) {
   }
   if (url.pathname === "/pay-thank-you.html" || url.pathname === "/pay-thank-you") return pass("public-pay-thank-you-page");
 
+  // my-orders.html and its API - the customer-facing self-service order
+  // history/balance view (functions/api/my-orders.js). Same no-login
+  // reasoning as everything above, gated by its own customers.portal_token
+  // rather than a per-order one.
+  if (url.pathname === "/my-orders.html" || url.pathname === "/my-orders") return pass("public-my-orders-page");
+  if (url.pathname === "/api/my-orders" && request.method === "GET" && url.searchParams.get("token")) {
+    return pass("public-my-orders-token");
+  }
+
   // square-webhook.js - called by Square itself, never by a browser. There
   // is no session/API key to check here at all; the file's own HMAC
   // signature verification IS the auth for this route, so it's exempted

@@ -117,6 +117,26 @@ export async function onRequest(context) {
       o = { ...o, pay_token: payToken };
     }
 
+    // Same lazy-generation pattern again, this time on the customer record
+    // rather than the order - see functions/api/my-orders.js. One token per
+    // customer, generated once ever (the first time anything's emailed to
+    // them) and reused on every send after, so "View all your orders" is
+    // the same working link across every email they're ever sent, not a
+    // fresh one each time. Orders with no customer_id (shouldn't normally
+    // happen, but manual/legacy rows exist) just don't get this link.
+    let myOrdersUrl = null;
+    if (o.customer_id) {
+      const customer = await db.prepare("SELECT portal_token FROM customers WHERE id = ?").bind(o.customer_id).first();
+      if (customer) {
+        let portalToken = customer.portal_token;
+        if (!portalToken) {
+          portalToken = crypto.randomUUID();
+          await db.prepare("UPDATE customers SET portal_token = ? WHERE id = ?").bind(portalToken, o.customer_id).run();
+        }
+        myOrdersUrl = `${new URL(request.url).origin}/my-orders.html?token=${portalToken}`;
+      }
+    }
+
     const to = (data.to || o.customer_email || "").trim();
     if (!to) return json({ error: "No email address on file for this customer" }, 400);
 
@@ -201,6 +221,7 @@ export async function onRequest(context) {
             ${payByCardBlock}
           </div>` : ""}
           ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
+          ${myOrdersUrl ? `<p style="margin-top:20px;font-size:13px;"><a href="${myOrdersUrl}" style="color:#4f46e5;">View all your orders</a></p>` : ""}
           <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
         </div>`;
 
@@ -381,6 +402,7 @@ export async function onRequest(context) {
           <div style="font-size:12px;color:#64748b;margin-top:4px;">VAT not applicable - not VAT registered.</div>
         </div>
         ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
+        ${myOrdersUrl ? `<p style="margin-top:20px;font-size:13px;"><a href="${myOrdersUrl}" style="color:#4f46e5;">View all your orders</a></p>` : ""}
         <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
       </div>`;
 

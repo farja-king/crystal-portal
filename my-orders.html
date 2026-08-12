@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Orders - Crystal Custom Embroidery</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-feature-settings: "tnum"; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
+  <!-- Header -->
+  <header class="bg-slate-900">
+    <div class="max-w-3xl mx-auto px-5 py-4 flex items-center gap-3">
+      <div class="w-9 h-9 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-lg text-white shrink-0">C</div>
+      <div>
+        <div class="text-white font-semibold leading-tight">Crystal Custom Embroidery</div>
+        <div class="text-slate-400 text-xs leading-tight">26 Grove Street, Raunds, NN9 6DS</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-5 py-8">
+    <div id="loading-state" class="text-center py-20 text-slate-400 text-sm">Loading your orders…</div>
+    <div id="error-state" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center">
+      <p id="error-message" class="text-rose-600 font-medium"></p>
+    </div>
+
+    <div id="content" class="hidden">
+      <div class="mb-8">
+        <h1 id="greeting" class="text-2xl font-bold text-slate-900 tracking-tight"></h1>
+        <p class="text-slate-500 text-sm mt-1">Every quote and invoice we've sent you, all in one place.</p>
+      </div>
+
+      <!-- Balance summary -->
+      <div id="balance-card" class="rounded-2xl border p-6 mb-8 flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <p id="balance-label" class="text-xs font-semibold uppercase tracking-wide"></p>
+          <p id="balance-amount" class="text-3xl font-bold mt-1"></p>
+        </div>
+        <div id="balance-icon" class="w-12 h-12 rounded-full flex items-center justify-center text-2xl shrink-0"></div>
+      </div>
+
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400 mb-3">Order history</h2>
+      <div id="orders-list" class="space-y-3"></div>
+      <div id="empty-state" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center text-slate-400 text-sm">
+        Nothing here yet - your first quote or invoice will appear once we send it over.
+      </div>
+
+      <p class="text-center text-xs text-slate-400 mt-10 pb-6">
+        Questions about any of this? Just reply to any of our emails, or reach us at
+        <a href="mailto:hello@embroidery.click" class="text-indigo-600 hover:underline">hello@embroidery.click</a>
+        or <a href="tel:07530576197" class="text-indigo-600 hover:underline">07530 576197</a>.
+      </p>
+    </div>
+  </main>
+
+  <script>
+    const API_URL = '/api/my-orders';
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token');
+
+    function escapeHtml(str) {
+      return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function money(n) {
+      return '£' + Number(n || 0).toFixed(2);
+    }
+    function ukDate(raw) {
+      if (!raw) return '';
+      const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z');
+      if (isNaN(d)) return '';
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+
+    function showError(message) {
+      document.getElementById('loading-state').classList.add('hidden');
+      document.getElementById('error-state').classList.remove('hidden');
+      document.getElementById('error-message').textContent = message;
+    }
+
+    function statusBadge(o) {
+      if (o.doc_type === 'invoice') {
+        if (o.paid_status === 'paid') return '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">Paid</span>';
+        if (o.paid_status === 'partial') return '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">Partially paid</span>';
+        return '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">Unpaid</span>';
+      }
+      if (o.status === 'approved') return '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">Accepted</span>';
+      if (o.status === 'declined') return '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-600">Declined</span>';
+      return '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-sky-100 text-sky-700">Awaiting your response</span>';
+    }
+
+    function orderCard(o) {
+      const label = o.doc_type === 'invoice' ? 'Invoice' : 'Quote';
+      const actions = [];
+      if (o.accept_token) {
+        actions.push(`<a href="/accept-quote.html?token=${encodeURIComponent(o.accept_token)}" class="inline-flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Review &amp; respond</a>`);
+      }
+      if (o.pay_token) {
+        if (o.deposit_due > 0) {
+          actions.push(`<a href="/api/pay-by-card?token=${encodeURIComponent(o.pay_token)}&mode=deposit" class="inline-flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Pay deposit (${money(o.deposit_due)})</a>`);
+          actions.push(`<a href="/api/pay-by-card?token=${encodeURIComponent(o.pay_token)}&mode=full" class="inline-flex items-center justify-center bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold px-4 py-2 rounded-lg transition">Pay in full (${money(o.balance)})</a>`);
+        } else {
+          actions.push(`<a href="/api/pay-by-card?token=${encodeURIComponent(o.pay_token)}&mode=full" class="inline-flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Pay by card (${money(o.balance)})</a>`);
+        }
+      }
+
+      return `
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs font-semibold uppercase tracking-wide text-slate-400">${label}</span>
+                <span class="font-semibold text-slate-900">${escapeHtml(o.number)}</span>
+              </div>
+              <p class="text-sm text-slate-500 mt-0.5">${escapeHtml(ukDate(o.created_at))}${o.due_date ? ' · due ' + escapeHtml(ukDate(o.due_date)) : ''}</p>
+            </div>
+            <div class="text-right">
+              <p class="text-lg font-bold text-slate-900">${money(o.total)}</p>
+              ${statusBadge(o)}
+            </div>
+          </div>
+          ${o.doc_type === 'invoice' && o.paid_status === 'partial' ? `<p class="text-xs text-amber-600 font-medium mt-2">${money(o.balance)} still owed of ${money(o.total)}</p>` : ''}
+          ${actions.length ? `<div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-100">${actions.join('')}</div>` : ''}
+        </div>`;
+    }
+
+    async function load() {
+      if (!token) {
+        showError('This link is missing its reference - please use the link exactly as sent in your email.');
+        return;
+      }
+      try {
+        const res = await fetch(API_URL + '?token=' + encodeURIComponent(token), { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not load your orders.');
+
+        document.getElementById('loading-state').classList.add('hidden');
+        document.getElementById('content').classList.remove('hidden');
+        document.getElementById('greeting').textContent = `Hi ${data.customer_name || 'there'}`;
+
+        const balanceCard = document.getElementById('balance-card');
+        const owed = Number(data.total_owed || 0);
+        if (owed > 0.004) {
+          balanceCard.className = 'rounded-2xl border border-amber-200 bg-amber-50 p-6 mb-8 flex items-center justify-between flex-wrap gap-4';
+          document.getElementById('balance-label').className = 'text-xs font-semibold uppercase tracking-wide text-amber-700';
+          document.getElementById('balance-label').textContent = 'Total currently owed';
+          document.getElementById('balance-amount').className = 'text-3xl font-bold mt-1 text-amber-900';
+          document.getElementById('balance-amount').textContent = money(owed);
+          document.getElementById('balance-icon').className = 'w-12 h-12 rounded-full flex items-center justify-center text-2xl shrink-0 bg-amber-100';
+          document.getElementById('balance-icon').textContent = '💳';
+        } else {
+          balanceCard.className = 'rounded-2xl border border-emerald-200 bg-emerald-50 p-6 mb-8 flex items-center justify-between flex-wrap gap-4';
+          document.getElementById('balance-label').className = 'text-xs font-semibold uppercase tracking-wide text-emerald-700';
+          document.getElementById('balance-label').textContent = 'Account status';
+          document.getElementById('balance-amount').className = 'text-3xl font-bold mt-1 text-emerald-900';
+          document.getElementById('balance-amount').textContent = "You're all settled up";
+          document.getElementById('balance-icon').className = 'w-12 h-12 rounded-full flex items-center justify-center text-2xl shrink-0 bg-emerald-100';
+          document.getElementById('balance-icon').textContent = '✓';
+        }
+
+        const orders = data.orders || [];
+        if (!orders.length) {
+          document.getElementById('empty-state').classList.remove('hidden');
+        } else {
+          document.getElementById('orders-list').innerHTML = orders.map(orderCard).join('');
+        }
+      } catch (e) {
+        showError(e.message);
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
