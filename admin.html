@@ -1413,7 +1413,7 @@
           <span class="block font-medium text-slate-700 mb-1">Due by</span>
           <input type="date" id="ord-due-date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
         </label>
-        <label class="text-sm block">
+        <label class="text-sm block" id="ord-reminder-interval-field">
           <span class="block font-medium text-slate-700 mb-1">Remind every (days)</span>
           <input type="number" min="1" max="30" placeholder="Default" id="ord-reminder-interval" title="How often to chase this invoice for payment once it's overdue - leave blank to use the portal-wide default" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
         </label>
@@ -6726,6 +6726,13 @@
       // with one already, so there's nothing to warn about there (see the
       // "Save & Send" prompt that fires right after either kind's first save).
       document.getElementById('ord-design-proofs-hint').classList.toggle('hidden', type === 'invoice');
+      // "Remind every (days)" only ever does anything once this becomes an
+      // invoice with a due date (see reminder_interval_days in orders.js) -
+      // showing it on a quote invites exactly the confusion of thinking
+      // it's what controls the stale-quote follow-up nudge, which is a
+      // separate, portal-wide setting (see the "Follow up on quiet quotes"
+      // row above the Quotes & Invoices table, functions/api/quote-followups.js).
+      document.getElementById('ord-reminder-interval-field').classList.toggle('hidden', type === 'quote');
     }
 
     async function saveOrder() {
