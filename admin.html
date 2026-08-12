@@ -8862,6 +8862,11 @@
                  <button onclick="sendPaymentReceipt('${escapeAttr(orderId)}', '${escapeAttr(p.id)}', 'Receipt re-sent.', 'The receipt')" title="Email this receipt again - e.g. if the customer lost it" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Resend</button>`
               : `<button onclick="sendPaymentReceipt('${escapeAttr(orderId)}', '${escapeAttr(p.id)}')" title="Email the customer a receipt for this payment" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold">Send receipt</button>`}
             <button onclick="openEditPaymentModal('${escapeAttr(orderId)}', paymentsById['${escapeAttr(orderId)}']['${escapeAttr(p.id)}'])" title="Edit this payment" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold">Edit</button>
+            ${p.method === 'Card (Square)' && p.square_payment_id && Number(p.amount) > 0
+              ? (p.refunded_at
+                  ? `<span class="text-xs text-slate-400" title="${escapeAttr(ukDate(p.refunded_at))}">Refunded</span>`
+                  : `<button onclick="refundSquarePayment('${escapeAttr(orderId)}', '${escapeAttr(p.id)}', ${Number(p.amount)})" title="Refund this card payment back to the original card via Square" class="text-amber-600 hover:text-amber-800 text-xs font-semibold">Refund</button>`)
+              : ''}
             <button onclick="deletePayment('${escapeAttr(orderId)}', '${escapeAttr(p.id)}')" title="Void this payment" class="text-red-600 hover:text-red-800 text-xs font-semibold">Void</button>
           </div>
         </div>
@@ -8874,6 +8879,27 @@
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: orderId, action: 'delete_payment', payment_id: paymentId }),
       });
+      await loadOrders();
+      loadOrderPayments(orderId);
+    }
+
+    // Refunds a card payment taken via Square back to the original card -
+    // see functions/api/square-refund.js. Full amount only, never partial;
+    // distinct from Void above, which just removes a manually-recorded
+    // entry from the ledger with nothing actually happening at Square.
+    async function refundSquarePayment(orderId, paymentId, amount) {
+      if (!(await confirmModal(`Refund ${money(amount)} to the original card via Square? This cannot be undone.`))) return;
+      try {
+        const res = await fetch('/api/square-refund', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payment_id: paymentId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Refund failed');
+        showActionToast('✓', `Refunded ${money(amount)}.`);
+      } catch (e) {
+        showActionToast('⚠', 'Could not refund: ' + e.message);
+      }
       await loadOrders();
       loadOrderPayments(orderId);
     }

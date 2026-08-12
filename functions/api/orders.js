@@ -367,6 +367,17 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // refunded_at - set on a Square card payment once it's actually been
+    // refunded via functions/api/square-refund.js, so that row's "Refund"
+    // button in the portal can't fire twice against the same payment.
+    // Never set on anything else - a manually-recorded payment is voided
+    // (delete_payment above) instead of refunded, since there's no live
+    // card transaction behind it to reverse.
+    try {
+      await db.prepare(`ALTER TABLE payments ADD COLUMN refunded_at TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // One-time backfill: an invoice marked Paid via the old one-click
     // Mark Paid/Unpaid toggle (before this payments ledger existed) has
