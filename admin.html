@@ -5958,6 +5958,18 @@
       renderOrderLines();
     }
 
+    // Same as above but without the full re-render - used on the "Customer's
+    // own garment" line's own price field (see topRow in renderOrderLines),
+    // which needs to update the running total live while typing without
+    // losing focus/cursor position the way a full renderOrderLines() would.
+    function updateOrderLineUnitPriceLive(idx, value) {
+      const line = orderLines[idx];
+      if (!line) return;
+      line.unit_price = Math.max(0, Number(value) || 0);
+      renderOrderTotals();
+      updateLineTotalDisplay(idx);
+    }
+
     function updateDecorationMethod(idx, decIdx, value) {
       const line = orderLines[idx];
       const dec = line.decorations[decIdx];
@@ -6648,14 +6660,18 @@
         })).join('');
 
         const topRow = isCustomerSupplied
-          ? `<div class="grid gap-2 md:grid-cols-4 items-start">
-               <div class="md:col-span-3">
+          ? `<div class="grid gap-2 md:grid-cols-6 items-start">
+               <div class="md:col-span-4">
                  <span class="block text-xs text-slate-500 mb-1">Description</span>
                  ${productBlock}
                </div>
                <label class="text-sm">
                  <span class="block text-xs text-slate-500 mb-1">Qty</span>
                  <input type="number" min="1" value="${line.qty}" oninput="updateOrderLineQty(${idx}, this.value)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+               </label>
+               <label class="text-sm">
+                 <span class="block text-xs text-slate-500 mb-1">Price each (£)</span>
+                 <input type="number" step="0.01" min="0" value="${line.unit_price || ''}" placeholder="0.00" oninput="updateOrderLineUnitPriceLive(${idx}, this.value)" title="Base price for this line - covers a miscellaneous/one-off item on its own, with no need to attach a catalog product or fake it as a decoration" class="w-full rounded-lg border ${line.unit_price ? 'border-slate-300' : 'border-amber-400 bg-amber-50'} px-3 py-2 text-slate-900" />
                </label>
              </div>
              <div class="mt-2">
