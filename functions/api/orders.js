@@ -281,6 +281,16 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    // followup_interval_days - per-quote override for how many days after
+    // sending to send the one-off "still interested?" nudge (see
+    // functions/api/quote-followups.js). NULL means "use the portal-wide
+    // default" - the mirror image of reminder_interval_days above, just for
+    // quotes instead of overdue invoices.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN followup_interval_days INTEGER`).run();
+    } catch {
+      // already exists
+    }
     // accept_token - unguessable link identifier for the customer-facing
     // "Accept & Confirm" button on a quote email (see send-email.js, which
     // lazily generates this the first time a quote is emailed, and the new
@@ -468,8 +478,8 @@ export async function onRequest(context) {
       await db.prepare(`
         INSERT INTO orders (
           id, doc_type, quote_number, invoice_number, customer_id, customer_name, customer_email,
-          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, reminder_interval_days, invoiced_at, deposit_pct, deposit_amount
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, reminder_interval_days, followup_interval_days, invoiced_at, deposit_pct, deposit_amount
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         isInvoice ? "invoice" : "quote",
@@ -489,6 +499,7 @@ export async function onRequest(context) {
         data.notes || "",
         data.due_date || "",
         data.reminder_interval_days ? Number(data.reminder_interval_days) : null,
+        data.followup_interval_days ? Number(data.followup_interval_days) : null,
         isInvoice ? new Date().toISOString() : null,
         Number(data.deposit_pct) || 0,
         Number(data.deposit_amount) || 0
@@ -655,7 +666,7 @@ export async function onRequest(context) {
         UPDATE orders SET
           customer_id = ?, customer_name = ?, customer_email = ?,
           items = ?, subtotal = ?, discount_pct = ?, discount_flat = ?, discount_amount = ?, total = ?,
-          notes = ?, status = ?, due_date = ?, reminder_interval_days = ?, deposit_pct = ?, deposit_amount = ?, updated_at = CURRENT_TIMESTAMP
+          notes = ?, status = ?, due_date = ?, reminder_interval_days = ?, followup_interval_days = ?, deposit_pct = ?, deposit_amount = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         data.customer_id ?? existing.customer_id,
@@ -673,6 +684,9 @@ export async function onRequest(context) {
         data.reminder_interval_days !== undefined
           ? (data.reminder_interval_days ? Number(data.reminder_interval_days) : null)
           : existing.reminder_interval_days,
+        data.followup_interval_days !== undefined
+          ? (data.followup_interval_days ? Number(data.followup_interval_days) : null)
+          : existing.followup_interval_days,
         data.deposit_pct !== undefined ? Number(data.deposit_pct) || 0 : existing.deposit_pct,
         data.deposit_amount !== undefined ? Number(data.deposit_amount) || 0 : existing.deposit_amount,
         data.id

@@ -55,10 +55,10 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
-    // email_sent_at/accept_token - normally added by send-email.js/orders.js,
-    // guarded here too in case a cold deploy's cron sweep hits this file
-    // before either of those has ever run.
-    for (const col of ["email_sent_at TEXT", "accept_token TEXT"]) {
+    // email_sent_at/accept_token/followup_interval_days - normally added by
+    // send-email.js/orders.js, guarded here too in case a cold deploy's cron
+    // sweep hits this file before either of those has ever run.
+    for (const col of ["email_sent_at TEXT", "accept_token TEXT", "followup_interval_days INTEGER"]) {
       try {
         await db.prepare(`ALTER TABLE orders ADD COLUMN ${col}`).run();
       } catch {
@@ -86,18 +86,23 @@ export async function onRequest(context) {
       // Quotes & Invoices list to badge without duplicating the eligibility
       // logic client-side.
       if (new URL(request.url).searchParams.get("stale")) {
-        const days = await getDaysAfterSent();
-        const cutoffMs = Date.now() - days * 86400000;
+        const defaultDays = await getDaysAfterSent();
+        const now = Date.now();
         const { results } = await db.prepare(`
-          SELECT id, email_sent_at FROM orders
+          SELECT id, email_sent_at, followup_interval_days FROM orders
           WHERE doc_type = 'quote' AND archived_at IS NULL
             AND status NOT IN ('approved', 'declined')
             AND email_sent_at IS NOT NULL AND email_sent_at <> ''
         `).all();
         const staleIds = results
-          .filter((r) => { const ms = parseSqlTimestamp(r.email_sent_at); return Number.isFinite(ms) && ms < cutoffMs; })
+          .filter((r) => {
+            const ms = parseSqlTimestamp(r.email_sent_at);
+            if (!Number.isFinite(ms)) return false;
+            const days = Number(r.followup_interval_days) || defaultDays;
+            return ms < now - days * 86400000;
+          })
           .map((r) => r.id);
-        return json({ days_after_sent: days, stale_ids: staleIds });
+        return json({ days_after_sent: defaultDays, stale_ids: staleIds });
       }
       return json({ days_after_sent: await getDaysAfterSent() });
     }
@@ -171,12 +176,16 @@ export async function onRequest(context) {
 
     // The daily batch, called by the Worker's cron.
     if (data.action === "run") {
-      const days = await getDaysAfterSent();
-      const cutoffMs = Date.now() - days * 86400000;
+      const defaultDays = await getDaysAfterSent();
+      const now = Date.now();
 
       // Only quotes that were actually emailed (email_sent_at set) and still
       // sit undecided, never archived (an archived quote was deliberately
       // parked, not forgotten), and haven't already had their one nudge.
+      // Each quote can override the portal-wide day count via its own
+      // followup_interval_days (set in the builder), same as invoices can
+      // override payment-reminder cadence - so the day-count check has to
+      // happen per-row in JS, not as one shared SQL WHERE clause.
       // email_sent_at is compared in JS (parseSqlTimestamp), not SQL, since
       // D1's CURRENT_TIMESTAMP format doesn't sort/compare reliably against
       // an ISO string built here - same reasoning as payment-reminders.js.
@@ -192,7 +201,8 @@ export async function onRequest(context) {
       let sent = 0;
       for (const order of candidates) {
         const sentMs = parseSqlTimestamp(order.email_sent_at);
-        if (!Number.isFinite(sentMs) || sentMs > cutoffMs) continue; // not stale enough yet
+        const days = Number(order.followup_interval_days) || defaultDays;
+        if (!Number.isFinite(sentMs) || sentMs > now - days * 86400000) continue; // not stale enough yet
         checked += 1;
         const result = await sendFollowup(order);
         if (result.sent) sent += 1;
