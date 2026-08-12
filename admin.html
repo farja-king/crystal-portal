@@ -8905,7 +8905,7 @@
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Refund failed');
-        showActionToast('✓', `Refunded ${money(amount)}.`);
+        showActionToast('✓', `Refunded ${money(amount)}.${data.customer_emailed ? ' Customer emailed a confirmation.' : ' Customer was not emailed (check they have an email on file).'}`);
       } catch (e) {
         showActionToast('⚠', 'Could not refund: ' + e.message);
       }
