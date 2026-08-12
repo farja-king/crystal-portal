@@ -281,6 +281,21 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    // production_due_date - when the customer actually needs/collects this
+    // job, picked by hand in the builder same as due_date - deliberately a
+    // separate column, not a reuse of due_date, since due_date is explicitly
+    // an invoice's payment-terms deadline (see the comment on it above) and
+    // is blank on every quote. This one applies to quotes and invoices alike
+    // (production happens regardless of which stage the paperwork is at)
+    // and is what the Production Calendar view (admin.html) buckets orders
+    // by - conflating the two would mean a quote could never show up on the
+    // calendar at all, and an invoice's payment deadline would get treated
+    // as its collection date, which usually isn't the same thing.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN production_due_date TEXT`).run();
+    } catch {
+      // already exists
+    }
     // followup_interval_days - per-quote override for how many days after
     // sending to send the one-off "still interested?" nudge (see
     // functions/api/quote-followups.js). NULL means "use the portal-wide
@@ -478,8 +493,8 @@ export async function onRequest(context) {
       await db.prepare(`
         INSERT INTO orders (
           id, doc_type, quote_number, invoice_number, customer_id, customer_name, customer_email,
-          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, reminder_interval_days, followup_interval_days, invoiced_at, deposit_pct, deposit_amount
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, production_due_date, reminder_interval_days, followup_interval_days, invoiced_at, deposit_pct, deposit_amount
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         isInvoice ? "invoice" : "quote",
@@ -498,6 +513,7 @@ export async function onRequest(context) {
         isInvoice ? "unpaid" : null,
         data.notes || "",
         data.due_date || "",
+        data.production_due_date || "",
         data.reminder_interval_days ? Number(data.reminder_interval_days) : null,
         data.followup_interval_days ? Number(data.followup_interval_days) : null,
         isInvoice ? new Date().toISOString() : null,
@@ -666,7 +682,7 @@ export async function onRequest(context) {
         UPDATE orders SET
           customer_id = ?, customer_name = ?, customer_email = ?,
           items = ?, subtotal = ?, discount_pct = ?, discount_flat = ?, discount_amount = ?, total = ?,
-          notes = ?, status = ?, due_date = ?, reminder_interval_days = ?, followup_interval_days = ?, deposit_pct = ?, deposit_amount = ?, updated_at = CURRENT_TIMESTAMP
+          notes = ?, status = ?, due_date = ?, production_due_date = ?, reminder_interval_days = ?, followup_interval_days = ?, deposit_pct = ?, deposit_amount = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         data.customer_id ?? existing.customer_id,
@@ -681,6 +697,7 @@ export async function onRequest(context) {
         data.notes ?? existing.notes,
         data.status !== undefined ? String(data.status).slice(0, 30) : existing.status,
         data.due_date ?? existing.due_date,
+        data.production_due_date ?? existing.production_due_date,
         data.reminder_interval_days !== undefined
           ? (data.reminder_interval_days ? Number(data.reminder_interval_days) : null)
           : existing.reminder_interval_days,

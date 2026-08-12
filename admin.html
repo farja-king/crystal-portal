@@ -825,6 +825,10 @@
           <button onclick="loadOrders()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
+          <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
+            <button id="ord-view-list-btn" onclick="switchOrdersView('list')" class="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white">List</button>
+            <button id="ord-view-calendar-btn" onclick="switchOrdersView('calendar')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">📅 Calendar</button>
+          </div>
           <button onclick="cleanUpOrphanedProofs()" title="Design proof files left over from quotes deleted before this cleanup existed - a one-off backlog, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🧹 Clean Up Old Files
           </button>
@@ -996,35 +1000,56 @@
       </div>
       <p id="ord-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
 
-      <!-- Bulk selection bar -->
-      <div id="ord-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
-        <span id="ord-bulk-count" class="font-semibold text-indigo-900"></span>
-        <button type="button" onclick="bulkDeleteOrders()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
-          Delete selected
-        </button>
-        <button type="button" onclick="clearOrderSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
-          Clear selection
-        </button>
+      <div id="ord-list-view">
+        <!-- Bulk selection bar -->
+        <div id="ord-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+          <span id="ord-bulk-count" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="bulkDeleteOrders()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Delete selected
+          </button>
+          <button type="button" onclick="clearOrderSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+            Clear selection
+          </button>
+        </div>
+
+        <!-- List -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <table class="w-full text-left">
+            <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+              <tr>
+                <th class="p-4 w-8"><input type="checkbox" id="ord-select-all" onchange="toggleSelectAllOrders(this.checked)" class="rounded border-slate-300" /></th>
+                <th class="p-4">Number</th>
+                <th class="p-4">Customer</th>
+                <th class="p-4">Date</th>
+                <th class="p-4">Total</th>
+                <th class="p-4">Status</th>
+                <th class="p-4">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="orders-table-body" class="divide-y divide-slate-100 text-sm">
+              <tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <!-- List -->
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <table class="w-full text-left">
-          <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-            <tr>
-              <th class="p-4 w-8"><input type="checkbox" id="ord-select-all" onchange="toggleSelectAllOrders(this.checked)" class="rounded border-slate-300" /></th>
-              <th class="p-4">Number</th>
-              <th class="p-4">Customer</th>
-              <th class="p-4">Date</th>
-              <th class="p-4">Total</th>
-              <th class="p-4">Status</th>
-              <th class="p-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="orders-table-body" class="divide-y divide-slate-100 text-sm">
-            <tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>
-          </tbody>
-        </table>
+      <!-- Production Calendar - a week-at-a-glance of everything still in
+           the pipeline (not archived, not fully collected/all_done),
+           bucketed by orders.production_due_date - see functions/api/
+           orders.js. Deliberately separate from the invoice-payment
+           due_date used by Aged Debtors; this is about workload/capacity,
+           not money owed. -->
+      <div id="ord-calendar-view" class="hidden">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="flex items-center gap-2">
+            <button onclick="shiftProductionCalendar(-1)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 w-9 h-9 rounded-lg text-sm font-semibold shadow-sm">←</button>
+            <button onclick="shiftProductionCalendar(0)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 h-9 rounded-lg text-xs font-semibold shadow-sm">This week</button>
+            <button onclick="shiftProductionCalendar(1)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 w-9 h-9 rounded-lg text-sm font-semibold shadow-sm">→</button>
+            <span id="ord-calendar-range" class="text-sm font-semibold text-slate-700 ml-2"></span>
+          </div>
+          <p class="text-xs text-slate-500">Everything still in production, not yet collected/archived. Set "Needed by" in the builder to place a job on a day.</p>
+        </div>
+        <div id="ord-calendar-grid" class="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-3"></div>
       </div>
     </section>
 
@@ -1408,10 +1433,14 @@
         </button>
       </div>
 
-      <div class="grid gap-3 md:grid-cols-2 mb-4 max-w-md">
+      <div class="grid gap-3 md:grid-cols-3 mb-4 max-w-2xl">
         <label class="text-sm block">
-          <span class="block font-medium text-slate-700 mb-1">Due by</span>
-          <input type="date" id="ord-due-date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+          <span class="block font-medium text-slate-700 mb-1">Payment due by</span>
+          <input type="date" id="ord-due-date" title="When payment is due once this becomes an invoice - used for reminders and Aged Debtors" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+        </label>
+        <label class="text-sm block">
+          <span class="block font-medium text-slate-700 mb-1">Needed by (collection/delivery)</span>
+          <input type="date" id="ord-production-due-date" title="When the customer actually needs this - separate from the payment due date. This is what the Production Calendar plans around." class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
         </label>
         <label class="text-sm block" id="ord-reminder-interval-field">
           <span class="block font-medium text-slate-700 mb-1">Remind every (days)</span>
@@ -6760,6 +6789,7 @@
         deposit_amount: Number(document.getElementById('ord-deposit-amount').value) || 0,
         notes: document.getElementById('ord-notes').value,
         due_date: document.getElementById('ord-due-date').value,
+        production_due_date: document.getElementById('ord-production-due-date').value,
         reminder_interval_days: Number(document.getElementById('ord-reminder-interval').value) || null,
         followup_interval_days: Number(document.getElementById('ord-followup-interval').value) || null,
         doc_type: newOrderDocType,
@@ -6814,6 +6844,7 @@
           orderLines = [];
           document.getElementById('ord-notes').value = '';
           document.getElementById('ord-due-date').value = '';
+          document.getElementById('ord-production-due-date').value = '';
           document.getElementById('ord-reminder-interval').value = '';
           document.getElementById('ord-followup-interval').value = '';
           document.getElementById('ord-customer').value = '';
@@ -6929,6 +6960,7 @@
       document.getElementById('ord-deposit-amount').value = o.deposit_amount || 0;
       document.getElementById('ord-notes').value = o.notes || '';
       document.getElementById('ord-due-date').value = o.due_date || '';
+      document.getElementById('ord-production-due-date').value = o.production_due_date || '';
       document.getElementById('ord-reminder-interval').value = o.reminder_interval_days || '';
       document.getElementById('ord-followup-interval').value = o.followup_interval_days || '';
       document.getElementById('ord-status').value = o.status || 'draft';
@@ -6991,6 +7023,7 @@
       // over (same treatment as discount above).
       document.getElementById('ord-notes').value = '';
       document.getElementById('ord-due-date').value = '';
+      document.getElementById('ord-production-due-date').value = '';
       document.getElementById('ord-deposit-pct').value = 0;
       document.getElementById('ord-deposit-amount').value = 0;
       document.getElementById('ord-reminder-interval').value = o.reminder_interval_days || '';
@@ -7032,6 +7065,7 @@
       document.getElementById('ord-deposit-amount').value = 0;
       document.getElementById('ord-notes').value = '';
       document.getElementById('ord-due-date').value = '';
+      document.getElementById('ord-production-due-date').value = '';
       document.getElementById('ord-reminder-interval').value = '';
       document.getElementById('ord-followup-interval').value = '';
       orderCustomerItems = [];
@@ -7374,9 +7408,118 @@
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
+        renderProductionCalendar();
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
       }
+    }
+
+    // ======================== Production Calendar ========================
+    // Week-at-a-glance view of everything still in the pipeline, bucketed by
+    // orders.production_due_date - see the ALTER/comment in orders.js for
+    // why that's a separate column from the invoice-payment due_date.
+    // Reuses ordersById/productionSummaryByOrder, both already populated by
+    // loadOrders() above - no separate fetch needed.
+    function ordersStartOfWeek(d) {
+      // Monday-start week, matching how a UK workshop would think about it.
+      const day = d.getDay(); // 0=Sun..6=Sat
+      const diff = day === 0 ? -6 : 1 - day;
+      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+      start.setHours(0, 0, 0, 0);
+      return start;
+    }
+    let productionCalendarWeekStart = ordersStartOfWeek(new Date());
+
+    function shiftProductionCalendar(weeks) {
+      productionCalendarWeekStart = weeks === 0
+        ? ordersStartOfWeek(new Date())
+        : new Date(productionCalendarWeekStart.getFullYear(), productionCalendarWeekStart.getMonth(), productionCalendarWeekStart.getDate() + weeks * 7);
+      renderProductionCalendar();
+    }
+
+    function switchOrdersView(view) {
+      const isCalendar = view === 'calendar';
+      document.getElementById('ord-list-view').classList.toggle('hidden', isCalendar);
+      document.getElementById('ord-calendar-view').classList.toggle('hidden', !isCalendar);
+      document.getElementById('ord-view-list-btn').className = 'px-3 py-1.5 rounded-md text-xs font-semibold ' + (isCalendar ? 'text-slate-600 hover:bg-slate-100' : 'bg-indigo-600 text-white');
+      document.getElementById('ord-view-calendar-btn').className = 'px-3 py-1.5 rounded-md text-xs font-semibold ' + (isCalendar ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100');
+      if (isCalendar) renderProductionCalendar();
+    }
+
+    function renderProductionCalendar() {
+      const grid = document.getElementById('ord-calendar-grid');
+      if (!grid) return; // not loaded yet / view never opened
+
+      const start = productionCalendarWeekStart;
+      const days = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        days.push(d);
+      }
+      const fmtRange = (a, b) => `${a.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} - ${b.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+      document.getElementById('ord-calendar-range').textContent = fmtRange(days[0], days[6]);
+
+      // Everything still active - not archived (ordersById is already only
+      // non-archived, see loadOrders' fetch with no ?all=1) and not fully
+      // collected. An order whose tracker was never opened has no
+      // productionSummaryByOrder entry at all, treated as still active
+      // (nothing marks it done, so it shouldn't disappear from the plan).
+      const active = Object.values(ordersById).filter((o) => {
+        const summary = productionSummaryByOrder[o.id];
+        return !(summary && summary.all_done);
+      });
+
+      const todayKey = toDateInputValue(new Date());
+      const dayBuckets = {};
+      days.forEach((d) => { dayBuckets[toDateInputValue(d)] = []; });
+      const unscheduled = [];
+      const overdue = [];
+
+      active.forEach((o) => {
+        if (!o.production_due_date) { unscheduled.push(o); return; }
+        const key = o.production_due_date.slice(0, 10);
+        if (dayBuckets[key]) dayBuckets[key].push(o);
+        else if (key < todayKey) overdue.push(o);
+        // else: scheduled outside this week - simply doesn't show, visible
+        // when navigating to that week instead.
+      });
+
+      function orderCard(o) {
+        const isInvoice = o.doc_type === 'invoice';
+        const number = isInvoice ? o.invoice_number : o.quote_number;
+        const summary = productionSummaryByOrder[o.id];
+        const stageLabel = summary
+          ? (summary.current_title ? summary.current_title : `${summary.done_count}/${summary.total} steps`)
+          : 'Not started';
+        return `<button data-action="view-order" data-id="${escapeAttr(o.id)}" class="block w-full text-left bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-sm rounded-lg p-2 mb-2 transition">
+          <div class="text-xs font-semibold text-slate-900">${escapeHtml(number)}</div>
+          <div class="text-xs text-slate-600 truncate">${escapeHtml(o.customer_name)}</div>
+          <div class="text-[11px] text-indigo-600 mt-1">🏭 ${escapeHtml(stageLabel)}</div>
+        </button>`;
+      }
+
+      const dayColumns = days.map((d) => {
+        const key = toDateInputValue(d);
+        const items = dayBuckets[key];
+        const isToday = key === todayKey;
+        const label = d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+        return `<div class="bg-slate-50 rounded-xl border ${isToday ? 'border-indigo-300 ring-1 ring-indigo-200' : 'border-slate-200'} p-2 min-h-[140px]">
+          <div class="text-xs font-semibold ${isToday ? 'text-indigo-700' : 'text-slate-500'} mb-2">${label}${isToday ? ' · Today' : ''}</div>
+          ${items.length ? items.map(orderCard).join('') : '<p class="text-xs text-slate-300">-</p>'}
+        </div>`;
+      }).join('');
+
+      const overdueColumn = overdue.length ? `<div class="bg-rose-50 rounded-xl border border-rose-200 p-2 min-h-[140px]">
+        <div class="text-xs font-semibold text-rose-700 mb-2">⚠ Overdue (before this week)</div>
+        ${overdue.map(orderCard).join('')}
+      </div>` : '';
+
+      const unscheduledColumn = `<div class="bg-amber-50 rounded-xl border border-amber-200 p-2 min-h-[140px]">
+        <div class="text-xs font-semibold text-amber-700 mb-2">No date set (${unscheduled.length})</div>
+        ${unscheduled.length ? unscheduled.map(orderCard).join('') : '<p class="text-xs text-amber-400">-</p>'}
+      </div>`;
+
+      grid.innerHTML = overdueColumn + dayColumns + unscheduledColumn;
     }
 
     // Ticked orders/invoices for bulk delete - same pattern as selectedCustomerIds.
