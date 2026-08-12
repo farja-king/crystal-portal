@@ -387,8 +387,20 @@ export async function onRequest(context) {
         let invoiceEmailed = false;
         if (data.decision === "approved" && proof.doc_type === "quote") {
           try {
+            // See functions/api/accept-quote.js for the full explanation:
+            // these internal calls to /api/orders and /api/send-email are
+            // gated by functions/_middleware.js like any other /api/* route,
+            // and a server-to-server fetch carries no session cookie - the
+            // stored auth_config.api_key (X-API-Key) is what lets them
+            // through instead. Without this they'd 401 silently (caught
+            // below), and the approval would record with nothing actually
+            // converting or sending.
+            const authCfg = await db.prepare("SELECT api_key FROM auth_config WHERE id = 'default'").first();
+            const authHeaders = { "Content-Type": "application/json" };
+            if (authCfg && authCfg.api_key) authHeaders["X-API-Key"] = authCfg.api_key;
+
             const convertRes = await fetch(`${url.origin}/api/orders`, {
-              method: "PUT", headers: { "Content-Type": "application/json" },
+              method: "PUT", headers: authHeaders,
               body: JSON.stringify({ id: proof.order_id, action: "convert_to_invoice" }),
             });
             const convertData = await convertRes.json();
@@ -396,7 +408,7 @@ export async function onRequest(context) {
               invoiced = true;
               invoiceNumber = convertData.invoice_number;
               const emailRes = await fetch(`${url.origin}/api/send-email`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
+                method: "POST", headers: authHeaders,
                 body: JSON.stringify({ order_id: proof.order_id }),
               });
               invoiceEmailed = emailRes.ok;

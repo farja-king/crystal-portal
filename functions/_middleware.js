@@ -47,6 +47,23 @@ export async function onRequest(context) {
     }
   }
 
+  // accept-quote.html and its token-scoped API calls - the customer-facing
+  // "Accept & Confirm" quote flow (functions/api/accept-quote.js), same
+  // no-login-required reasoning and same shape as the proof-approval
+  // exemptions just above.
+  if (url.pathname === "/accept-quote.html" || url.pathname === "/accept-quote") return pass("public-accept-quote-page");
+  if (url.pathname === "/api/accept-quote" && request.method === "GET" && url.searchParams.get("token")) {
+    return pass("public-accept-quote-token");
+  }
+  if (url.pathname === "/api/accept-quote" && request.method === "POST"
+      && (request.headers.get("content-type") || "").includes("application/json")) {
+    let body = null;
+    try { body = await request.clone().json(); } catch { /* not JSON, fall through to auth */ }
+    if (body && body.token && body.decision) {
+      return pass("public-accept-quote-decision");
+    }
+  }
+
   if (!env.DB) return pass("no-db");
 
   let cfg = null;
