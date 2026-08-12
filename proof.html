@@ -59,7 +59,7 @@
           <h2 class="text-lg font-bold text-slate-900 mb-4">${escapeHtml(p.filename)}</h2>
           ${imageBlock}
           <div class="text-center py-4 rounded-lg ${isApproved ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'} font-semibold">
-            ${isApproved ? '✓ You already approved this proof' : '✕ You already declined this proof'}
+            ${isApproved ? "✓ You've approved this proof" : "✕ You've declined this proof"}
           </div>
           ${p.decision_notes ? `<p class="text-sm text-slate-500 mt-3"><strong>Your note:</strong> ${escapeHtml(p.decision_notes)}</p>` : ''}
           ${consentLine}

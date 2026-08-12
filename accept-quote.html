@@ -53,7 +53,7 @@
           <p class="text-sm text-slate-500 mb-1">${escapeHtml(q.quote_number)}</p>
           <h2 class="text-lg font-bold text-slate-900 mb-4">Total: ${money(q.total)}</h2>
           <div class="text-center py-4 rounded-lg ${isApproved ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'} font-semibold">
-            ${isApproved ? '✓ You already accepted this quote' : '✕ You already declined this quote'}
+            ${isApproved ? "✓ You've accepted this quote" : "✕ You've declined this quote"}
           </div>
           ${isApproved ? '<p class="text-sm text-slate-500 mt-4 text-center">Your invoice has been emailed separately.</p>' : ''}
           <p class="text-sm text-slate-400 mt-4 text-center">You may now close this window.</p>

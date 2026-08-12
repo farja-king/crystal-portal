@@ -68,8 +68,15 @@ export async function onRequest(context) {
 
   let cfg = null;
   try {
+    // api_key was missing from this SELECT despite being checked below -
+    // cfg.api_key was always undefined, so X-API-Key auth (used by the cron
+    // Worker for payment-reminders/review-requests/backup/quote-followups,
+    // and by accept-quote.js/design-proofs.js's internal convert/send calls)
+    // silently 401'd no matter what key was sent. Real bug, not just this
+    // session's - worth checking whether reminders/backups have actually
+    // been running.
     cfg = await env.DB.prepare(
-      "SELECT password_hash, secret FROM auth_config WHERE id = 'default'"
+      "SELECT password_hash, secret, api_key FROM auth_config WHERE id = 'default'"
     ).first();
   } catch {
     return pass("unconfigured"); // auth_config not created yet - nothing to enforce
