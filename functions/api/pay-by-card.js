@@ -18,7 +18,7 @@
 // functions/api/square-webhook.js once Square confirms it - never by this
 // file, which only ever creates the checkout link and hands the customer
 // off to Square.
-const SQUARE_VERSION = "2024-01-18"; // bump if Square deprecates this - see their API changelog
+const SQUARE_VERSION = "2026-07-15"; // matches the API version on Martin's Square app/webhook subscription - keep both in step
 
 export async function onRequest(context) {
   const { request, env } = context;

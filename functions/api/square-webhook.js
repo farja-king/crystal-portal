@@ -12,7 +12,7 @@
 // entirely from the portal-login gate for that reason - this file is its own
 // gate, and a request that fails signature verification is rejected outright
 // rather than silently trusted.
-const SQUARE_VERSION = "2024-01-18"; // keep in step with pay-by-card.js
+const SQUARE_VERSION = "2026-07-15"; // matches the API version on Martin's Square app/webhook subscription - keep in step with pay-by-card.js
 
 async function verifySquareSignature(request, rawBody, signatureKey) {
   const signatureHeader = request.headers.get("x-square-hmacsha256-signature");
