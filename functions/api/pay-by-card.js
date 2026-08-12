@@ -72,6 +72,27 @@ export async function onRequest(context) {
       return page(`<h1>✓ Already paid in full</h1><p>Invoice ${escapeHtml(o.invoice_number)} shows no balance outstanding - nothing to pay here.</p>`);
     }
 
+    // ?mode=deposit - charges exactly the deposit set on the quote/invoice
+    // (deposit_pct/deposit_amount), never a lesser amount - the only thing
+    // capping it is the balance actually still owed, which only ever makes
+    // it smaller if some of that deposit is already covered by an earlier
+    // payment, never arbitrarily. Computed here independently from D1, not
+    // trusted from the query string, so nobody can hand-craft a link asking
+    // to charge less than the real deposit. Anything other than "deposit" is
+    // the existing full-balance behaviour, unchanged for every link already
+    // sent out before this mode existed.
+    const mode = url.searchParams.get("mode") === "deposit" ? "deposit" : "full";
+    let chargeAmount = balance;
+    let lineItemLabel = `Invoice ${o.invoice_number}`;
+    if (mode === "deposit") {
+      const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+      if (depositDue <= 0) {
+        return page(`<h1>No deposit is set on this invoice.</h1><p>Use the full-payment link instead, or get in touch.</p>`, 400);
+      }
+      chargeAmount = Math.min(depositDue, balance);
+      lineItemLabel = `Invoice ${o.invoice_number} - deposit`;
+    }
+
     // .trim() defensively - a value pasted into the Cloudflare dashboard can
     // easily pick up a trailing space or newline (e.g. from a triple-click
     // select that grabs the line ending), which Square's API then rejects
@@ -89,7 +110,7 @@ export async function onRequest(context) {
     }
 
     const squareBase = env.SQUARE_ENV === "sandbox" ? "https://connect.squareupsandbox.com" : "https://connect.squareup.com";
-    const amountPence = Math.round(balance * 100);
+    const amountPence = Math.round(chargeAmount * 100);
 
     const res = await fetch(`${squareBase}/v2/online-checkout/payment-links`, {
       method: "POST",
@@ -112,7 +133,7 @@ export async function onRequest(context) {
           // invoices a given Square payment belongs to.
           reference_id: o.id,
           line_items: [{
-            name: `Invoice ${o.invoice_number}`.slice(0, 500),
+            name: lineItemLabel.slice(0, 500),
             quantity: "1",
             base_price_money: { amount: amountPence, currency: "GBP" },
           }],

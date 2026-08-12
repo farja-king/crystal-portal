@@ -51,12 +51,29 @@
       // just possibly on an earlier visit/session where the status itself
       // isn't tracked on this record anymore - see accept-quote.js).
       if (q.converted) {
+        // Card payment straight off this confirmation screen - offered
+        // right here (rather than only via the separate invoice email that
+        // goes out a moment later) since this is the natural moment someone
+        // who wants to pay by card there and then would look for it. Bank
+        // transfer stays what the invoice email itself asks for; this is
+        // just an option, never pushed if there's nothing left to pay.
+        const balance = Number(q.balance || 0);
+        const showPayment = q.pay_token && q.paid_status !== 'paid' && balance > 0.004;
+        const depositDue = Number(q.deposit_due || 0);
+        const paymentButtons = showPayment ? `
+          <div class="mt-4 flex flex-col gap-2">
+            ${depositDue > 0 ? `<a href="/api/pay-by-card?token=${q.pay_token}&mode=deposit" class="block text-center bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-lg font-semibold">Pay deposit now (${money(depositDue)})</a>` : ''}
+            <a href="/api/pay-by-card?token=${q.pay_token}&mode=full" class="block text-center ${depositDue > 0 ? 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-700' : 'bg-emerald-600 hover:bg-emerald-700 text-white'} px-4 py-3 rounded-lg font-semibold">Pay in full now (${money(balance)})</a>
+          </div>
+          <p class="text-xs text-slate-400 mt-2 text-center">Prefer bank transfer? The details are in your invoice email - no need to do anything here.</p>
+        ` : '';
         card.innerHTML = `
-          <p class="text-sm text-slate-500 mb-1">${escapeHtml(q.quote_number)}</p>
+          <p class="text-sm text-slate-500 mb-1">${escapeHtml(q.quote_number)}${q.invoice_number ? ' → ' + escapeHtml(q.invoice_number) : ''}</p>
           <div class="text-center py-4 rounded-lg bg-emerald-50 text-emerald-700 font-semibold">
             ✓ Thank you for accepting your quote
           </div>
           <p class="text-sm text-slate-500 mt-4 text-center">Your invoice will be forwarded to you automatically - please check your spam/junk folder if it doesn't turn up shortly.</p>
+          ${paymentButtons}
           <p class="text-sm text-slate-400 mt-4 text-center">You may now close this window.</p>
         `;
         return;

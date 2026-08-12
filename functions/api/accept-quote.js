@@ -32,10 +32,12 @@ export async function onRequest(context) {
   try {
     // Guard against a cold deploy hitting this file before send-email.js or
     // orders.js has - same "already exists" tolerance as everywhere else.
-    try {
-      await db.prepare(`ALTER TABLE orders ADD COLUMN accept_token TEXT`).run();
-    } catch {
-      // already exists
+    for (const col of ["accept_token TEXT", "pay_token TEXT"]) {
+      try {
+        await db.prepare(`ALTER TABLE orders ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
     }
 
     const url = new URL(request.url);
@@ -47,15 +49,32 @@ export async function onRequest(context) {
       const token = url.searchParams.get("token");
       if (!token) return json({ error: "Missing token" }, 400);
       const o = await db.prepare(
-        "SELECT id, quote_number, customer_name, total, status, deposit_pct, deposit_amount, doc_type FROM orders WHERE accept_token = ?"
+        "SELECT id, quote_number, invoice_number, customer_name, total, amount_paid, paid_status, status, deposit_pct, deposit_amount, doc_type, pay_token FROM orders WHERE accept_token = ?"
       ).bind(token).first();
       if (!o) return json({ error: "This link isn't valid." }, 404);
       // Not an error case - this is exactly what a successful acceptance
       // looks like once the quote has already become an invoice. Shown as
       // a normal confirmation on the page, not red error text (see
-      // accept-quote.html's "converted" branch).
+      // accept-quote.html's "converted" branch). Also where the "pay by
+      // card" offer actually lives - the accept-quote page is the natural
+      // moment to ask, right after they've just said yes, rather than only
+      // via the separate invoice email that goes out a moment later.
       if (o.doc_type !== "quote") {
-        return json({ converted: true, quote_number: o.quote_number, customer_name: o.customer_name });
+        const balance = Number(o.total) - Number(o.amount_paid || 0);
+        const rawDepositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+        // Only worth offering as its own smaller option if it's genuinely
+        // smaller than paying in full outright - otherwise it's the same
+        // choice twice. "No less than the deposit set on the quote" - this
+        // is never reduced for any reason other than capping at what's
+        // actually still owed (see pay-by-card.js's own mode=deposit
+        // handling, which computes this identical figure independently
+        // rather than trusting a client-supplied amount).
+        const depositDue = (rawDepositDue > 0 && rawDepositDue < balance) ? Math.min(rawDepositDue, balance) : 0;
+        return json({
+          converted: true, quote_number: o.quote_number, customer_name: o.customer_name,
+          invoice_number: o.invoice_number, total: o.total, balance, paid_status: o.paid_status,
+          deposit_due: depositDue, pay_token: o.pay_token,
+        });
       }
       const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
       return json({
