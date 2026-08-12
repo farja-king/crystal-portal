@@ -47,6 +47,20 @@
     }
 
     function render(q) {
+      // The quote has already become an invoice (this was already accepted,
+      // just possibly on an earlier visit/session where the status itself
+      // isn't tracked on this record anymore - see accept-quote.js).
+      if (q.converted) {
+        card.innerHTML = `
+          <p class="text-sm text-slate-500 mb-1">${escapeHtml(q.quote_number)}</p>
+          <div class="text-center py-4 rounded-lg bg-emerald-50 text-emerald-700 font-semibold">
+            ✓ Thank you for accepting your quote
+          </div>
+          <p class="text-sm text-slate-500 mt-4 text-center">Your invoice will be forwarded to you automatically - please check your spam/junk folder if it doesn't turn up shortly.</p>
+          <p class="text-sm text-slate-400 mt-4 text-center">You may now close this window.</p>
+        `;
+        return;
+      }
       if (q.status === 'approved' || q.status === 'declined') {
         const isApproved = q.status === 'approved';
         card.innerHTML = `
@@ -105,7 +119,7 @@
           body: JSON.stringify({ token, decision, notes }),
         });
         const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || 'Could not record your response.');
+        if (!res.ok || !(data.success || data.converted)) throw new Error(data.error || 'Could not record your response.');
         load();
       } catch (e) {
         if (msg) msg.textContent = e.message;

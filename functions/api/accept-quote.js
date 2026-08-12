@@ -50,8 +50,12 @@ export async function onRequest(context) {
         "SELECT id, quote_number, customer_name, total, status, deposit_pct, deposit_amount, doc_type FROM orders WHERE accept_token = ?"
       ).bind(token).first();
       if (!o) return json({ error: "This link isn't valid." }, 404);
+      // Not an error case - this is exactly what a successful acceptance
+      // looks like once the quote has already become an invoice. Shown as
+      // a normal confirmation on the page, not red error text (see
+      // accept-quote.html's "converted" branch).
       if (o.doc_type !== "quote") {
-        return json({ error: "This quote has already moved on - check your email for the latest invoice." }, 409);
+        return json({ converted: true, quote_number: o.quote_number, customer_name: o.customer_name });
       }
       const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
       return json({
@@ -72,8 +76,11 @@ export async function onRequest(context) {
 
     const o = await db.prepare("SELECT * FROM orders WHERE accept_token = ?").bind(data.token).first();
     if (!o) return json({ error: "This link isn't valid." }, 404);
+    // Safety net for a double-submit race (the page itself won't normally
+    // offer the buttons once converted - see the GET branch above) - still
+    // framed as a positive confirmation, not an error.
     if (o.doc_type !== "quote") {
-      return json({ error: "This quote has already moved on - check your email for the latest invoice." }, 409);
+      return json({ converted: true, quote_number: o.quote_number, customer_name: o.customer_name });
     }
     if (o.status === "approved" || o.status === "declined") {
       return json({ error: `This quote was already marked ${o.status} - no further action needed.` }, 409);
