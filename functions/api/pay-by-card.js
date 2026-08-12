@@ -72,7 +72,15 @@ export async function onRequest(context) {
       return page(`<h1>✓ Already paid in full</h1><p>Invoice ${escapeHtml(o.invoice_number)} shows no balance outstanding - nothing to pay here.</p>`);
     }
 
-    if (!env.SQUARE_ACCESS_TOKEN || !env.SQUARE_LOCATION_ID) {
+    // .trim() defensively - a value pasted into the Cloudflare dashboard can
+    // easily pick up a trailing space or newline (e.g. from a triple-click
+    // select that grabs the line ending), which Square's API then rejects
+    // outright with a fairly opaque INVALID_VALUE error. Cheap enough to
+    // always do rather than debug that surprise once in production.
+    const squareAccessToken = (env.SQUARE_ACCESS_TOKEN || "").trim();
+    const squareLocationId = (env.SQUARE_LOCATION_ID || "").trim();
+
+    if (!squareAccessToken || !squareLocationId) {
       // Shouldn't normally be reachable - send-email.js only includes this
       // link when both are configured - but the link could be re-used from
       // an old email after Square was disconnected, so handle it gracefully
@@ -86,7 +94,7 @@ export async function onRequest(context) {
     const res = await fetch(`${squareBase}/v2/online-checkout/payment-links`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${env.SQUARE_ACCESS_TOKEN}`,
+        "Authorization": `Bearer ${squareAccessToken}`,
         "Content-Type": "application/json",
         "Square-Version": SQUARE_VERSION,
       },
@@ -97,7 +105,7 @@ export async function onRequest(context) {
         // between two clicks), not silently reuse whatever it was before.
         idempotency_key: crypto.randomUUID(),
         order: {
-          location_id: env.SQUARE_LOCATION_ID,
+          location_id: squareLocationId,
           // reference_id round-trips back to us on the payment.updated
           // webhook (via Square's own Retrieve Order call) - this is the
           // only thing that lets square-webhook.js know which of our
@@ -117,7 +125,11 @@ export async function onRequest(context) {
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => "");
-      return page(`<h1>Couldn't start checkout.</h1><p>Something went wrong on our end - please try again shortly, or pay by bank transfer instead.</p>`, 502);
+      // ?debug=1 surfaces Square's actual rejection reason - never linked to
+      // from a real email (see send-email.js), just for troubleshooting a
+      // misconfigured secret directly against the live endpoint.
+      const debugDetail = url.searchParams.get("debug") ? `<p style="color:#94a3b8;font-size:12px;">${escapeHtml(errBody)}</p>` : "";
+      return page(`<h1>Couldn't start checkout.</h1><p>Something went wrong on our end - please try again shortly, or pay by bank transfer instead.</p>${debugDetail}`, 502);
     }
 
     const data = await res.json();

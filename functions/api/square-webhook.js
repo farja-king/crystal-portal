@@ -54,7 +54,7 @@ export async function onRequest(context) {
     // up this far.
     return json({ error: "Webhook not configured" }, 503);
   }
-  const verified = await verifySquareSignature(request, rawBody, env.SQUARE_WEBHOOK_SIGNATURE_KEY);
+  const verified = await verifySquareSignature(request, rawBody, (env.SQUARE_WEBHOOK_SIGNATURE_KEY || "").trim());
   if (!verified) return json({ error: "Invalid signature" }, 401);
 
   let event;
@@ -82,14 +82,17 @@ export async function onRequest(context) {
     const existing = await db.prepare("SELECT id FROM payments WHERE square_payment_id = ?").bind(payment.id).first();
     if (existing) return json({ received: true, already_recorded: true });
 
-    if (!env.SQUARE_ACCESS_TOKEN) return json({ error: "Square not configured" }, 503);
+    // .trim() defensively - see pay-by-card.js for why (a value pasted into
+    // the Cloudflare dashboard can pick up a trailing space/newline).
+    const squareAccessToken = (env.SQUARE_ACCESS_TOKEN || "").trim();
+    if (!squareAccessToken) return json({ error: "Square not configured" }, 503);
 
     // payment.order_id is Square's own order id, not ours - reference_id on
     // that Square order is what pay-by-card.js set to our orders.id at
     // link-creation time, so a lookup round-trip is unavoidable here.
     const squareBase = env.SQUARE_ENV === "sandbox" ? "https://connect.squareupsandbox.com" : "https://connect.squareup.com";
     const orderRes = await fetch(`${squareBase}/v2/orders/${payment.order_id}`, {
-      headers: { "Authorization": `Bearer ${env.SQUARE_ACCESS_TOKEN}`, "Square-Version": SQUARE_VERSION },
+      headers: { "Authorization": `Bearer ${squareAccessToken}`, "Square-Version": SQUARE_VERSION },
     });
     if (!orderRes.ok) return json({ error: "Could not resolve Square order" }, 502);
     const orderData = await orderRes.json();
