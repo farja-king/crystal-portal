@@ -35,7 +35,7 @@ export async function onRequest(context) {
     // Same "already exists" tolerance as every other API here - these
     // columns were added after orders already went live, so an ALTER on a
     // fresh table (which already has them from CREATE) just no-ops.
-    for (const col of ["email_sent_at TEXT", "email_sent_to TEXT", "email_sent_count INTEGER DEFAULT 0", "accept_token TEXT"]) {
+    for (const col of ["email_sent_at TEXT", "email_sent_to TEXT", "email_sent_count INTEGER DEFAULT 0", "accept_token TEXT", "pay_token TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE orders ADD COLUMN ${col}`).run();
       } catch {
@@ -107,6 +107,16 @@ export async function onRequest(context) {
       o = { ...o, accept_token: acceptToken };
     }
 
+    // Same lazy-generation pattern, for the "Pay by card" link on an unpaid
+    // invoice - see functions/api/pay-by-card.js, the only thing that reads
+    // this. A paid invoice never needs one; a quote doesn't either (nothing
+    // to charge until it's an invoice).
+    if (o.doc_type === "invoice" && o.paid_status !== "paid" && !o.pay_token) {
+      const payToken = crypto.randomUUID();
+      await db.prepare("UPDATE orders SET pay_token = ? WHERE id = ?").bind(payToken, o.id).run();
+      o = { ...o, pay_token: payToken };
+    }
+
     const to = (data.to || o.customer_email || "").trim();
     if (!to) return json({ error: "No email address on file for this customer" }, 400);
 
@@ -127,6 +137,17 @@ export async function onRequest(context) {
     // this same file already increments below on every successful send, so
     // it's "0/null" only for a send that hasn't happened yet.
     const isFirstSend = !o.email_sent_count;
+
+    // "Pay by card" - only offered when Square's actually configured (both
+    // secrets present) and there's a genuine balance left to charge. Bank
+    // transfer is still the only thing asked for up front (see the bank
+    // details block below, in both branches); this is deliberately a quiet
+    // fallback, not competing for attention with it - "if someone insists
+    // on a card" per how this was actually asked for, not a primary payment
+    // option pushed on every invoice.
+    const payByCardBlock = (o.doc_type === "invoice" && o.paid_status !== "paid" && o.pay_token && env.SQUARE_ACCESS_TOKEN && env.SQUARE_LOCATION_ID)
+      ? `<p style="font-size:13px;color:#64748b;margin-top:10px;">Prefer to pay by card instead? <a href="${new URL(request.url).origin}/api/pay-by-card?token=${o.pay_token}" style="color:#4f46e5;">Pay by card</a></p>`
+      : "";
 
     // Manual invoices (functions/api/manual-invoice.js) have no items/
     // discount to build the usual itemised email around, and their PDF is
@@ -177,6 +198,7 @@ export async function onRequest(context) {
             <div style="font-weight:600;">We appreciate your business. Please pay via Bank Transfer</div>
             <div>Banking Details: Crystal Custom Embroidery,</div>
             <div>Sort Code: 04-03-33, Account Number: 55185130</div>
+            ${payByCardBlock}
           </div>` : ""}
           ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
           <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
@@ -311,6 +333,7 @@ export async function onRequest(context) {
           <div style="font-weight:600;">We appreciate your business. Please pay via Bank Transfer</div>
           <div>Banking Details: Crystal Custom Embroidery,</div>
           <div>Sort Code: 04-03-33, Account Number: 55185130</div>
+          ${payByCardBlock}
         </div>` : "";
 
     const html = `

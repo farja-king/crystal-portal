@@ -306,6 +306,17 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // pay_token - unguessable link identifier for the customer-facing "Pay
+    // by card" link on an unpaid invoice email (see send-email.js, which
+    // lazily generates this the first time an unpaid invoice is emailed,
+    // and functions/api/pay-by-card.js, the only thing that ever reads it).
+    // square_payment_id on payments (below) is the matching dedupe key for
+    // the webhook that actually records the payment once Square confirms it.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN pay_token TEXT`).run();
+    } catch {
+      // already exists
+    }
     // accept_token - unguessable link identifier for the customer-facing
     // "Accept & Confirm" button on a quote email (see send-email.js, which
     // lazily generates this the first time a quote is emailed, and the new
@@ -346,6 +357,16 @@ export async function onRequest(context) {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    // square_payment_id - set only on a payment recorded automatically by
+    // functions/api/square-webhook.js off a card payment taken via Square's
+    // Payment Links checkout (see pay-by-card.js) - null for every payment
+    // entered by hand. Doubles as the webhook's own dedupe key, since Square
+    // can and does redeliver the same notification more than once.
+    try {
+      await db.prepare(`ALTER TABLE payments ADD COLUMN square_payment_id TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // One-time backfill: an invoice marked Paid via the old one-click
     // Mark Paid/Unpaid toggle (before this payments ledger existed) has

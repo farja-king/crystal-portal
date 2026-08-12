@@ -64,6 +64,21 @@ export async function onRequest(context) {
     }
   }
 
+  // pay-by-card.js - the customer-facing "Pay by card" link on an unpaid
+  // invoice email. No login, same token-gated reasoning as accept-quote/
+  // design-proofs above; this file checks its own orders.pay_token before
+  // doing anything.
+  if (url.pathname === "/api/pay-by-card" && request.method === "GET" && url.searchParams.get("token")) {
+    return pass("public-pay-by-card-token");
+  }
+  if (url.pathname === "/pay-thank-you.html" || url.pathname === "/pay-thank-you") return pass("public-pay-thank-you-page");
+
+  // square-webhook.js - called by Square itself, never by a browser. There
+  // is no session/API key to check here at all; the file's own HMAC
+  // signature verification IS the auth for this route, so it's exempted
+  // from the login gate entirely rather than trying to also gate it here.
+  if (url.pathname === "/api/square-webhook") return pass("public-square-webhook");
+
   if (!env.DB) return pass("no-db");
 
   let cfg = null;
