@@ -82,7 +82,12 @@ export async function onRequest(context) {
       bodyHtml = `<p>Hi ${name},</p>
         <p>Just a quick update - the artwork for order <strong>${escapeHtml(docNumber)}</strong> has been approved and we're moving ahead with production.</p>
         <p>We'll let you know as it progresses.</p>`;
-    } else if (/order|garment/.test(lowerTitle)) {
+      // Was `/order|garment/` - "order" alone also matched "Order
+      // collected" (any title containing the word "order" at all), so that
+      // step's notification, if it ever fired, went out under this
+      // "Garments ordered" wording instead of its own. "garment" is unique
+      // enough to the real default title not to need the broader match.
+    } else if (/garment/.test(lowerTitle)) {
       subject = `Garments ordered - ${docNumber}`;
       heading = "Your garments are on order";
       bodyHtml = `<p>Hi ${name},</p>

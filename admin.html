@@ -7262,10 +7262,17 @@
       try {
         // Only now actually mark "Order collected" done - it was withheld
         // until a time was chosen (see toggleStepDone), so cancelling this
-        // popup leaves the step untouched.
+        // popup leaves the step untouched. notify_customer is forced false
+        // here rather than omitted - the server falls back to whatever was
+        // already stored on the step when the field is left out, and that
+        // could be true if the (supposedly inert) 📧 toggle next to this
+        // step was ever ticked, which used to email the customer a plain
+        // step-update instead of - or as well as - the actual review
+        // request below. This step's only real customer touchpoint is that
+        // review request, never the generic per-step notification.
         await fetch(API_PRODUCTION_STEPS_URL, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: stepId, status: 'done' }),
+          body: JSON.stringify({ id: stepId, status: 'done', notify_customer: false }),
         });
         const res = await fetch('/api/review-requests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7828,12 +7835,14 @@
           : '<div class="w-6 h-6 rounded-full border-2 border-slate-300 shrink-0"></div>';
         const titleCls = isDone ? 'text-slate-400 line-through' : isCurrent ? 'text-slate-900 font-semibold' : 'text-slate-500';
         // Shown on every step, including "Order collected", for a
-        // consistent row - it just doesn't do anything for that one step,
-        // since ticking it done always opens the review-request scheduling
-        // popup instead of the plain per-step notify (see toggleStepDone).
+        // consistent row - genuinely disabled for that one step now (used
+        // to just be undocumented-inert while still ticking, which let it
+        // silently email the customer via schedulePickupReview's fallback
+        // to whatever was stored here - see the comment there). That step's
+        // only real customer touchpoint is the review-request popup.
         const notifyToggle = `
-                <label title="${isCollectedStep ? "Not used for this step - ticking it done opens the review-request scheduling popup instead" : 'Email the customer automatically when this step is marked done'}" class="flex items-center gap-1 text-xs text-slate-500 px-1">
-                  <input type="checkbox" ${s.notify_customer ? 'checked' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
+                <label title="${isCollectedStep ? "Not used for this step - ticking it done opens the review-request scheduling popup instead" : 'Email the customer automatically when this step is marked done'}" class="flex items-center gap-1 text-xs ${isCollectedStep ? 'text-slate-300' : 'text-slate-500'} px-1">
+                  <input type="checkbox" ${s.notify_customer ? 'checked' : ''} ${isCollectedStep ? 'disabled' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
                   📧
                 </label>`;
         const pickupStatusHtml = isCollectedStep && order
