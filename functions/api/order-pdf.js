@@ -17,15 +17,26 @@ export async function onRequest(context) {
     });
   }
 
-  const id = new URL(request.url).searchParams.get("id");
-  if (!id) {
-    return new Response(JSON.stringify({ error: "id is required" }), {
+  const url = new URL(request.url);
+  const id = url.searchParams.get("id");
+  // ?token=X - the customer-facing path (my-orders.html's "Download PDF"),
+  // authenticated by the same pay_token/accept_token already generated for
+  // that order rather than the portal login - see functions/_middleware.js,
+  // which only exempts this route when a token is actually present. The
+  // ?id= path below is unchanged for the admin portal's own internal PDF
+  // button, still behind the normal login.
+  const token = url.searchParams.get("token");
+
+  const o = token
+    ? await db.prepare("SELECT * FROM orders WHERE pay_token = ? OR accept_token = ?").bind(token, token).first()
+    : (id ? await db.prepare("SELECT * FROM orders WHERE id = ?").bind(id).first() : null);
+
+  if (!id && !token) {
+    return new Response(JSON.stringify({ error: "id or token is required" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
-
-  const o = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(id).first();
   if (!o) {
     return new Response(JSON.stringify({ error: "Not found" }), {
       status: 404,

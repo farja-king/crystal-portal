@@ -81,6 +81,12 @@ export async function onRequest(context) {
   if (url.pathname === "/api/my-orders" && request.method === "GET" && url.searchParams.get("token")) {
     return pass("public-my-orders-token");
   }
+  // order-pdf.js's customer-facing path (my-orders.html's "Download PDF") -
+  // only exempted when a token is present; the admin portal's own ?id=
+  // path (no token) still needs the normal login, unchanged.
+  if (url.pathname === "/api/order-pdf" && request.method === "GET" && url.searchParams.get("token")) {
+    return pass("public-order-pdf-token");
+  }
 
   // square-webhook.js - called by Square itself, never by a browser. There
   // is no session/API key to check here at all; the file's own HMAC

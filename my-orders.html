@@ -105,6 +105,9 @@
           actions.push(`<a href="/api/pay-by-card?token=${encodeURIComponent(o.pay_token)}&mode=full" class="inline-flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Pay by card (${money(o.balance)})</a>`);
         }
       }
+      if (o.pdf_token) {
+        actions.push(`<a href="/api/order-pdf?token=${encodeURIComponent(o.pdf_token)}" target="_blank" class="inline-flex items-center justify-center gap-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold px-4 py-2 rounded-lg transition">⬇ Download PDF</a>`);
+      }
 
       return `
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
@@ -121,6 +124,7 @@
               ${statusBadge(o)}
             </div>
           </div>
+          ${o.items_summary ? `<p class="text-sm text-slate-600 mt-3">${escapeHtml(o.items_summary)}</p>` : ''}
           ${o.doc_type === 'invoice' && o.paid_status === 'partial' ? `<p class="text-xs text-amber-600 font-medium mt-2">${money(o.balance)} still owed of ${money(o.total)}</p>` : ''}
           ${actions.length ? `<div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-100">${actions.join('')}</div>` : ''}
         </div>`;

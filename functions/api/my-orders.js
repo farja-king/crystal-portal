@@ -49,11 +49,32 @@ export async function onRequest(context) {
     const { results: orders } = await db.prepare(`
       SELECT id, doc_type, quote_number, invoice_number, status, paid_status,
              total, amount_paid, deposit_pct, deposit_amount, created_at, due_date,
-             accept_token, pay_token
+             accept_token, pay_token, items, is_manual
       FROM orders
       WHERE customer_id = ? AND email_sent_at IS NOT NULL AND email_sent_at <> ''
       ORDER BY created_at DESC
     `).bind(customer.id).all();
+
+    // A short human-readable "what was this for" line - just labels and
+    // quantities, nothing about pricing/decorations/breakdown (that level
+    // of detail is what the PDF is for). Mirrors the label logic send-
+    // email.js's own itemised table uses, simplified down to one line per
+    // item. A manual invoice (functions/api/manual-invoice.js) has no items
+    // at all - its PDF is whatever Martin uploaded, so there's nothing to
+    // summarize here.
+    function summarizeItems(order) {
+      if (order.is_manual) return null;
+      let items;
+      try { items = JSON.parse(order.items || "[]"); } catch { return null; }
+      if (!items.length) return null;
+      return items.map((item) => {
+        const label = item.source === "catalog"
+          ? [item.supplier_code, item.title].filter(Boolean).join(" ").trim() || "Item"
+          : (item.description || item.title || "Item");
+        const qty = Number(item.qty) || 1;
+        return qty > 1 ? `${qty}× ${label}` : label;
+      }).join(", ");
+    }
 
     // Balance summary across every unpaid/partial invoice - the same figure
     // Aged Debtors computes per-customer, just scoped to this one customer
@@ -70,6 +91,12 @@ export async function onRequest(context) {
         number: o.doc_type === "invoice" ? o.invoice_number : o.quote_number,
         status: o.status, paid_status: o.paid_status,
         total: o.total, balance, created_at: o.created_at, due_date: o.due_date,
+        items_summary: summarizeItems(o),
+        // Whichever of the two this order already has, always present
+        // regardless of paid/decided status - unlike accept_token/pay_token
+        // below (which are only handed back while still actionable), a PDF
+        // should stay downloadable forever, so this never gets withheld.
+        pdf_token: o.doc_type === "invoice" ? o.pay_token : o.accept_token,
         // Only handed back when it's actually still actionable - an already
         // decided quote or fully-paid invoice has nothing to offer a button
         // for, so the page just shows its status instead.
