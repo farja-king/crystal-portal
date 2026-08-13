@@ -149,6 +149,31 @@
           </table>
         </div>
       </div>
+
+      <!-- Top-Line Analytics - "what am I actually making the most of",
+           not "how much money" (that's the tiles/chart above). All-time
+           across every real invoice (not quotes - a quote that never
+           converted isn't a sale), same "always current, ignores the date
+           range picker" reasoning as Aged Debtors/VAT above. Useful for
+           stock/pricing decisions, not a day-to-day number. -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+        <h3 class="font-bold text-slate-900 mb-1">Top-Line Analytics</h3>
+        <p class="text-xs text-slate-500 mb-4">Across every invoice ever raised - always current, not scoped to the date range above.</p>
+        <div class="grid gap-6 lg:grid-cols-3">
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Best-selling garments</h4>
+            <div id="dash-top-garments" class="space-y-2"></div>
+          </div>
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Decoration methods</h4>
+            <div id="dash-top-decorations" class="space-y-2"></div>
+          </div>
+          <div>
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Busiest months</h4>
+            <div id="dash-busiest-months" class="space-y-2"></div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- QUOTES TAB -->
@@ -9959,6 +9984,7 @@
       renderDashboardTopCustomers(paymentsInRange);
       renderAgedDebtors();
       renderVatTracker();
+      renderTopLineAnalytics();
     }
 
     // VAT threshold tracker - HMRC looks at a rolling 12-month total, not a
@@ -9994,6 +10020,107 @@
         note.textContent = `${money(remaining)} of headroom left on a rolling 12-month basis.`;
         note.className = 'text-xs text-slate-500 mt-2';
       }
+    }
+
+    // Top-Line Analytics - "what am I actually making the most of", the one
+    // question the revenue tiles/chart above never answer. All-time, across
+    // every real invoice only (a quote that never converted isn't a sale,
+    // so it's excluded rather than skewing "best-selling" toward things
+    // nobody actually bought). A manual invoice (functions/api/manual-
+    // invoice.js) has no items to break down - it still counts for
+    // "busiest months" (real business happened), just contributes nothing
+    // to the garment/decoration lists.
+    function computeTopLineAnalytics() {
+      const invoices = dashboardOrders.filter((o) => o.doc_type === 'invoice');
+      const garmentQty = {};
+      const decorationQty = {};
+      const monthCount = {};
+
+      invoices.forEach((o) => {
+        const created = new Date(o.created_at);
+        if (!isNaN(created)) {
+          const monthKey = created.getFullYear() + '-' + String(created.getMonth() + 1).padStart(2, '0');
+          monthCount[monthKey] = (monthCount[monthKey] || 0) + 1;
+        }
+
+        // dashboardOrders comes from orders.js's ?all=1 GET, which already
+        // parses items into a real array server-side - re-JSON.parse-ing it
+        // here would throw (or silently coerce to garbage) since it's not
+        // a string anymore.
+        const items = Array.isArray(o.items) ? o.items : [];
+        items.forEach((item) => {
+          const label = item.source === 'catalog'
+            ? [item.supplier_code, item.title].filter(Boolean).join(' ').trim() || 'Item'
+            : (item.description || item.title || "Customer's own item");
+          const qty = Number(item.qty) || 0;
+          garmentQty[label] = (garmentQty[label] || 0) + qty;
+
+          const decorations = [];
+          (item.breakdown || []).forEach((b) => (b.decorations || []).forEach((d) => decorations.push(d)));
+          (item.decorations || []).forEach((d) => decorations.push(d));
+          decorations.forEach((d) => {
+            const methodLabel = METHOD_LABELS[d.method] || d.method || 'Other';
+            const dqty = Number(d.qty) || 1;
+            decorationQty[methodLabel] = (decorationQty[methodLabel] || 0) + dqty;
+          });
+        });
+      });
+
+      return { garmentQty, decorationQty, monthCount };
+    }
+
+    function dashBarList(el, entries, formatLabel, unitLabel) {
+      if (!entries.length) {
+        el.innerHTML = '<p class="text-sm text-slate-400">Nothing yet.</p>';
+        return;
+      }
+      const max = entries[0][1];
+      el.innerHTML = entries.map(([label, value]) => `
+        <div>
+          <div class="flex items-center justify-between text-sm mb-1">
+            <span class="text-slate-700 truncate pr-2">${escapeHtml(formatLabel(label))}</span>
+            <span class="text-slate-500 font-medium shrink-0">${value}${unitLabel || ''}</span>
+          </div>
+          <div class="w-full bg-slate-100 rounded-full h-1.5">
+            <div class="bg-indigo-500 h-1.5 rounded-full" style="width:${max ? (value / max * 100) : 0}%"></div>
+          </div>
+        </div>`).join('');
+    }
+
+    function renderTopLineAnalytics() {
+      const garmentsEl = document.getElementById('dash-top-garments');
+      const decorationsEl = document.getElementById('dash-top-decorations');
+      const monthsEl = document.getElementById('dash-busiest-months');
+      if (!garmentsEl || !decorationsEl || !monthsEl) return;
+
+      const { garmentQty, decorationQty, monthCount } = computeTopLineAnalytics();
+
+      const topGarments = Object.entries(garmentQty).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      dashBarList(garmentsEl, topGarments, (l) => l, '×');
+
+      const topDecorations = Object.entries(decorationQty).sort((a, b) => b[1] - a[1]);
+      dashBarList(decorationsEl, topDecorations, (l) => l, '×');
+
+      // Last 12 calendar months, oldest first, zero-filled - a quiet month
+      // should show as a flat bar, not just be missing from the list.
+      const now = new Date();
+      const months = [];
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+        months.push([d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }), monthCount[key] || 0]);
+      }
+      const maxMonth = Math.max(1, ...months.map((m) => m[1]));
+      monthsEl.innerHTML = months.map(([label, value]) => `
+        <div>
+          <div class="flex items-center justify-between text-sm mb-1">
+            <span class="text-slate-700">${escapeHtml(label)}</span>
+            <span class="text-slate-500 font-medium">${value}</span>
+          </div>
+          <div class="w-full bg-slate-100 rounded-full h-1.5">
+            <div class="bg-emerald-500 h-1.5 rounded-full" style="width:${value / maxMonth * 100}%"></div>
+          </div>
+        </div>`).join('');
     }
 
     // Aged Debtors - a proper accounting breakdown of every unpaid/partial
