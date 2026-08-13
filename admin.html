@@ -9827,15 +9827,79 @@
       if (!panel) return;
       panel.classList.toggle('hidden');
       if (!panel.classList.contains('hidden')) {
-        panel.innerHTML = `
-          <div class="relative">
-            <input id="inbox-cust-picker-search-${escapeAttr(id)}" type="text" autocomplete="off" placeholder="Search customers by name, company, email or phone…"
-                   oninput="searchInboxCustomerPicker('${escapeAttr(id)}', this.value); toggleSearchClear(this)"
-                   class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
-            <button type="button" onclick="clearSearchField('inbox-cust-picker-search-${escapeAttr(id)}')" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
-          </div>
-        <div id="inbox-cust-picker-results-${escapeAttr(id)}" class="mt-2 max-h-48 overflow-y-auto"></div>`;
+        renderInboxCustomerSearchForm(id);
         document.getElementById('inbox-cust-picker-search-' + id).focus();
+      }
+    }
+
+    function renderInboxCustomerSearchForm(id) {
+      const panel = document.getElementById('inbox-customer-picker-' + id);
+      if (!panel) return;
+      panel.innerHTML = `
+        <div class="relative">
+          <input id="inbox-cust-picker-search-${escapeAttr(id)}" type="text" autocomplete="off" placeholder="Search customers by name, company, email or phone…"
+                 oninput="searchInboxCustomerPicker('${escapeAttr(id)}', this.value); toggleSearchClear(this)"
+                 class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+          <button type="button" onclick="clearSearchField('inbox-cust-picker-search-${escapeAttr(id)}')" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+        </div>
+        <button type="button" onclick="showInboxNewCustomerForm('${escapeAttr(id)}')" class="mt-2 text-xs text-indigo-600 hover:underline font-medium">+ New customer instead</button>
+      <div id="inbox-cust-picker-results-${escapeAttr(id)}" class="mt-2 max-h-48 overflow-y-auto"></div>`;
+    }
+
+    // Not every sender of a new enquiry is already on file - this is the
+    // other half of "+ Add to Customer" for exactly that case, so a
+    // brand-new lead emailing in doesn't have to be created from scratch
+    // over in the Customer Directory tab and then found again back here.
+    // Pre-filled from the email itself; creating attaches this email to the
+    // new record in the same step, same as picking an existing match does.
+    function showInboxNewCustomerForm(id) {
+      const panel = document.getElementById('inbox-customer-picker-' + id);
+      if (!panel) return;
+      const e = inboxById[id];
+      const guessedName = (e && e.from_name) ? e.from_name : '';
+      const guessedEmail = (e && e.from_address) ? e.from_address : '';
+      panel.innerHTML = `
+        <p class="text-xs font-semibold text-slate-500 mb-2">New customer</p>
+        <div class="grid gap-2 sm:grid-cols-2">
+          <input id="inbox-newcust-name-${escapeAttr(id)}" type="text" placeholder="Name" value="${escapeAttr(guessedName)}" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="inbox-newcust-company-${escapeAttr(id)}" type="text" placeholder="Company (optional)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="inbox-newcust-email-${escapeAttr(id)}" type="email" placeholder="Email" value="${escapeAttr(guessedEmail)}" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+          <input id="inbox-newcust-phone-${escapeAttr(id)}" type="tel" placeholder="Phone (optional)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        </div>
+        <div class="flex gap-2 mt-2">
+          <button type="button" onclick="createInboxCustomer('${escapeAttr(id)}')" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-semibold">Create &amp; attach</button>
+          <button type="button" onclick="renderInboxCustomerSearchForm('${escapeAttr(id)}')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">Back to search</button>
+        </div>
+        <p id="inbox-newcust-msg-${escapeAttr(id)}" class="text-xs text-red-600 mt-1"></p>`;
+      document.getElementById('inbox-newcust-name-' + id).focus();
+    }
+
+    async function createInboxCustomer(id) {
+      const name = document.getElementById('inbox-newcust-name-' + id).value.trim();
+      const msg = document.getElementById('inbox-newcust-msg-' + id);
+      if (!name) { msg.textContent = 'Name is required.'; return; }
+
+      const customerId = crypto.randomUUID();
+      const payload = {
+        id: customerId,
+        name,
+        company: document.getElementById('inbox-newcust-company-' + id).value.trim(),
+        email: document.getElementById('inbox-newcust-email-' + id).value.trim(),
+        phone: document.getElementById('inbox-newcust-phone-' + id).value.trim(),
+        type: 'Retail',
+        discount_pct: 0,
+      };
+      try {
+        const res = await fetch(API_CUSTOMERS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || 'Failed to create customer');
+        customersById[customerId] = payload;
+        allCustomers.push(payload);
+        await saveInboxEmailToCustomer(id, customerId);
+        showActionToast('✓', `Created "${name}" and attached this email.`);
+      } catch (e) {
+        msg.textContent = e.message;
       }
     }
 
