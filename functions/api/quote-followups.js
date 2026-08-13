@@ -137,7 +137,8 @@ export async function onRequest(context) {
         bodyHtml: `<p>Hi ${escapeHtml(order.customer_name)},</p>
           <p>We sent over quote <strong>${escapeHtml(order.quote_number)}</strong> (${money(order.total)}) a little while ago and wanted to check you're still interested.</p>
           <p>No pressure at all - just let us know if you'd like to go ahead, need any changes, or the timing's just not right anymore.</p>
-          ${acceptUrl ? `<div style="margin:20px 0;"><a href="${acceptUrl}" style="display:inline-block;background:#059669;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;">Accept &amp; Confirm</a></div>` : ""}`,
+          ${acceptUrl ? `<div style="margin:20px 0;"><a href="${acceptUrl}" style="display:inline-block;background:#059669;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;">Accept &amp; Confirm</a></div>` : ""}
+          <p style="font-size:13px;"><a href="https://wa.me/447530576197?text=Hi%2C%20about%20quote%20${encodeURIComponent(order.quote_number || "")}." style="color:#4f46e5;">Or message us on WhatsApp</a></p>`,
         ctaColor: "#4f46e5",
       });
 

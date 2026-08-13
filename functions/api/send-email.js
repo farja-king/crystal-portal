@@ -232,7 +232,8 @@ export async function onRequest(context) {
           </div>` : ""}
           ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
           ${myOrdersUrl ? `<p style="margin-top:20px;font-size:13px;"><a href="${myOrdersUrl}" style="color:#4f46e5;">View all your orders</a></p>` : ""}
-          <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
+          <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery<br>
+            <a href="https://wa.me/447530576197?text=Hi%2C%20I%20have%20a%20question%20about%20${encodeURIComponent(docNumber || "")}." style="color:#4f46e5;">Message us on WhatsApp</a></p>
         </div>`;
 
       let pdfAttachment = null;
@@ -413,7 +414,8 @@ export async function onRequest(context) {
         </div>
         ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
         ${myOrdersUrl ? `<p style="margin-top:20px;font-size:13px;"><a href="${myOrdersUrl}" style="color:#4f46e5;">View all your orders</a></p>` : ""}
-        <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery</p>
+        <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery<br>
+          <a href="https://wa.me/447530576197?text=Hi%2C%20I%20have%20a%20question%20about%20${encodeURIComponent(docNumber || "")}." style="color:#4f46e5;">Message us on WhatsApp</a></p>
       </div>`;
 
     const subject = `${docLabel} ${docNumber} from Crystal Custom Embroidery`;

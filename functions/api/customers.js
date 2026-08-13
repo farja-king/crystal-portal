@@ -229,6 +229,20 @@ export async function onRequest(context) {
         return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       }
 
+      // Same lazy-generation pattern as accept_token/pay_token in
+      // send-email.js, just triggered from the admin side instead - the
+      // "💬 WhatsApp" button (admin.html) needs this customer's My Orders
+      // link before it can build the wa.me message, and a customer who's
+      // never been emailed anything yet won't have one otherwise.
+      if (data.action === "ensure_portal_token") {
+        let portalToken = existing.portal_token;
+        if (!portalToken) {
+          portalToken = crypto.randomUUID();
+          await db.prepare("UPDATE customers SET portal_token = ? WHERE id = ?").bind(portalToken, data.id).run();
+        }
+        return new Response(JSON.stringify({ success: true, portal_token: portalToken }), { headers: corsHeaders });
+      }
+
       await db.prepare(`
         UPDATE customers
         SET name = ?, company = ?, email = ?, phone = ?, type = ?, discount_pct = ?, notes = ?,

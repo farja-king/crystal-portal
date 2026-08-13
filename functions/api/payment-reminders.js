@@ -119,7 +119,8 @@ export async function onRequest(context) {
         bodyHtml: `<p>Hi ${escapeHtml(order.customer_name)},</p>
           <p>Just a friendly reminder that invoice <strong>${escapeHtml(order.invoice_number)}</strong> - ${owedLine} -
              ${order.due_date ? `was due on ${escapeHtml(order.due_date)}` : "is now overdue"} and ${stillShowsLine}.</p>
-          <p>If you've already paid this, please let us know so we can update it - otherwise we'd appreciate payment at your earliest convenience.</p>`,
+          <p>If you've already paid this, please let us know so we can update it - otherwise we'd appreciate payment at your earliest convenience.</p>
+          <p style="font-size:13px;"><a href="https://wa.me/447530576197?text=Hi%2C%20about%20invoice%20${encodeURIComponent(order.invoice_number || "")}." style="color:#4f46e5;">Or message us on WhatsApp</a></p>`,
         ctaColor: "#d97706",
       });
 

@@ -7536,6 +7536,7 @@
           actions.push(`<button onclick="printOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Print</button>`);
           actions.push(`<a href="${API_ORDER_PDF_URL}?id=${escapeAttr(o.id)}" target="_blank" title="Download a PDF copy - the same file that goes out with the emailed copy" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">PDF</a>`);
           actions.push(`<button id="email-order-btn-${o.id}" onclick="emailOrder('${o.id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Email ${isInvoice ? 'Invoice' : 'Quote'}</button>`);
+          actions.push(`<button onclick="sendOrderViaWhatsApp('${escapeAttr(o.id)}')" title="Opens WhatsApp with a message pre-filled - you send it yourself, nothing goes out automatically" class="bg-white border border-slate-300 hover:bg-slate-50 text-emerald-700 px-3 py-1 rounded text-xs font-semibold">💬 WhatsApp</button>`);
           actions.push(`<button onclick="openArchiveChoice('${escapeAttr(o.id)}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Archive</button>`);
           actions.push(`<button onclick="deleteOrder('${o.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold">Delete</button>`);
 
@@ -9339,6 +9340,62 @@
     // other outcome (cancelled prompt, blank address, send failure) - lets
     // a caller like saveAndSendNewQuoteProof tell the difference between
     // "sent" and "not sent" instead of just firing-and-forgetting this.
+    // Converts a UK-ish phone number as typed into the Customer Directory
+    // (07530 576197, +44 7530 576197, 447530576197, with or without
+    // spaces/dashes) into the plain-digits, country-code-prefixed format
+    // wa.me requires. Not a general international parser - good enough for
+    // "mostly UK customers", same assumption the rest of this codebase
+    // already makes (no international dialling code handling anywhere else
+    // either).
+    function whatsappNumber(raw) {
+      let digits = String(raw || '').replace(/\D/g, '');
+      if (!digits) return null;
+      if (digits.startsWith('0')) digits = '44' + digits.slice(1);
+      else if (!digits.startsWith('44')) digits = '44' + digits; // assume a bare UK number with no leading 0
+      return digits;
+    }
+
+    // "Send via WhatsApp" - the other half of the Email button next to it.
+    // Opens wa.me with a message pre-filled and their My Orders link
+    // (ensuring that customer actually has one first, same lazy-token
+    // pattern as accept_token/pay_token) - Martin still has to hit Send
+    // himself in WhatsApp, nothing here sends anything automatically. No
+    // dedicated business number/API involved at all, see the conversation
+    // that led to this: his own personal WhatsApp, exactly like the wa.me
+    // link already on the main website, just addressed outbound to a
+    // customer instead of inbound to him.
+    async function sendOrderViaWhatsApp(id) {
+      const o = ordersById[id];
+      if (!o) return;
+      const customer = o.customer_id ? customersById[o.customer_id] : null;
+      const phone = customer ? customer.phone : '';
+      const waNumber = whatsappNumber(phone);
+      if (!waNumber) {
+        showActionToast('⚠', 'No phone number on file for this customer - add one in the Customer Directory first.');
+        return;
+      }
+
+      const docLabel = o.doc_type === 'invoice' ? 'invoice' : 'quote';
+      const docNumber = o.invoice_number || o.quote_number;
+      const firstName = (o.customer_name || '').split(' ')[0] || 'there';
+
+      let myOrdersUrl = '';
+      try {
+        const res = await fetch(API_CUSTOMERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: o.customer_id, action: 'ensure_portal_token' }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) myOrdersUrl = `${location.origin}/my-orders.html?token=${data.portal_token}`;
+      } catch (e) {
+        // Falls through with no link below - still opens WhatsApp with a
+        // plain text message rather than blocking the whole thing.
+      }
+
+      const text = `Hi ${firstName}, here's your ${docLabel} ${docNumber} (${money(o.total)})${myOrdersUrl ? ` - you can view${o.doc_type === 'invoice' ? ' and pay' : ' and accept'} it here: ${myOrdersUrl}` : '.'}`;
+      window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`, '_blank');
+    }
+
     async function emailOrder(id, silent) {
       const o = ordersById[id];
       if (!o) return false;
