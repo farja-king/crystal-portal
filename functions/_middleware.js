@@ -88,6 +88,16 @@ export async function onRequest(context) {
     return pass("public-order-pdf-token");
   }
 
+  // request-quote.html and its form submission (functions/api/quote-requests.js)
+  // - a brand new lead, not scoped to any existing token at all (there's
+  // nothing to be scoped to yet). Only the page itself and a POST are
+  // public; GET/PUT on the API (the admin-only Incoming Requests panel)
+  // fall through to the normal login gate below, unchanged.
+  if (url.pathname === "/request-quote.html" || url.pathname === "/request-quote") return pass("public-request-quote-page");
+  if (url.pathname === "/api/quote-requests" && request.method === "POST") {
+    return pass("public-quote-request-submission");
+  }
+
   // square-webhook.js - called by Square itself, never by a browser. There
   // is no session/API key to check here at all; the file's own HMAC
   // signature verification IS the auth for this route, so it's exempted

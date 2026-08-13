@@ -32,8 +32,9 @@
           <button id="tab-services" onclick="switchTab('services')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Services
           </button>
-          <button id="tab-orders" onclick="switchTab('orders')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+          <button id="tab-orders" onclick="switchTab('orders')" class="relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Quotes & Invoices
+            <span id="quote-requests-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
           </button>
           <button id="tab-proofs" onclick="switchTab('proofs')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Design Proofs
@@ -841,6 +842,18 @@
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Incoming requests from the public "Request a Quote" form
+           (request-quote.html / functions/api/quote-requests.js) - a brand
+           new lead, not yet a real priced quote. "Start Quote" opens the
+           normal New Quote builder pre-filled with their customer record
+           and message; the actual garment lines/pricing is still Martin's
+           own manual work either way, same as any other quote. -->
+      <div id="quote-requests-panel" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+        <h3 class="font-bold text-slate-900 mb-1">📥 Incoming Requests</h3>
+        <p class="text-xs text-slate-500 mb-4">Submitted via the public "Request a Quote" form on the website.</p>
+        <div id="quote-requests-list" class="space-y-3"></div>
       </div>
 
       <!-- Auto-chases unpaid invoices by email once their due date is this
@@ -7323,6 +7336,87 @@
       }
     }
 
+    // ========================== Incoming Quote Requests ====================
+    // Leads from the public "Request a Quote" form - see request-quote.html
+    // and functions/api/quote-requests.js. Loaded on every page load (not
+    // just when the Quotes & Invoices tab is opened) so the nav badge stays
+    // current, same pattern as the Inbox's unread badge.
+    let quoteRequestsById = {};
+
+    async function loadQuoteRequests() {
+      try {
+        const res = await fetch('/api/quote-requests', { cache: 'no-store' });
+        const rows = await res.json();
+        quoteRequestsById = {};
+        (rows || []).forEach((r) => { quoteRequestsById[r.id] = r; });
+        renderQuoteRequestsList(rows || []);
+        const newCount = (rows || []).filter((r) => r.status === 'new').length;
+        const badge = document.getElementById('quote-requests-badge');
+        if (badge) {
+          badge.textContent = newCount > 99 ? '99+' : String(newCount);
+          badge.classList.toggle('hidden', newCount === 0);
+        }
+      } catch (e) {
+        // Off-tab background refresh failing silently is fine - the panel
+        // itself shows nothing worse than "still showing the last good
+        // list" until the next successful poll.
+      }
+    }
+
+    function renderQuoteRequestsList(rows) {
+      const panel = document.getElementById('quote-requests-panel');
+      const list = document.getElementById('quote-requests-list');
+      if (!panel || !list) return;
+      panel.classList.toggle('hidden', rows.length === 0);
+      if (!rows.length) return;
+
+      list.innerHTML = rows.map((r) => `
+        <div class="border ${r.status === 'new' ? 'border-indigo-200 bg-indigo-50/40' : 'border-slate-200'} rounded-lg p-3">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <span class="font-semibold text-slate-900">${escapeHtml(r.name)}</span>${r.company ? ` <span class="text-slate-500">- ${escapeHtml(r.company)}</span>` : ''}
+              ${r.status === 'new' ? '<span class="ml-2 px-2 py-0.5 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-700">New</span>' : r.status === 'contacted' ? '<span class="ml-2 px-2 py-0.5 text-xs font-semibold rounded-full bg-slate-200 text-slate-600">Contacted</span>' : ''}
+              <div class="text-xs text-slate-500 mt-0.5">${[r.email, r.phone].filter(Boolean).map(escapeHtml).join(' · ')} · ${escapeHtml(ukDate(r.created_at))}</div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button onclick="startQuoteFromRequest('${escapeAttr(r.id)}')" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded font-semibold">Start Quote</button>
+              ${r.status !== 'contacted' ? `<button onclick="markQuoteRequestStatus('${escapeAttr(r.id)}', 'contacted')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1 rounded font-semibold">Mark contacted</button>` : ''}
+              <button onclick="markQuoteRequestStatus('${escapeAttr(r.id)}', 'dismissed')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-2.5 py-1 rounded font-semibold">Dismiss</button>
+            </div>
+          </div>
+          <p class="text-sm text-slate-600 mt-2 whitespace-pre-line">${escapeHtml(r.message)}</p>
+        </div>`).join('');
+    }
+
+    async function markQuoteRequestStatus(id, status) {
+      try {
+        await fetch('/api/quote-requests', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, status }),
+        });
+        loadQuoteRequests();
+      } catch (e) {
+        showActionToast('⚠', 'Could not update: ' + e.message);
+      }
+    }
+
+    // Opens the normal New Quote builder pre-filled with this request's
+    // customer (already created/matched by email when they submitted the
+    // form - see quote-requests.js) and their message dropped into Notes,
+    // so Martin picks up from a blank canvas with the context already
+    // there instead of retyping contact details. Marks the request
+    // contacted, same as if he'd clicked that button by hand.
+    function startQuoteFromRequest(id) {
+      const r = quoteRequestsById[id];
+      if (!r) return;
+      openNewOrderBuilder('quote');
+      if (r.customer_id && customersById[r.customer_id]) {
+        selectOrderCustomer(r.customer_id);
+      }
+      document.getElementById('ord-notes').value = r.message || '';
+      if (r.status !== 'contacted') markQuoteRequestStatus(id, 'contacted');
+    }
+
     async function loadOrders() {
       ordersLoaded = true;
       loadReminderDays();
@@ -10150,6 +10244,8 @@
     refreshAuthState();
     loadInbox();
     setInterval(loadInbox, 60000); // keeps the unread badge current even off the Inbox tab
+    loadQuoteRequests();
+    setInterval(loadQuoteRequests, 60000); // keeps the badge current even off the Quotes & Invoices tab
   </script>
 </body>
 </html>
