@@ -858,6 +858,9 @@ export async function onRequest(context) {
       try {
         await db.prepare(`DELETE FROM email_log WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
       } catch { /* email_log table doesn't exist yet - nothing to clean up */ }
+      try {
+        await db.prepare(`DELETE FROM order_events WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
+      } catch { /* order_events table doesn't exist yet - nothing to clean up */ }
     }
 
     if (request.method === "DELETE") {
