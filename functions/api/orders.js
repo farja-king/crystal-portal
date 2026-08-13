@@ -8,7 +8,7 @@
 // this file - total is subtotal minus discount, full stop. Don't add a VAT
 // column here by analogy with products.js; that VAT is what Martin pays
 // suppliers (a cost), not something charged to his customers.
-import { logOrderEvent } from "../_lib/order-events.js";
+import { logOrderEvent, ensureOrderEventsTable } from "../_lib/order-events.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -611,6 +611,82 @@ export async function onRequest(context) {
           ON CONFLICT(name) DO UPDATE SET value = excluded.value
         `).bind(value).run();
         return json({ success: true, value });
+      }
+
+      // One-off backfill for the Activity Timeline (functions/_lib/order-
+      // events.js) - a real order predating that feature has no history
+      // there at all, even though the history genuinely exists, just
+      // scattered across orders/email_log/payments/production_steps. Skips
+      // any order that already has at least one event (either already
+      // backfilled, or has picked up live-tracked events since) - safe to
+      // click more than once, admin.html's button for this is in the
+      // Quotes & Invoices toolbar. Timestamps are normalized to the same
+      // "YYYY-MM-DD HH:MM:SS" shape CURRENT_TIMESTAMP produces (what every
+      // live-tracked event already uses) rather than left as whatever
+      // format each source column happened to store - a plain text ORDER
+      // BY created_at would otherwise sort a "2026-01-01 10:00:00" row
+      // after a same-instant "2026-01-01T10:00:00.000Z" one, since ' ' <
+      // 'T' is false lexicographically the wrong way round.
+      if (data.action === "backfill_events") {
+        await ensureOrderEventsTable(db);
+        const normalizeTs = (raw) => {
+          if (!raw) return null;
+          const d = new Date(raw.includes("T") ? raw : raw.replace(" ", "T") + "Z");
+          return isNaN(d) ? null : d.toISOString().slice(0, 19).replace("T", " ");
+        };
+
+        const { results: allOrders } = await db.prepare("SELECT * FROM orders").all();
+        let ordersBackfilled = 0;
+        let eventsInserted = 0;
+        for (const o of allOrders) {
+          const already = await db.prepare("SELECT id FROM order_events WHERE order_id = ? LIMIT 1").bind(o.id).first();
+          if (already) continue;
+
+          const rows = [];
+          const push = (type, label, rawTs) => {
+            const ts = normalizeTs(rawTs);
+            if (ts) rows.push({ type, label, ts });
+          };
+
+          push("created", o.quote_number ? `Quote ${o.quote_number} created` : `Invoice ${o.invoice_number} created`, o.created_at);
+          if (o.quote_number && o.doc_type === "invoice" && o.invoiced_at) {
+            push("converted", `Converted to invoice ${o.invoice_number}`, o.invoiced_at);
+          }
+
+          const { results: emails } = await db.prepare(
+            "SELECT sent_to, sent_at FROM email_log WHERE order_id = ? ORDER BY sent_at ASC"
+          ).bind(o.id).all();
+          emails.forEach((e) => push("sent", `Emailed to ${e.sent_to}`, e.sent_at));
+
+          const { results: pays } = await db.prepare(
+            "SELECT amount, method, received_at, square_payment_id FROM payments WHERE order_id = ? ORDER BY received_at ASC"
+          ).bind(o.id).all();
+          pays.forEach((p) => {
+            const amt = Number(p.amount);
+            if (amt < 0) push("refunded", `Refunded £${Math.abs(amt).toFixed(2)}${p.method ? " via " + p.method : ""}`, p.received_at);
+            else if (p.square_payment_id) push("payment_via_card", `Paid £${amt.toFixed(2)} by card via Square`, p.received_at);
+            else push("payment_recorded", `Payment recorded: £${amt.toFixed(2)}${p.method ? " (" + p.method + ")" : ""}`, p.received_at);
+          });
+
+          const { results: steps } = await db.prepare(
+            "SELECT title, completed_at FROM production_steps WHERE order_id = ? AND status = 'done' AND completed_at IS NOT NULL ORDER BY completed_at ASC"
+          ).bind(o.id).all();
+          steps.forEach((s) => push("production_step", `Production: ${s.title}`, s.completed_at));
+
+          if (o.last_reminder_sent_at) push("reminder_sent", "Payment reminder emailed", o.last_reminder_sent_at);
+          if (o.followup_sent_at) push("followup_sent", "Stale-quote follow-up emailed", o.followup_sent_at);
+          if (o.archived_at) push("archived", "Archived", o.archived_at);
+
+          if (!rows.length) continue;
+          for (const r of rows) {
+            await db.prepare(
+              "INSERT INTO order_events (id, order_id, type, label, created_at) VALUES (?, ?, ?, ?, ?)"
+            ).bind(crypto.randomUUID(), o.id, r.type, r.label, r.ts).run();
+            eventsInserted++;
+          }
+          ordersBackfilled++;
+        }
+        return json({ success: true, orders_backfilled: ordersBackfilled, events_inserted: eventsInserted });
       }
 
       const existing = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.id).first();

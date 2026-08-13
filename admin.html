@@ -858,6 +858,9 @@
           <button onclick="cleanUpOrphanedProofs()" title="Design proof files left over from quotes deleted before this cleanup existed - a one-off backlog, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🧹 Clean Up Old Files
           </button>
+          <button onclick="backfillOrderTimeline()" title="Rebuilds the Activity Timeline for every order that predates that feature, from history that already exists (email log, payments, production steps). Safe to click more than once - only fills in orders with no timeline yet." class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            📜 Backfill Timeline
+          </button>
           <div class="flex flex-col gap-2">
             <button onclick="resetInvoiceCounter()" title="Only changes where the NEXT invoice number starts counting from - doesn't touch, renumber, or delete any existing invoice" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
               🔢 Renumber Invoices
@@ -9208,6 +9211,30 @@
     // DELETE (design-proofs.js/production-steps.js/design-files.js) -
     // entirely separate tables and storage prefixes, checked together here
     // purely so there's one button and one report instead of three.
+    // One-off backfill for the Activity Timeline - see the "backfill_events"
+    // PUT action in functions/api/orders.js for what it actually does
+    // (rebuilds history from email_log/payments/production_steps for every
+    // order that has no timeline entries yet). Safe to click repeatedly;
+    // an order that already has events, live-tracked or previously
+    // backfilled, is left untouched.
+    async function backfillOrderTimeline() {
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'backfill_events' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Backfill failed');
+        if (!data.orders_backfilled) {
+          showActionToast('✓', 'Nothing to backfill - every order already has a timeline.');
+        } else {
+          showActionToast('✓', `Backfilled ${data.events_inserted} event(s) across ${data.orders_backfilled} order(s).`);
+        }
+      } catch (e) {
+        showActionToast('⚠', 'Could not backfill: ' + e.message);
+      }
+    }
+
     async function cleanUpOrphanedProofs() {
       const SOURCES = [
         { label: 'design proof/mockup', url: API_DESIGN_PROOFS_URL, param: 'orphaned', purgeAction: 'purge_orphaned', nameOf: (r) => `${r.filename} (v${r.version})` },
