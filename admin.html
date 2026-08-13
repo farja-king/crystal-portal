@@ -158,7 +158,7 @@
            stock/pricing decisions, not a day-to-day number. -->
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
         <h3 class="font-bold text-slate-900 mb-1">Top-Line Analytics</h3>
-        <p class="text-xs text-slate-500 mb-4">Across every invoice ever raised - always current, not scoped to the date range above.</p>
+        <p class="text-xs text-slate-500 mb-4">Across every paid invoice - always current, not scoped to the date range above.</p>
         <div class="grid gap-6 lg:grid-cols-3">
           <div>
             <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Best-selling garments</h4>
@@ -10024,14 +10024,16 @@
 
     // Top-Line Analytics - "what am I actually making the most of", the one
     // question the revenue tiles/chart above never answer. All-time, across
-    // every real invoice only (a quote that never converted isn't a sale,
-    // so it's excluded rather than skewing "best-selling" toward things
-    // nobody actually bought). A manual invoice (functions/api/manual-
-    // invoice.js) has no items to break down - it still counts for
-    // "busiest months" (real business happened), just contributes nothing
-    // to the garment/decoration lists.
+    // every PAID invoice only - deliberately not just "invoice vs quote"
+    // (a quote that never converted isn't a sale, but neither is an unpaid
+    // invoice sitting there unconfirmed) - this is "what have I actually
+    // sold and been paid for", not "what have I produced regardless of
+    // whether it's been paid for yet". A manual invoice (functions/api/
+    // manual-invoice.js) has no items to break down - it still counts for
+    // "busiest months" once paid, just contributes nothing to the garment/
+    // decoration lists.
     function computeTopLineAnalytics() {
-      const invoices = dashboardOrders.filter((o) => o.doc_type === 'invoice');
+      const invoices = dashboardOrders.filter((o) => o.doc_type === 'invoice' && o.paid_status === 'paid');
       const garmentQty = {};
       const decorationQty = {};
       const monthCount = {};
