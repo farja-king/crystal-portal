@@ -8,6 +8,8 @@
 // this file - total is subtotal minus discount, full stop. Don't add a VAT
 // column here by analogy with products.js; that VAT is what Martin pays
 // suppliers (a cost), not something charged to his customers.
+import { logOrderEvent } from "../_lib/order-events.js";
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -448,6 +450,23 @@ export async function onRequest(context) {
         ).bind(paymentsFor).all();
         return json(results);
       }
+      // ?events_for=X -> the Activity Timeline for one order (see
+      // functions/_lib/order-events.js, written to by every file that
+      // touches an order's lifecycle) - chronological, oldest first, for
+      // the order detail panel's timeline section.
+      const eventsFor = url.searchParams.get("events_for");
+      if (eventsFor) {
+        await db.prepare(`
+          CREATE TABLE IF NOT EXISTS order_events (
+            id TEXT PRIMARY KEY, order_id TEXT NOT NULL, type TEXT NOT NULL,
+            label TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+          )
+        `).run();
+        const { results } = await db.prepare(
+          "SELECT type, label, created_at FROM order_events WHERE order_id = ? ORDER BY created_at ASC"
+        ).bind(eventsFor).all();
+        return json(results);
+      }
       // ?orphaned_payments=1 / ?orphaned_email_log=1 - the maintenance
       // backlog left behind by orders deleted before deleteOrderPaymentsAndLogs
       // existed. Same pattern as design-proofs.js's ?orphaned=1 - see
@@ -553,6 +572,8 @@ export async function onRequest(context) {
         Number(data.deposit_amount) || 0
       ).run();
 
+      await logOrderEvent(db, id, "created", `${isInvoice ? "Invoice" : "Quote"} ${docNumber} created`);
+
       return json({
         success: true, id, ...priced,
         quote_number: isInvoice ? null : docNumber,
@@ -598,11 +619,13 @@ export async function onRequest(context) {
       if (data.action === "archive") {
         const bucket = data.bucket === "completed" ? "completed" : "pending";
         await db.prepare("UPDATE orders SET archived_at = CURRENT_TIMESTAMP, archive_bucket = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(bucket, data.id).run();
+        await logOrderEvent(db, data.id, "archived", `Archived (${bucket})`);
         return json({ success: true });
       }
 
       if (data.action === "unarchive") {
         await db.prepare("UPDATE orders SET archived_at = NULL, archive_bucket = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
+        await logOrderEvent(db, data.id, "unarchived", "Restored from archive");
         return json({ success: true });
       }
 
@@ -644,6 +667,7 @@ export async function onRequest(context) {
             email_sent_count = 0, email_sent_at = NULL
           WHERE id = ?
         `).bind(invoice_number, data.id).run();
+        await logOrderEvent(db, data.id, "converted", `Converted to invoice ${invoice_number}`);
         return json({ success: true, invoice_number });
       }
 
@@ -664,6 +688,7 @@ export async function onRequest(context) {
           data.received_at || new Date().toISOString()
         ).run();
         const summary = await recomputePaymentSummary(data.id);
+        await logOrderEvent(db, data.id, "payment_recorded", `Payment recorded: £${amount.toFixed(2)}${data.method ? " (" + data.method + ")" : ""}`);
         // payment_id is returned so the caller (the Record Payment modal's
         // optional "send receipt" checkbox) can fire the receipt email
         // against this exact payment without a second round-trip.
@@ -691,8 +716,10 @@ export async function onRequest(context) {
 
       if (data.action === "delete_payment") {
         if (!data.payment_id) return json({ error: "payment_id required" }, 400);
+        const voided = await db.prepare("SELECT amount FROM payments WHERE id = ? AND order_id = ?").bind(data.payment_id, data.id).first();
         await db.prepare("DELETE FROM payments WHERE id = ? AND order_id = ?").bind(data.payment_id, data.id).run();
         const summary = await recomputePaymentSummary(data.id);
+        if (voided) await logOrderEvent(db, data.id, "payment_voided", `Payment voided: £${Number(voided.amount).toFixed(2)}`);
         return json({ success: true, ...summary });
       }
 

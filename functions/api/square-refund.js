@@ -16,6 +16,7 @@
 // mirror-image of the payment it's reversing rather than opening up a
 // second place amounts can drift from what was actually charged.
 import { emailShell } from "../_lib/email-template.js";
+import { logOrderEvent } from "../_lib/order-events.js";
 
 const SQUARE_VERSION = "2026-07-15"; // keep in step with pay-by-card.js/square-webhook.js
 
@@ -121,6 +122,7 @@ export async function onRequest(context) {
     await db.prepare(
       "UPDATE orders SET amount_paid = ?, paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
     ).bind(amountPaid, status, paidAt, order.id).run();
+    await logOrderEvent(db, order.id, "refunded", `Refunded £${Number(payment.amount).toFixed(2)} via Square`);
 
     // Customer-facing confirmation - the mirror image of receipt.js's
     // "payment received" email, sent automatically the same way rather than

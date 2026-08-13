@@ -7835,6 +7835,10 @@
             <p class="text-lg font-semibold text-slate-900">${money(o.total)}</p>
           </div>
         </div>
+        <div class="py-4 border-b border-slate-200">
+          <p class="text-xs text-slate-500 font-medium mb-3">📜 Activity Timeline</p>
+          <div id="order-timeline">Loading…</div>
+        </div>
         ${o.doc_type === 'invoice' ? `<div class="py-4 border-b border-slate-200">
           <div class="flex items-center justify-between mb-2">
             <p class="text-xs text-slate-500 font-medium">Payments</p>
@@ -7868,6 +7872,7 @@
       loadOrderCommHistory(id);
       loadOrderDesignProofs(id);
       loadProductionSteps(id);
+      loadOrderTimeline(id);
       if (o.doc_type === 'invoice') loadOrderPayments(id);
 
       actions.innerHTML = `
@@ -7907,6 +7912,52 @@
           </div>`).join('');
       } catch (e) {
         if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load communication history.</p>';
+      }
+    }
+
+    // Activity Timeline - the single unified feed for everything that's
+    // happened to this order, pulled from functions/_lib/order-events.js
+    // (written to by orders.js, send-email.js, accept-quote.js,
+    // pay-by-card.js/square-webhook.js/square-refund.js, payment-reminders.js/
+    // quote-followups.js, and production-steps.js). This is deliberately the
+    // FIRST thing shown when opening an order - previously this story was
+    // scattered across Payments/Communication History/Production Tracker
+    // separately, with nothing tying "sent → viewed → accepted → paid" into
+    // one chronological read.
+    const ORDER_EVENT_ICONS = {
+      created: '📝', sent: '📧', viewed_quote: '👀', viewed_invoice: '👀', downloaded: '⬇️',
+      approved: '✅', declined: '❌', converted: '🔄',
+      payment_recorded: '💰', payment_via_card: '💳', payment_voided: '↩️', refunded: '💸',
+      reminder_sent: '⏰', followup_sent: '📬', production_step: '🏭',
+      archived: '🗄️', unarchived: '📤',
+    };
+    async function loadOrderTimeline(id) {
+      const el = document.getElementById('order-timeline');
+      if (!el) return;
+      try {
+        const res = await fetch(API_ORDERS_URL + '?events_for=' + encodeURIComponent(id), { cache: 'no-store' });
+        const events = await res.json();
+        if (!el.isConnected) return; // panel closed/re-rendered while this was in flight
+        if (!Array.isArray(events) || !events.length) {
+          el.innerHTML = '<p class="text-sm text-slate-400">Nothing recorded yet.</p>';
+          return;
+        }
+        // Newest first, so opening an order shows what just happened
+        // without scrolling - the underlying fetch is oldest-first (a
+        // natural read order for a raw feed), reversed here for display.
+        el.innerHTML = `<div class="space-y-0">${events.slice().reverse().map((e, idx) => `
+          <div class="flex gap-3 ${idx < events.length - 1 ? 'pb-3' : ''}">
+            <div class="flex flex-col items-center">
+              <div class="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-sm shrink-0">${ORDER_EVENT_ICONS[e.type] || '•'}</div>
+              ${idx < events.length - 1 ? '<div class="w-0.5 flex-1 bg-slate-100 mt-1"></div>' : ''}
+            </div>
+            <div class="pb-1">
+              <p class="text-sm text-slate-800">${escapeHtml(e.label)}</p>
+              <p class="text-xs text-slate-400">${escapeHtml(ukDateTime(e.created_at))}</p>
+            </div>
+          </div>`).join('')}</div>`;
+      } catch (e) {
+        if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load activity timeline.</p>';
       }
     }
 

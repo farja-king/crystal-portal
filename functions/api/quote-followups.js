@@ -13,6 +13,7 @@
 // read as pushy for something that was never a firm commitment the way an
 // unpaid invoice is.
 import { emailShell } from "../_lib/email-template.js";
+import { logOrderEvent } from "../_lib/order-events.js";
 
 function parseSqlTimestamp(s) {
   if (!s) return NaN;
@@ -156,6 +157,7 @@ export async function onRequest(context) {
         await db.prepare(
           "UPDATE orders SET followup_sent_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).bind(order.id).run();
+        await logOrderEvent(db, order.id, "followup_sent", "Stale-quote follow-up emailed");
         return { sent: true };
       } catch (e) {
         return { sent: false, reason: e.message };

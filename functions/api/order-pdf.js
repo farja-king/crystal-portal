@@ -5,6 +5,7 @@
 // own records (HMRC keeping requirements were the reason this got asked
 // for - a web page or an HTML email isn't something people file away).
 import { buildOrderPdf } from "../_lib/document-pdf.js";
+import { logOrderEvent } from "../_lib/order-events.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -43,6 +44,9 @@ export async function onRequest(context) {
       headers: { "Content-Type": "application/json" },
     });
   }
+  // Only the customer-facing token path is worth logging - the ?id= path is
+  // Martin himself downloading from the admin portal, not the customer.
+  if (token) await logOrderEvent(db, o.id, "downloaded", "PDF downloaded by customer");
 
   // Manual invoices (functions/api/manual-invoice.js) have no items to
   // build a PDF from - the "PDF" for these always is whatever file Martin

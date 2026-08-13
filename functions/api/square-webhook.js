@@ -12,6 +12,7 @@
 // entirely from the portal-login gate for that reason - this file is its own
 // gate, and a request that fails signature verification is rejected outright
 // rather than silently trusted.
+import { logOrderEvent } from "../_lib/order-events.js";
 const SQUARE_VERSION = "2026-07-15"; // matches the API version on Martin's Square app/webhook subscription - keep in step with pay-by-card.js
 
 async function verifySquareSignature(request, rawBody, signatureKey) {
@@ -129,6 +130,7 @@ export async function onRequest(context) {
     await db.prepare(
       "UPDATE orders SET amount_paid = ?, paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
     ).bind(amountPaid, status, paidAt, order.id).run();
+    await logOrderEvent(db, order.id, "payment_via_card", `Paid £${amount.toFixed(2)} by card via Square`);
 
     // Fire the same receipt email the Record Payment modal's "send receipt"
     // checkbox triggers - reusing /api/receipt.js rather than duplicating

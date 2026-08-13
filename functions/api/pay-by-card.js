@@ -18,6 +18,7 @@
 // functions/api/square-webhook.js once Square confirms it - never by this
 // file, which only ever creates the checkout link and hands the customer
 // off to Square.
+import { logViewOnce } from "../_lib/order-events.js";
 const SQUARE_VERSION = "2026-07-15"; // matches the API version on Martin's Square app/webhook subscription - keep both in step
 
 export async function onRequest(context) {
@@ -66,6 +67,7 @@ export async function onRequest(context) {
     if (o.doc_type !== "invoice") {
       return page("<h1>Nothing to pay here.</h1><p>This isn't an invoice yet.</p>", 409);
     }
+    await logViewOnce(db, o.id, "viewed_invoice", "Viewed by customer (Pay by card)");
 
     const balance = Number(o.total) - Number(o.amount_paid || 0);
     if (o.paid_status === "paid" || balance <= 0.004) {

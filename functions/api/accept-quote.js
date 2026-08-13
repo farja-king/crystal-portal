@@ -6,6 +6,8 @@
 // is the only credential. Decisions are POSTed here, never a plain GET link,
 // for the same reason as proof.html - a link-prefetching scanner or email
 // client can't accidentally "click" Accept on someone's behalf.
+import { logOrderEvent, logViewOnce } from "../_lib/order-events.js";
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -76,6 +78,7 @@ export async function onRequest(context) {
           deposit_due: depositDue, pay_token: o.pay_token,
         });
       }
+      await logViewOnce(db, o.id, "viewed_quote", "Viewed by customer");
       const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
       return json({
         quote_number: o.quote_number, customer_name: o.customer_name, total: o.total,
@@ -108,6 +111,7 @@ export async function onRequest(context) {
     const notes = String(data.notes || "").slice(0, 1000);
     await db.prepare("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .bind(data.decision, o.id).run();
+    await logOrderEvent(db, o.id, data.decision, `Customer ${data.decision === "approved" ? "accepted" : "declined"} the quote${notes ? " - \"" + notes + "\"" : ""}`);
 
     // Approving converts straight to an invoice and emails it out - reusing
     // the exact same internal endpoints Martin would otherwise click by hand

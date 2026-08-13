@@ -5,6 +5,7 @@
 // freely editable - add/rename/reorder/delete), each with optional notes
 // and photos.
 import { emailShell, googleMapsDirectionsUrl } from "../_lib/email-template.js";
+import { logOrderEvent } from "../_lib/order-events.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -345,6 +346,7 @@ export async function onRequest(context) {
       await db.prepare(
         "UPDATE production_steps SET title = ?, notes = ?, status = ?, notify_customer = ?, completed_at = ?, notified_at = ? WHERE id = ?"
       ).bind(title, notes, status, notifyCustomer, completedAt, notifiedAt, data.id).run();
+      if (justCompleted) await logOrderEvent(db, existing.order_id, "production_step", `Production: ${title}`);
 
       let emailResult = null;
       if (justCompleted && notifyCustomer) {

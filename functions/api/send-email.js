@@ -5,6 +5,7 @@
 // RESEND_API_KEY and RESEND_FROM_EMAIL (e.g. "Crystal Custom Embroidery
 // <quotes@embroidery.click>" - must be on a domain verified in Resend).
 import { buildOrderPdf } from "../_lib/document-pdf.js";
+import { logOrderEvent } from "../_lib/order-events.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -266,6 +267,7 @@ export async function onRequest(context) {
       await db.prepare(
         "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
       ).bind(crypto.randomUUID(), o.id, to, subject).run();
+      await logOrderEvent(db, o.id, "sent", `Emailed to ${to}`);
       return json({ success: true, sent_to: to });
     }
 
@@ -466,6 +468,7 @@ export async function onRequest(context) {
     await db.prepare(
       "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
     ).bind(crypto.randomUUID(), o.id, to, subject).run();
+    await logOrderEvent(db, o.id, "sent", `Emailed to ${to}`);
 
     return json({ success: true, sent_to: to });
   } catch (err) {
