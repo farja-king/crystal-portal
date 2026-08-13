@@ -84,7 +84,7 @@
             <button id="dash-preset-today" onclick="setDashboardRange('today')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Today</button>
             <button id="dash-preset-week" onclick="setDashboardRange('week')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Week</button>
             <button id="dash-preset-month" onclick="setDashboardRange('month')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Month</button>
-            <button id="dash-preset-year" onclick="setDashboardRange('year')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Year</button>
+            <button id="dash-preset-year" onclick="setDashboardRange('year')" title="1 April - 31 March, the business's financial year - not the calendar year" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This FY</button>
           </div>
           <div class="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg shadow-sm px-2 py-1">
             <input id="dash-from" type="date" onchange="setDashboardCustomRange()" class="text-xs border-0 focus:ring-0 p-1 text-slate-700" />
@@ -9879,8 +9879,12 @@
         from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday);
         to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
       } else if (preset === 'year') {
-        from = new Date(now.getFullYear(), 0, 1);
-        to = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+        // UK financial year: 1 April - 31 March, not the calendar year -
+        // if we're currently in Jan/Feb/Mar, the FY we're in started last
+        // April, not this coming one.
+        const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+        from = new Date(fyStartYear, 3, 1);
+        to = new Date(fyStartYear + 1, 2, 31, 23, 59, 59, 999);
       } else {
         from = new Date(now.getFullYear(), now.getMonth(), 1);
         to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
