@@ -59,7 +59,24 @@
   <script>
     const API_URL = '/api/my-orders';
     const params = new URLSearchParams(location.search);
-    const token = params.get('token');
+    // The token is a real credential (it's what authenticates this page,
+    // no login) - shown bare in the address bar it looks technical/insecure
+    // and is one screenshot away from being shared by accident. Same fix
+    // password-reset/magic-link emails use: cache it, then immediately
+    // scrub it from the visible URL via replaceState so the bar just reads
+    // ".../my-orders.html" a moment after landing. localStorage (not
+    // sessionStorage) so a bookmark or a later visit on the same device
+    // still works even though the URL itself no longer carries it.
+    const STORAGE_KEY = 'crystal_portal_my_orders_token';
+    let token = params.get('token');
+    if (token) {
+      try { localStorage.setItem(STORAGE_KEY, token); } catch (e) {}
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', location.pathname);
+      }
+    } else {
+      try { token = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+    }
 
     function escapeHtml(str) {
       return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
