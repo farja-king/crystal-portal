@@ -420,9 +420,12 @@
       <div id="customer-directory-list">
       <!-- Customers Table -->
       <div class="grid gap-4 sm:grid-cols-2 items-start mb-6">
-        <div class="relative">
-          <input id="cust-search" type="text" placeholder="Search by name, company, email or phone…" oninput="filterCustomers()" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
-          <button type="button" onclick="clearCustomerSearch()" id="cust-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+        <div>
+          <div class="relative">
+            <input id="cust-search" type="text" placeholder="Search by name, company, email or phone…" oninput="filterCustomers()" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+            <button type="button" onclick="clearCustomerSearch()" id="cust-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          </div>
+          <button type="button" onclick="toggleShowAllCustomers()" id="cust-show-all-btn" class="mt-1.5 text-xs text-indigo-600 hover:underline font-medium">Show all customers</button>
         </div>
 
         <!-- Import from Square's customer export CSV - see importCustomersCsv().
@@ -2171,10 +2174,24 @@
 
         allCustomers = customers || [];
         selectedCustomerIds = new Set();
-        renderCustomersTable(allCustomers);
+        filterCustomers();
       } catch (err) {
         tbody.innerHTML = `<tr><td colspan="9" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
       }
+    }
+
+    // Directory starts empty on purpose - with hundreds of customers on
+    // file, showing the full table by default just means scrolling past
+    // everyone else to find the one you actually want. Typing a search
+    // reveals matches live; "Show all customers" is the deliberate
+    // opt-in for when you genuinely want the whole list (e.g. reviewing
+    // everyone, or exporting).
+    let customersShowAll = false;
+
+    function toggleShowAllCustomers() {
+      customersShowAll = !customersShowAll;
+      document.getElementById('cust-show-all-btn').textContent = customersShowAll ? 'Hide list' : 'Show all customers';
+      filterCustomers();
     }
 
     // Matches the search box against name, company, email or phone - phone
@@ -2183,7 +2200,10 @@
     function filterCustomers() {
       const raw = document.getElementById('cust-search').value.trim().toLowerCase();
       document.getElementById('cust-search-clear').classList.toggle('hidden', !raw);
-      if (!raw) { renderCustomersTable(allCustomers); return; }
+      if (!raw) {
+        renderCustomersTable(customersShowAll ? allCustomers : [], !customersShowAll);
+        return;
+      }
 
       const digits = raw.replace(/\D/g, '');
       const filtered = allCustomers.filter(c => {
@@ -2218,11 +2238,13 @@
       return { spend, count, last };
     }
 
-    function renderCustomersTable(customers) {
+    function renderCustomersTable(customers, idle) {
       const tbody = document.getElementById('customers-table-body');
 
       if (!customers || customers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">No customers found.</td></tr>';
+        tbody.innerHTML = idle
+          ? '<tr><td colspan="9" class="p-10 text-center text-slate-400">Start typing above to find a customer, or click "Show all customers".</td></tr>'
+          : '<tr><td colspan="9" class="p-8 text-center text-slate-400">No customers found.</td></tr>';
         updateCustomerBulkBar();
         return;
       }
