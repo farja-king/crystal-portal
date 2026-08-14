@@ -855,6 +855,14 @@
         </div>
       </div>
 
+      <!-- Only appears once at least one item has a reorder_threshold set
+           and its quantity has fallen to/below it - see isStockLow()/
+           renderLowStockBanner(), called from loadStock(). Clicking it
+           filters the search box down to just the low items rather than
+           opening a separate view, so it stays the same table/actions
+           Martin already knows. -->
+      <div id="stock-low-banner" class="hidden mb-4"></div>
+
       <!-- Bulk Add Stock: search a code, pick colour/size, it drops straight
            into the queued list below and the search box clears itself for
            the next code - polo, then hoodie, then sweatshirt, then beanie,
@@ -978,6 +986,10 @@
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Profit</span>
             <div id="stock-edit-profit" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400 font-semibold">-</div>
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Reorder threshold (optional)</span>
+            <input id="stock-edit-threshold" type="number" step="1" min="0" placeholder="Alert when qty falls to/below…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
         </div>
         <label class="text-sm block mt-4">
@@ -4871,6 +4883,7 @@
     let stockById = {};
     let editingStockId = null;
     let addingNewStock = false;
+    let stockLowOnly = false;
 
     async function loadStock() {
       const tbody = document.getElementById('stock-table-body');
@@ -4883,18 +4896,43 @@
         // Ticked rows that no longer exist (deleted elsewhere, or just
         // gone after a reload) shouldn't linger in the bulk-action count.
         selectedStockIds.forEach((id) => { if (!stockById[id]) selectedStockIds.delete(id); });
+        renderLowStockBanner();
         filterStock();
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
       }
     }
 
+    function renderLowStockBanner() {
+      const el = document.getElementById('stock-low-banner');
+      const lowCount = allStock.filter(isStockLow).length;
+      if (!lowCount) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        stockLowOnly = false;
+        return;
+      }
+      el.classList.remove('hidden');
+      el.innerHTML = `
+        <div class="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm">
+          <span class="text-amber-800 font-semibold">⚠ ${lowCount} item${lowCount === 1 ? '' : 's'} at or below its reorder threshold</span>
+          <button type="button" onclick="toggleStockLowOnly()" id="stock-low-toggle-btn" class="ml-auto text-amber-700 hover:text-amber-900 text-xs font-semibold underline">${stockLowOnly ? 'Show all stock' : 'Show only these'}</button>
+        </div>`;
+    }
+
+    function toggleStockLowOnly() {
+      stockLowOnly = !stockLowOnly;
+      renderLowStockBanner();
+      filterStock();
+    }
+
     function filterStock() {
       const raw = (document.getElementById('stock-search').value || '').trim().toLowerCase();
       document.getElementById('stock-search-clear').classList.toggle('hidden', !raw);
-      const filtered = raw
+      let filtered = raw
         ? allStock.filter((s) => [s.item, s.supplier_code, s.brand, s.colour, s.size].filter(Boolean).some((f) => f.toLowerCase().includes(raw)))
         : allStock;
+      if (stockLowOnly) filtered = filtered.filter(isStockLow);
       renderStockTable(filtered);
     }
 
@@ -4905,14 +4943,23 @@
       input.focus();
     }
 
+    // A threshold of null/undefined means "not tracked" - never alert.
+    function isStockLow(s) {
+      const threshold = s.reorder_threshold;
+      if (threshold === null || threshold === undefined || threshold === '') return false;
+      return (Number(s.quantity) || 0) <= Number(threshold);
+    }
+
     function stockQtyCellHtml(s) {
       const qty = Number(s.quantity) || 0;
-      const qtyCls = qty <= 0 ? 'text-rose-600 font-bold' : 'text-slate-900 font-semibold';
+      const low = isStockLow(s);
+      const qtyCls = qty <= 0 ? 'text-rose-600 font-bold' : low ? 'text-amber-600 font-bold' : 'text-slate-900 font-semibold';
       return `
         <div class="flex items-center gap-1.5">
           <button onclick="adjustStockLive('${escapeAttr(s.id)}', -1)" title="Subtract 1" class="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 text-slate-700 rounded font-bold leading-none">−</button>
-          <span id="stock-qty-${escapeAttr(s.id)}" class="${qtyCls} w-6 text-center inline-block" ${qty <= 0 ? 'title="Out of stock"' : ''}>${qty}</span>
+          <span id="stock-qty-${escapeAttr(s.id)}" class="${qtyCls} w-6 text-center inline-block" ${qty <= 0 ? 'title="Out of stock"' : low ? `title="At/below reorder threshold of ${escapeAttr(s.reorder_threshold)}"` : ''}>${qty}</span>
           <button onclick="adjustStockLive('${escapeAttr(s.id)}', 1)" title="Add 1" class="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-700 rounded font-bold leading-none">+</button>
+          ${qty > 0 && low ? '<span title="Low stock - at or below reorder threshold" class="text-amber-500">⚠</span>' : ''}
         </div>`;
     }
 
@@ -5059,13 +5106,14 @@
       const cell = document.getElementById('stock-qty-cell-' + id);
       const s = stockById[id];
       if (cell && s) cell.innerHTML = stockQtyCellHtml(s);
+      renderLowStockBanner();
     }
 
     function openAddStockItemForm() {
       addingNewStock = true;
       editingStockId = null;
       document.getElementById('stock-edit-form-title').textContent = 'Add Stock Item';
-      ['stock-edit-item', 'stock-edit-code', 'stock-edit-brand', 'stock-edit-colour', 'stock-edit-size', 'stock-edit-qty', 'stock-edit-cost', 'stock-edit-sale', 'stock-edit-notes'].forEach((id) => {
+      ['stock-edit-item', 'stock-edit-code', 'stock-edit-brand', 'stock-edit-colour', 'stock-edit-size', 'stock-edit-qty', 'stock-edit-cost', 'stock-edit-sale', 'stock-edit-threshold', 'stock-edit-notes'].forEach((id) => {
         document.getElementById(id).value = '';
       });
       document.getElementById('stock-edit-qty-field').classList.remove('hidden');
@@ -5403,6 +5451,7 @@
       document.getElementById('stock-edit-size').value = s.size || '';
       document.getElementById('stock-edit-cost').value = s.cost_price || 0;
       document.getElementById('stock-edit-sale').value = s.sale_price || 0;
+      document.getElementById('stock-edit-threshold').value = s.reorder_threshold === null || s.reorder_threshold === undefined ? '' : s.reorder_threshold;
       document.getElementById('stock-edit-notes').value = s.notes || '';
       recalcAddFormVat('stock-edit-cost', 'stock-edit-sale', 'stock-edit-vat', 'stock-edit-profit');
       // Quantity isn't edited here - only through Add/Subtract, so the
@@ -5438,6 +5487,7 @@
         size: document.getElementById('stock-edit-size').value.trim(),
         cost_price: Number(document.getElementById('stock-edit-cost').value) || 0,
         sale_price: Number(document.getElementById('stock-edit-sale').value) || 0,
+        reorder_threshold: document.getElementById('stock-edit-threshold').value === '' ? null : Number(document.getElementById('stock-edit-threshold').value),
         notes: document.getElementById('stock-edit-notes').value.trim(),
       };
       if (addingNewStock) payload.quantity = Number(document.getElementById('stock-edit-qty').value) || 0;
@@ -11115,6 +11165,12 @@
       const invoices = dashboardOrders.filter((o) => o.doc_type === 'invoice' && o.paid_status === 'paid');
       const garmentQty = {};
       const decorationQty = {};
+      // Revenue, not profit - a decoration only ever carries its sell
+      // price on the order (d.price), there's no "cost per DTF print"
+      // concept anywhere in the schema to subtract, so this is turnover
+      // per method, not margin. Garment-level profit is a separate,
+      // already-answerable question (products.cost_price vs item price).
+      const decorationRevenue = {};
       const monthCount = {};
 
       invoices.forEach((o) => {
@@ -11143,14 +11199,20 @@
             const methodLabel = METHOD_LABELS[d.method] || d.method || 'Other';
             const dqty = Number(d.qty) || 1;
             decorationQty[methodLabel] = (decorationQty[methodLabel] || 0) + dqty;
+            decorationRevenue[methodLabel] = (decorationRevenue[methodLabel] || 0) + dqty * (Number(d.price) || 0);
           });
         });
       });
 
-      return { garmentQty, decorationQty, monthCount };
+      return { garmentQty, decorationQty, decorationRevenue, monthCount };
     }
 
-    function dashBarList(el, entries, formatLabel, unitLabel) {
+    // formatValue(label, value) is optional - when given, it replaces the
+    // default "value+unitLabel" text on the right (used to show revenue
+    // alongside count for decoration methods, without changing what sizes
+    // the bar - that's still qty, so a low-price/high-volume method doesn't
+    // read as smaller than it actually is).
+    function dashBarList(el, entries, formatLabel, unitLabel, formatValue) {
       if (!entries.length) {
         el.innerHTML = '<p class="text-sm text-slate-400">Nothing yet.</p>';
         return;
@@ -11160,7 +11222,7 @@
         <div>
           <div class="flex items-center justify-between text-sm mb-1">
             <span class="text-slate-700 truncate pr-2">${escapeHtml(formatLabel(label))}</span>
-            <span class="text-slate-500 font-medium shrink-0">${value}${unitLabel || ''}</span>
+            <span class="text-slate-500 font-medium shrink-0">${formatValue ? escapeHtml(formatValue(label, value)) : value + (unitLabel || '')}</span>
           </div>
           <div class="w-full bg-slate-100 rounded-full h-1.5">
             <div class="bg-indigo-500 h-1.5 rounded-full" style="width:${max ? (value / max * 100) : 0}%"></div>
@@ -11174,13 +11236,13 @@
       const monthsEl = document.getElementById('dash-busiest-months');
       if (!garmentsEl || !decorationsEl || !monthsEl) return;
 
-      const { garmentQty, decorationQty, monthCount } = computeTopLineAnalytics();
+      const { garmentQty, decorationQty, decorationRevenue, monthCount } = computeTopLineAnalytics();
 
       const topGarments = Object.entries(garmentQty).sort((a, b) => b[1] - a[1]).slice(0, 8);
       dashBarList(garmentsEl, topGarments, (l) => l, '×');
 
       const topDecorations = Object.entries(decorationQty).sort((a, b) => b[1] - a[1]);
-      dashBarList(decorationsEl, topDecorations, (l) => l, '×');
+      dashBarList(decorationsEl, topDecorations, (l) => l, '×', (label, value) => `${value}× · ${money(decorationRevenue[label] || 0)}`);
 
       // Last 12 calendar months, oldest first, zero-filled - a quiet month
       // should show as a flat bar, not just be missing from the list.

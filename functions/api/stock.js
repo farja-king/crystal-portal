@@ -40,21 +40,27 @@ export async function onRequest(context) {
         quantity REAL DEFAULT 0,
         cost_price REAL DEFAULT 0,
         sale_price REAL DEFAULT 0,
+        reorder_threshold REAL,
         notes TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
-    // supplier_code (the garment catalog's reference code, e.g. RX101) was
-    // added after this table already existed on live D1 - IF NOT EXISTS
-    // above is a no-op against an existing table, so it needs adding here
-    // too, same pattern as products.js. Purely informational: never used to
-    // link back to the catalog row it was copied from (see
+    // supplier_code/reorder_threshold were added after this table already
+    // existed on live D1 - IF NOT EXISTS above is a no-op against an
+    // existing table, so they need adding here too, same pattern as
+    // products.js. supplier_code is purely informational (never used to
+    // link back to the catalog row it was copied from - see
     // pickStockGarmentResult/applyStockGarmentVariant in admin.html).
-    try {
-      await db.prepare("ALTER TABLE stock_items ADD COLUMN supplier_code TEXT").run();
-    } catch {
-      // already exists
+    // reorder_threshold is NULL by default (no alert) rather than 0 -
+    // most stock items don't need a reorder point tracked at all, and NULL
+    // reads unambiguously as "not set" instead of "alert once it hits zero".
+    for (const col of ["supplier_code TEXT", "reorder_threshold REAL"]) {
+      try {
+        await db.prepare(`ALTER TABLE stock_items ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
     }
 
     // The actual ledger - every add/subtract, with why. reason is free text
@@ -104,9 +110,11 @@ export async function onRequest(context) {
       if (!item) return { error: "Item name is required" };
 
       const id = crypto.randomUUID();
+      const threshold = data.reorder_threshold === undefined || data.reorder_threshold === null || data.reorder_threshold === ""
+        ? null : Number(data.reorder_threshold);
       await db.prepare(`
-        INSERT INTO stock_items (id, item, supplier_code, brand, colour, size, cost_price, sale_price, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO stock_items (id, item, supplier_code, brand, colour, size, cost_price, sale_price, reorder_threshold, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id, item,
         String(data.supplier_code || "").trim(),
@@ -115,6 +123,7 @@ export async function onRequest(context) {
         String(data.size || "").trim(),
         Number(data.cost_price) || 0,
         Number(data.sale_price) || 0,
+        threshold,
         String(data.notes || "").trim()
       ).run();
 
@@ -175,8 +184,11 @@ export async function onRequest(context) {
         return json({ success: true, quantity });
       }
 
+      const threshold = data.reorder_threshold === undefined
+        ? existing.reorder_threshold
+        : (data.reorder_threshold === null || data.reorder_threshold === "" ? null : Number(data.reorder_threshold));
       await db.prepare(`
-        UPDATE stock_items SET item = ?, supplier_code = ?, brand = ?, colour = ?, size = ?, cost_price = ?, sale_price = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+        UPDATE stock_items SET item = ?, supplier_code = ?, brand = ?, colour = ?, size = ?, cost_price = ?, sale_price = ?, reorder_threshold = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         String(data.item || existing.item).trim(),
@@ -186,6 +198,7 @@ export async function onRequest(context) {
         data.size !== undefined ? String(data.size).trim() : existing.size,
         data.cost_price !== undefined ? Number(data.cost_price) || 0 : existing.cost_price,
         data.sale_price !== undefined ? Number(data.sale_price) || 0 : existing.sale_price,
+        threshold,
         data.notes !== undefined ? String(data.notes).trim() : existing.notes,
         data.id
       ).run();
