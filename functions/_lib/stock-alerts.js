@@ -32,16 +32,26 @@ async function sendLowStockAlert(env, item, qty, threshold, originUrl) {
     const notifyTo = env.NOTIFY_EMAIL_TO || env.RESEND_REPLY_TO || "hello@embroidery.click";
     const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
     const label = [item.item, item.colour, item.size].filter(Boolean).join(" - ");
+    // The restock TARGET is a separate figure from the alert threshold -
+    // min_stock_level can be set higher (e.g. alert at 3, always restock a
+    // popular line back up to 10) - see reorderTargetFor() in admin.html,
+    // mirrored here since this runs in a separate JS context. Falls back
+    // to the threshold itself when unset, same as the client-side version.
+    const target = item.min_stock_level === null || item.min_stock_level === undefined
+      ? threshold : Number(item.min_stock_level);
+    const toOrder = Math.max(1, target - qty);
     const html = emailShell({
       heading: "Low stock alert",
-      bodyHtml: `<p><strong>${escapeHtml(label)}</strong>${item.supplier_code ? ` (${escapeHtml(item.supplier_code)})` : ""} is down to <strong>${qty}</strong> - at or below its reorder threshold of ${threshold}.</p>`,
+      bodyHtml: `<p><strong>${escapeHtml(label)}</strong>${item.supplier_code ? ` (${escapeHtml(item.supplier_code)})` : ""} - at or below its reorder threshold of ${threshold}.</p>
+        <p style="font-size:16px;"><strong>Currently in stock: ${qty}</strong></p>
+        <p>Order <strong>${toOrder}</strong> to bring it back up to ${target}.</p>`,
       ctaText: "View Stock",
       ctaUrl: originUrl ? `${originUrl}/admin` : undefined,
     });
     await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: fromAddress, to: [notifyTo], subject: `Low stock: ${label}`, html }),
+      body: JSON.stringify({ from: fromAddress, to: [notifyTo], subject: `Low stock: ${label} (${qty} left)`, html }),
     });
   } catch (e) {
     // Never let a failed notification break the stock movement it's attached to.
