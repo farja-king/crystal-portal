@@ -886,8 +886,11 @@
                 <th class="p-3">Colour</th>
                 <th class="p-3">Size</th>
                 <th class="p-3">Qty</th>
-                <th class="p-3">Cost</th>
-                <th class="p-3">Sale</th>
+                <th class="p-3 text-right">Cost</th>
+                <th class="p-3 text-right">VAT</th>
+                <th class="p-3 text-right">Sale</th>
+                <th class="p-3 text-right">Profit</th>
+                <th class="p-3 text-right">Margin</th>
                 <th class="p-3"></th>
               </tr>
             </thead>
@@ -962,11 +965,19 @@
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Cost price (£)</span>
-            <input id="stock-edit-cost" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+            <input id="stock-edit-cost" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('stock-edit-cost', 'stock-edit-sale', 'stock-edit-vat', 'stock-edit-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">VAT (20%, not reclaimable)</span>
+            <div id="stock-edit-vat" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-500">£0.00</div>
           </label>
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Sale price (£)</span>
-            <input id="stock-edit-sale" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+            <input id="stock-edit-sale" type="number" step="0.01" min="0" placeholder="0.00" oninput="recalcAddFormVat('stock-edit-cost', 'stock-edit-sale', 'stock-edit-vat', 'stock-edit-profit')" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Profit</span>
+            <div id="stock-edit-profit" class="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-slate-400 font-semibold">-</div>
           </label>
         </div>
         <label class="text-sm block mt-4">
@@ -1011,13 +1022,16 @@
                 <th class="p-4">Colour</th>
                 <th class="p-4">Size</th>
                 <th class="p-4">Qty</th>
-                <th class="p-4">Cost</th>
-                <th class="p-4">Sale</th>
+                <th class="p-4 text-right">Cost</th>
+                <th class="p-4 text-right">VAT</th>
+                <th class="p-4 text-right">Sale</th>
+                <th class="p-4 text-right">Profit</th>
+                <th class="p-4 text-right">Margin</th>
                 <th class="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody id="stock-table-body" class="divide-y divide-slate-100 text-sm">
-              <tr><td colspan="10" class="p-8 text-center text-slate-400">Loading stock…</td></tr>
+              <tr><td colspan="13" class="p-8 text-center text-slate-400">Loading stock…</td></tr>
             </tbody>
           </table>
         </div>
@@ -4860,7 +4874,7 @@
 
     async function loadStock() {
       const tbody = document.getElementById('stock-table-body');
-      tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-slate-400">Loading stock…</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-slate-400">Loading stock…</td></tr>';
       try {
         const res = await fetch(API_STOCK_URL, { cache: 'no-store' });
         allStock = await res.json();
@@ -4871,7 +4885,7 @@
         selectedStockIds.forEach((id) => { if (!stockById[id]) selectedStockIds.delete(id); });
         filterStock();
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
       }
     }
 
@@ -4902,13 +4916,28 @@
         </div>`;
     }
 
+    // Same VAT/profit/margin math as the Garment Catalog table - not VAT
+    // registered, so VAT is paid to the supplier on cost but never
+    // reclaimed, and comes straight off the margin: Profit = Sale - (Cost + VAT).
+    function stockVatProfitMargin(s) {
+      const cost = Number(s.cost_price) || 0;
+      const sale = Number(s.sale_price) || 0;
+      const vat = cost * 0.2;
+      const profit = sale - (cost + vat);
+      const margin = sale > 0 ? ((profit / sale) * 100).toFixed(1) + '%' : '-';
+      return { vat, profit, margin };
+    }
+
     function renderStockTable(items) {
       const tbody = document.getElementById('stock-table-body');
       if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-slate-400">' + (allStock.length ? 'No stock items match your search.' : 'No stock yet - add your first item above.') + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-slate-400">' + (allStock.length ? 'No stock items match your search.' : 'No stock yet - add your first item above.') + '</td></tr>';
         return;
       }
-      tbody.innerHTML = items.map((s) => `
+      tbody.innerHTML = items.map((s) => {
+        const { vat, profit, margin } = stockVatProfitMargin(s);
+        const profitCls = profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold';
+        return `
         <tr class="hover:bg-slate-50">
           <td class="p-4"><input type="checkbox" class="stock-select-checkbox rounded border-slate-300" data-id="${escapeAttr(s.id)}" ${selectedStockIds.has(s.id) ? 'checked' : ''} onchange="toggleStockSelect('${escapeAttr(s.id)}', this.checked)" /></td>
           <td class="p-4 font-semibold text-slate-900">${escapeHtml(s.item)}</td>
@@ -4917,15 +4946,19 @@
           <td class="p-4">${escapeHtml(s.colour || '-')}</td>
           <td class="p-4">${escapeHtml(s.size || '-')}</td>
           <td class="p-4" id="stock-qty-cell-${escapeAttr(s.id)}">${stockQtyCellHtml(s)}</td>
-          <td class="p-4">${money(s.cost_price)}</td>
-          <td class="p-4">${money(s.sale_price)}</td>
+          <td class="p-4 text-right text-slate-700">${money(s.cost_price)}</td>
+          <td class="p-4 text-right text-slate-600">${money(vat)}</td>
+          <td class="p-4 text-right text-slate-900">${money(s.sale_price)}</td>
+          <td class="p-4 text-right ${profitCls}">${money(profit)}</td>
+          <td class="p-4 text-right text-slate-600">${margin}</td>
           <td class="p-4">
             <div class="flex flex-wrap justify-end gap-1.5">
               <button onclick="openEditStockItemForm('${escapeAttr(s.id)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded text-xs font-semibold">Edit</button>
               <button onclick="deleteStockItem('${escapeAttr(s.id)}')" class="bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded text-xs font-semibold">Delete</button>
             </div>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
       document.getElementById('stock-select-all').checked = items.length > 0 && items.every((s) => selectedStockIds.has(s.id));
       updateStockBulkBar();
     }
@@ -5037,6 +5070,7 @@
       });
       document.getElementById('stock-edit-qty-field').classList.remove('hidden');
       document.getElementById('stock-edit-msg').textContent = '';
+      recalcAddFormVat('stock-edit-cost', 'stock-edit-sale', 'stock-edit-vat', 'stock-edit-profit');
       document.getElementById('stock-garment-picker').classList.remove('hidden');
       document.getElementById('stock-garment-search').value = '';
       document.getElementById('stock-garment-search-results').innerHTML = '';
@@ -5172,6 +5206,7 @@
       document.getElementById('stock-edit-size').value = size || '';
       document.getElementById('stock-edit-cost').value = p.cost_price || '';
       document.getElementById('stock-edit-sale').value = p.sell_price || '';
+      recalcAddFormVat('stock-edit-cost', 'stock-edit-sale', 'stock-edit-vat', 'stock-edit-profit');
       document.getElementById('stock-garment-search').value = '';
       document.getElementById('stock-garment-variant-picker').classList.add('hidden');
       document.getElementById('stock-edit-qty').focus();
@@ -5311,17 +5346,24 @@
       const saveBtn = document.getElementById('stock-bulk-save-btn');
       saveBtn.textContent = `Save all (${bulkStockLines.length})`;
       saveBtn.disabled = bulkStockLines.length === 0;
-      tbody.innerHTML = bulkStockLines.map((l, idx) => `
+      tbody.innerHTML = bulkStockLines.map((l, idx) => {
+        const { vat, profit, margin } = stockVatProfitMargin({ cost_price: l.cost_price, sale_price: l.sale_price });
+        const profitCls = profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold';
+        return `
         <tr class="border-b border-slate-100">
           <td class="p-3 font-semibold text-slate-900">${escapeHtml(l.item)}</td>
           <td class="p-3 font-mono text-xs text-slate-600">${escapeHtml(l.supplier_code || '-')}</td>
           <td class="p-3">${escapeHtml(l.colour || '-')}</td>
           <td class="p-3">${escapeHtml(l.size || '-')}</td>
           <td class="p-3"><input type="number" step="1" value="${l.quantity}" oninput="updateBulkLineQty(${idx}, this.value)" class="w-16 rounded border border-slate-300 px-2 py-1 text-sm" /></td>
-          <td class="p-3">${money(l.cost_price)}</td>
-          <td class="p-3">${money(l.sale_price)}</td>
+          <td class="p-3 text-right text-slate-700">${money(l.cost_price)}</td>
+          <td class="p-3 text-right text-slate-600">${money(vat)}</td>
+          <td class="p-3 text-right text-slate-900">${money(l.sale_price)}</td>
+          <td class="p-3 text-right ${profitCls}">${money(profit)}</td>
+          <td class="p-3 text-right text-slate-600">${margin}</td>
           <td class="p-3"><button type="button" onclick="removeBulkStockLine(${idx})" class="text-rose-500 hover:text-rose-700 text-sm font-medium">Remove</button></td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
     }
 
     async function saveBulkStock() {
@@ -5362,6 +5404,7 @@
       document.getElementById('stock-edit-cost').value = s.cost_price || 0;
       document.getElementById('stock-edit-sale').value = s.sale_price || 0;
       document.getElementById('stock-edit-notes').value = s.notes || '';
+      recalcAddFormVat('stock-edit-cost', 'stock-edit-sale', 'stock-edit-vat', 'stock-edit-profit');
       // Quantity isn't edited here - only through Add/Subtract, so the
       // starting-quantity field (which only makes sense once, at creation)
       // is hidden rather than shown-but-ignored.
