@@ -871,6 +871,19 @@
           <div id="stock-garment-search-results" class="absolute z-10 w-full mt-1 max-h-64 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-lg shadow-lg empty:border-0"></div>
         </div>
 
+        <!-- Shown once a search result is picked - a catalog row is really
+             a price tier (e.g. "Colours / XS - XXL"), not one exact
+             colour/size, so the actual colour and size still need picking
+             from that product code's full list before the form below gets
+             filled in. Same scraped available_colours/available_sizes
+             source, and same "no list on file" fallback, as the Customer
+             View's catalog picker - see pickStockGarmentResult()/
+             applyStockGarmentVariant(). -->
+        <div id="stock-garment-variant-picker" class="hidden mb-4 max-w-xl bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <p id="stock-garment-variant-name" class="text-sm font-semibold text-slate-800 mb-2"></p>
+          <div id="stock-garment-variant-fields" class="flex flex-wrap items-end gap-2"></div>
+        </div>
+
         <div class="grid gap-4 md:grid-cols-3">
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Item</span>
@@ -4862,6 +4875,7 @@
       document.getElementById('stock-garment-picker').classList.remove('hidden');
       document.getElementById('stock-garment-search').value = '';
       document.getElementById('stock-garment-search-results').innerHTML = '';
+      document.getElementById('stock-garment-variant-picker').classList.add('hidden');
       document.getElementById('stock-edit-form').classList.remove('hidden');
       document.getElementById('stock-list-view').classList.add('hidden');
       document.getElementById('stock-garment-search').focus();
@@ -4896,20 +4910,102 @@
       }, 250);
     }
 
+    // The clicked search result is a price tier (e.g. "Colours / XS - XXL"),
+    // not one exact colour/size - so this loads that product code's full
+    // variant spread to get its real colour/size lists (same
+    // available_colours/available_sizes source and fallback as
+    // loadCvCatalogPickerVariants), then shows dropdowns to actually pick
+    // one of each before anything gets filled in.
+    let stockGarmentColourOptions = [];
+    let stockGarmentSizeOptions = [];
+    let stockGarmentPicked = null; // { title, brand, cost_price, sell_price }
+
+    async function pickStockGarmentResult(i) {
+      const p = stockGarmentSearchResults[i];
+      if (!p) return;
+      document.getElementById('stock-garment-search-results').innerHTML = '';
+      document.getElementById('stock-garment-search').value = p.title || '';
+
+      const nameEl = document.getElementById('stock-garment-variant-name');
+      const fieldsEl = document.getElementById('stock-garment-variant-fields');
+      const wrap = document.getElementById('stock-garment-variant-picker');
+      wrap.classList.remove('hidden');
+      nameEl.textContent = (p.supplier_code ? p.supplier_code + ' - ' : '') + (p.title || '');
+      fieldsEl.innerHTML = '<p class="text-sm text-slate-400">Loading colours/sizes…</p>';
+      stockGarmentPicked = { title: p.title, brand: p.brand, cost_price: p.cost_price, sell_price: p.sell_price };
+
+      let variants = [p];
+      if (p.supplier_code) {
+        try {
+          const res = await fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(p.supplier_code) + '&limit=500', { cache: 'no-store' });
+          const data = await res.json();
+          if (Array.isArray(data.results) && data.results.length) variants = data.results;
+        } catch (e) { /* fall back to just this one tier row */ }
+      }
+
+      let colourOptions = [];
+      let sizeOptions = [];
+      try {
+        const scrapedColours = JSON.parse(variants[0].available_colours || '[]');
+        const scrapedSizes = JSON.parse(variants[0].available_sizes || '[]');
+        if (scrapedColours && scrapedColours.length > 0) colourOptions = scrapedColours;
+        if (scrapedSizes && scrapedSizes.length > 0) sizeOptions = scrapedSizes;
+      } catch (e) { /* fall through to fallback below */ }
+      if (colourOptions.length === 0) colourOptions = [...new Set(variants.map((v) => v.colour).filter(Boolean))];
+      if (sizeOptions.length === 0) sizeOptions = [...new Set(variants.map((v) => v.size).filter(Boolean))];
+      stockGarmentColourOptions = colourOptions;
+      stockGarmentSizeOptions = sizeOptions;
+
+      if (!colourOptions.length && !sizeOptions.length) {
+        // Nothing to choose between - fill in as-is, same as before.
+        applyStockGarmentVariant(p.colour || '', p.size || '');
+        return;
+      }
+      fieldsEl.innerHTML = `
+        <label class="text-xs text-slate-600">
+          <span class="block mb-1">Colour</span>
+          <select id="stock-garment-variant-colour" onchange="maybeApplyStockGarmentVariant()" class="w-36 rounded border border-slate-300 px-2 py-1.5 text-sm">
+            <option value="">Choose colour…</option>
+            ${colourOptions.map((c) => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="text-xs text-slate-600">
+          <span class="block mb-1">Size</span>
+          <select id="stock-garment-variant-size" onchange="maybeApplyStockGarmentVariant()" class="w-36 rounded border border-slate-300 px-2 py-1.5 text-sm">
+            <option value="">Choose size…</option>
+            ${sizeOptions.map((s) => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join('')}
+          </select>
+        </label>
+        <button type="button" onclick="document.getElementById('stock-garment-variant-picker').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-600 font-medium pb-1.5">Cancel</button>
+      `;
+    }
+
+    // Fires once both dropdowns have a value - no separate "confirm" click
+    // needed for what's already a two-click flow (result, then colour, then
+    // size).
+    function maybeApplyStockGarmentVariant() {
+      const colour = document.getElementById('stock-garment-variant-colour').value;
+      const size = document.getElementById('stock-garment-variant-size').value;
+      if (colour && size) applyStockGarmentVariant(colour, size);
+    }
+
     // Fills the fields below, same as picking a template does elsewhere -
     // nothing is locked afterward, and the stock row isn't linked back to
-    // this catalog product once saved (see stock.js).
-    function pickStockGarmentResult(i) {
-      const p = stockGarmentSearchResults[i];
+    // this catalog product once saved (see stock.js). Cost/sale price come
+    // from the price tier that was actually clicked - colour/size don't
+    // change which tier's price applies, only the price-tier itself does
+    // (e.g. a 3XL surcharge row).
+    function applyStockGarmentVariant(colour, size) {
+      const p = stockGarmentPicked;
       if (!p) return;
       document.getElementById('stock-edit-item').value = p.title || '';
       document.getElementById('stock-edit-brand').value = p.brand || '';
-      document.getElementById('stock-edit-colour').value = p.colour || '';
-      document.getElementById('stock-edit-size').value = p.size || '';
+      document.getElementById('stock-edit-colour').value = colour || '';
+      document.getElementById('stock-edit-size').value = size || '';
       document.getElementById('stock-edit-cost').value = p.cost_price || '';
       document.getElementById('stock-edit-sale').value = p.sell_price || '';
       document.getElementById('stock-garment-search').value = '';
-      document.getElementById('stock-garment-search-results').innerHTML = '';
+      document.getElementById('stock-garment-variant-picker').classList.add('hidden');
       document.getElementById('stock-edit-qty').focus();
     }
 
@@ -4932,6 +5028,7 @@
       document.getElementById('stock-edit-qty-field').classList.add('hidden');
       document.getElementById('stock-edit-msg').textContent = '';
       document.getElementById('stock-garment-picker').classList.add('hidden');
+      document.getElementById('stock-garment-variant-picker').classList.add('hidden');
       document.getElementById('stock-edit-form').classList.remove('hidden');
       document.getElementById('stock-list-view').classList.add('hidden');
       document.getElementById('stock-edit-item').focus();
