@@ -32,6 +32,9 @@
           <button id="tab-services" onclick="switchTab('services')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Services
           </button>
+          <button id="tab-stock" onclick="switchTab('stock')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            📦 Stock
+          </button>
           <button id="tab-orders" onclick="switchTab('orders')" class="relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             Quotes & Invoices
             <span id="quote-requests-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
@@ -828,6 +831,96 @@
             <tr><td colspan="9" class="p-8 text-center text-slate-400">Loading services…</td></tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- STOCK TAB - manual inventory, separate from the Garments/Services
+         catalog (products.js) - see functions/api/stock.js for why. -->
+    <section id="section-stock" class="hidden">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Stock</h2>
+          <p class="text-slate-500 text-sm">What's physically on the shelf - PenCarrie, Uneek, or anything added by hand. Quantities only ever change via Add/Subtract, so there's always a record of why.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="openAddStockItemForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            + Add Stock Item
+          </button>
+          <button onclick="loadStock()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Add/Edit Stock Item form -->
+      <div id="stock-edit-form" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <h3 id="stock-edit-form-title" class="text-lg font-bold text-slate-900 mb-4">Add Stock Item</h3>
+        <div class="grid gap-4 md:grid-cols-3">
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Item</span>
+            <input id="stock-edit-item" placeholder="e.g. Polo Shirt" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Brand</span>
+            <input id="stock-edit-brand" list="stock-brand-options" placeholder="e.g. PenCarrie, Uneek" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+            <datalist id="stock-brand-options"><option value="PenCarrie"><option value="Uneek"></datalist>
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Colour</span>
+            <input id="stock-edit-colour" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Size</span>
+            <input id="stock-edit-size" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm" id="stock-edit-qty-field">
+            <span class="block font-medium text-slate-700 mb-1">Starting quantity</span>
+            <input id="stock-edit-qty" type="number" step="1" placeholder="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Cost price (£)</span>
+            <input id="stock-edit-cost" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Sale price (£)</span>
+            <input id="stock-edit-sale" type="number" step="0.01" min="0" placeholder="0.00" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+        </div>
+        <label class="text-sm block mt-4">
+          <span class="block font-medium text-slate-700 mb-1">Notes</span>
+          <textarea id="stock-edit-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"></textarea>
+        </label>
+        <div class="mt-4 flex gap-3">
+          <button onclick="saveStockItem()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Save</button>
+          <button onclick="closeStockItemForm()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Cancel</button>
+        </div>
+        <p id="stock-edit-msg" class="text-sm mt-2"></p>
+      </div>
+
+      <div id="stock-list-view">
+        <div class="relative mb-4 max-w-md">
+          <input id="stock-search" type="text" placeholder="Search by item, brand, colour or size…" oninput="filterStock()" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+          <button type="button" onclick="clearStockSearch()" id="stock-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="p-4">Item</th>
+                <th class="p-4">Brand</th>
+                <th class="p-4">Colour</th>
+                <th class="p-4">Size</th>
+                <th class="p-4">Qty</th>
+                <th class="p-4">Cost</th>
+                <th class="p-4">Sale</th>
+                <th class="p-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="stock-table-body" class="divide-y divide-slate-100 text-sm">
+              <tr><td colspan="8" class="p-8 text-center text-slate-400">Loading stock…</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -1968,6 +2061,7 @@
   <script>
     const API_URL = '/api/quotes';
     const API_CUSTOMERS_URL = '/api/customers';
+    const API_STOCK_URL = '/api/stock';
     const API_SETTINGS_URL = '/api/settings';
 
     // Pricing settings, fetched once from D1 and cached for the life of the page
@@ -2051,7 +2145,7 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'orders', 'inbox', 'proofs', 'backups'];
+    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'stock', 'orders', 'inbox', 'proofs', 'backups'];
     function switchTab(tab) {
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
@@ -2071,6 +2165,7 @@
       if (tab === 'customers') loadCustomers();
       if (tab === 'catalog') loadCatalog(0);
       if (tab === 'services') loadServices();
+      if (tab === 'stock') loadStock();
       if (tab === 'orders') {
         loadOrders();
         renderOrderCustomerPicker();
@@ -4643,6 +4738,189 @@
     let servicesById = {};
     let selectedServiceIds = new Set();
     let serviceEditingIds = new Set();
+
+    // ============================== Stock ==============================
+    // Manual inventory - see functions/api/stock.js for the full reasoning
+    // (a separate item list from the Garments/Services catalog, quantity
+    // only ever changes via the ledgered "adjust" action, never a raw edit).
+    let allStock = [];
+    let stockById = {};
+    let editingStockId = null;
+    let addingNewStock = false;
+
+    async function loadStock() {
+      const tbody = document.getElementById('stock-table-body');
+      tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">Loading stock…</td></tr>';
+      try {
+        const res = await fetch(API_STOCK_URL, { cache: 'no-store' });
+        allStock = await res.json();
+        stockById = {};
+        allStock.forEach((s) => { stockById[s.id] = s; });
+        filterStock();
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    function filterStock() {
+      const raw = (document.getElementById('stock-search').value || '').trim().toLowerCase();
+      document.getElementById('stock-search-clear').classList.toggle('hidden', !raw);
+      const filtered = raw
+        ? allStock.filter((s) => [s.item, s.brand, s.colour, s.size].filter(Boolean).some((f) => f.toLowerCase().includes(raw)))
+        : allStock;
+      renderStockTable(filtered);
+    }
+
+    function clearStockSearch() {
+      const input = document.getElementById('stock-search');
+      input.value = '';
+      filterStock();
+      input.focus();
+    }
+
+    function renderStockTable(items) {
+      const tbody = document.getElementById('stock-table-body');
+      if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">' + (allStock.length ? 'No stock items match your search.' : 'No stock yet - add your first item above.') + '</td></tr>';
+        return;
+      }
+      tbody.innerHTML = items.map((s) => {
+        const qty = Number(s.quantity) || 0;
+        const qtyCls = qty <= 0 ? 'text-rose-600 font-bold' : 'text-slate-900 font-semibold';
+        return `
+        <tr class="hover:bg-slate-50">
+          <td class="p-4 font-semibold text-slate-900">${escapeHtml(s.item)}</td>
+          <td class="p-4">${escapeHtml(s.brand || '-')}</td>
+          <td class="p-4">${escapeHtml(s.colour || '-')}</td>
+          <td class="p-4">${escapeHtml(s.size || '-')}</td>
+          <td class="p-4 ${qtyCls}">${qty}${qty <= 0 ? ' <span class="text-xs font-normal">(out of stock)</span>' : ''}</td>
+          <td class="p-4">${money(s.cost_price)}</td>
+          <td class="p-4">${money(s.sale_price)}</td>
+          <td class="p-4">
+            <div class="flex flex-wrap justify-end gap-1.5">
+              <button onclick="adjustStock('${escapeAttr(s.id)}', 1)" title="Add stock" class="bg-white border border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-700 px-2 py-1 rounded text-xs font-semibold">+ Add</button>
+              <button onclick="adjustStock('${escapeAttr(s.id)}', -1)" title="Subtract stock" class="bg-white border border-slate-300 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 text-slate-700 px-2 py-1 rounded text-xs font-semibold">− Subtract</button>
+              <button onclick="openEditStockItemForm('${escapeAttr(s.id)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded text-xs font-semibold">Edit</button>
+              <button onclick="deleteStockItem('${escapeAttr(s.id)}')" class="bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded text-xs font-semibold">Delete</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    // Amount typed is always positive - direction comes from which button
+    // was clicked (sign: 1 to add, -1 to subtract), not from asking someone
+    // to remember to type a minus sign.
+    async function adjustStock(id, sign) {
+      const s = stockById[id];
+      if (!s) return;
+      const amountStr = await promptModal(`${sign > 0 ? 'Add' : 'Subtract'} how many "${s.item}${s.colour ? ' - ' + s.colour : ''}${s.size ? ' / ' + s.size : ''}"? (currently ${s.quantity})`, '', 'number');
+      if (!amountStr) return;
+      const amount = Math.abs(Number(amountStr));
+      if (!amount) { showActionToast('⚠', 'Enter a number greater than zero.'); return; }
+      const reason = await promptModal('Reason (optional) - e.g. "Delivery from PenCarrie" or "Used on INV-0042":', '', 'text');
+
+      try {
+        const res = await fetch(API_STOCK_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, action: 'adjust', delta: sign * amount, reason: reason || '' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast('✓', `${sign > 0 ? 'Added' : 'Subtracted'} ${amount} - now ${data.quantity} in stock.`);
+        loadStock();
+      } catch (e) {
+        showActionToast('⚠', 'Could not adjust stock: ' + e.message);
+      }
+    }
+
+    function openAddStockItemForm() {
+      addingNewStock = true;
+      editingStockId = null;
+      document.getElementById('stock-edit-form-title').textContent = 'Add Stock Item';
+      ['stock-edit-item', 'stock-edit-brand', 'stock-edit-colour', 'stock-edit-size', 'stock-edit-qty', 'stock-edit-cost', 'stock-edit-sale', 'stock-edit-notes'].forEach((id) => {
+        document.getElementById(id).value = '';
+      });
+      document.getElementById('stock-edit-qty-field').classList.remove('hidden');
+      document.getElementById('stock-edit-msg').textContent = '';
+      document.getElementById('stock-edit-form').classList.remove('hidden');
+      document.getElementById('stock-list-view').classList.add('hidden');
+      document.getElementById('stock-edit-item').focus();
+    }
+
+    function openEditStockItemForm(id) {
+      const s = stockById[id];
+      if (!s) return;
+      addingNewStock = false;
+      editingStockId = id;
+      document.getElementById('stock-edit-form-title').textContent = 'Edit Stock Item';
+      document.getElementById('stock-edit-item').value = s.item || '';
+      document.getElementById('stock-edit-brand').value = s.brand || '';
+      document.getElementById('stock-edit-colour').value = s.colour || '';
+      document.getElementById('stock-edit-size').value = s.size || '';
+      document.getElementById('stock-edit-cost').value = s.cost_price || 0;
+      document.getElementById('stock-edit-sale').value = s.sale_price || 0;
+      document.getElementById('stock-edit-notes').value = s.notes || '';
+      // Quantity isn't edited here - only through Add/Subtract, so the
+      // starting-quantity field (which only makes sense once, at creation)
+      // is hidden rather than shown-but-ignored.
+      document.getElementById('stock-edit-qty-field').classList.add('hidden');
+      document.getElementById('stock-edit-msg').textContent = '';
+      document.getElementById('stock-edit-form').classList.remove('hidden');
+      document.getElementById('stock-list-view').classList.add('hidden');
+      document.getElementById('stock-edit-item').focus();
+    }
+
+    function closeStockItemForm() {
+      editingStockId = null;
+      addingNewStock = false;
+      document.getElementById('stock-edit-form').classList.add('hidden');
+      document.getElementById('stock-list-view').classList.remove('hidden');
+    }
+
+    async function saveStockItem() {
+      const msg = document.getElementById('stock-edit-msg');
+      const item = document.getElementById('stock-edit-item').value.trim();
+      if (!item) { msg.className = 'text-sm mt-2 text-red-600'; msg.textContent = 'Item name is required.'; return; }
+
+      const payload = {
+        item,
+        brand: document.getElementById('stock-edit-brand').value.trim(),
+        colour: document.getElementById('stock-edit-colour').value.trim(),
+        size: document.getElementById('stock-edit-size').value.trim(),
+        cost_price: Number(document.getElementById('stock-edit-cost').value) || 0,
+        sale_price: Number(document.getElementById('stock-edit-sale').value) || 0,
+        notes: document.getElementById('stock-edit-notes').value.trim(),
+      };
+      if (addingNewStock) payload.quantity = Number(document.getElementById('stock-edit-qty').value) || 0;
+      else payload.id = editingStockId;
+
+      try {
+        const res = await fetch(API_STOCK_URL, {
+          method: addingNewStock ? 'POST' : 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+        closeStockItemForm();
+        loadStock();
+      } catch (e) {
+        msg.className = 'text-sm mt-2 text-red-600';
+        msg.textContent = e.message;
+      }
+    }
+
+    async function deleteStockItem(id) {
+      const s = stockById[id];
+      if (!(await confirmModal(`Delete "${s ? s.item : id}" from stock? This also removes its add/subtract history. This cannot be undone.`))) return;
+      try {
+        await fetch(API_STOCK_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+        loadStock();
+      } catch (e) {
+        showActionToast('⚠', 'Could not delete: ' + e.message);
+      }
+    }
 
     async function loadServices() {
       const tbody = document.getElementById('svc-table-body');
