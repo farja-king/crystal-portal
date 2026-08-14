@@ -861,6 +861,9 @@
           <button onclick="openBulkAddStockForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             📦 Bulk Add Stock
           </button>
+          <button onclick="printReorderList()" title="Every item at or below its reorder threshold, with how many to order to bring it back up to that threshold" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🖨 Print Reorder List
+          </button>
           <button onclick="loadStock()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
@@ -4944,6 +4947,59 @@
       stockLowOnly = !stockLowOnly;
       renderLowStockBanner();
       filterStock();
+    }
+
+    // Printable reorder list - every item at/below its reorder threshold
+    // (isStockLow, same check the banner/badges use), with how many to buy
+    // to bring it back up TO that threshold, not just "1 more" - a
+    // threshold of 3 sitting at -1 needs 4, not 1. Same window.open +
+    // document.write + window.print() pattern as printOrder().
+    function printReorderList() {
+      const lowItems = allStock.filter(isStockLow).sort((a, b) => a.item.localeCompare(b.item));
+      const win = window.open('', '_blank', 'width=900,height=1200');
+      if (!win) return;
+
+      const rows = lowItems.map((s) => {
+        const threshold = effectiveReorderThreshold(s);
+        const qty = Number(s.quantity) || 0;
+        const toOrder = Math.max(1, threshold - qty);
+        return `<tr>
+          <td>${escapeHtml(s.item)}</td>
+          <td>${escapeHtml(s.supplier_code || '-')}</td>
+          <td>${escapeHtml(s.brand || '-')}</td>
+          <td>${escapeHtml(s.colour || '-')}</td>
+          <td>${escapeHtml(s.size || '-')}</td>
+          <td>${qty}</td>
+          <td>${threshold}</td>
+          <td><strong>${toOrder}</strong></td>
+        </tr>`;
+      }).join('');
+
+      win.document.write(`
+        <html><head><title>Reorder List</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 32px; color: #0f172a; }
+          h1 { margin: 0 0 4px; } .muted { color: #64748b; }
+          table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+          th { text-align: left; border-bottom: 2px solid #0f172a; padding: 8px 4px; font-size: 0.8rem; text-transform: uppercase; }
+          td { padding: 10px 4px; border-bottom: 1px solid #e2e8f0; }
+          td:last-child, th:last-child { text-align: right; }
+        </style></head>
+        <body>
+          <h1>Crystal Custom Embroidery</h1>
+          <div class="muted">26 Grove Street, Raunds, NN9 6DS</div>
+          <div class="muted" style="margin-top:12px;font-size:1rem;color:#0f172a;font-weight:600;">Reorder List</div>
+          <div class="muted">Everything at or below its reorder threshold, and how many to buy to bring it back up to that threshold</div>
+          <div class="muted" style="margin-top:4px;">Printed ${escapeHtml(new Date().toLocaleString('en-GB'))}</div>
+          ${lowItems.length ? `
+          <table>
+            <thead><tr><th>Item</th><th>Code</th><th>Brand</th><th>Colour</th><th>Size</th><th>Current</th><th>Threshold</th><th>Order qty</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>` : '<p style="margin-top:24px;">Nothing is below its reorder threshold right now.</p>'}
+          <script>window.print();<\/script>
+        </body></html>
+      `);
+      win.document.close();
     }
 
     function filterStock() {
