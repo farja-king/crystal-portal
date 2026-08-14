@@ -5158,23 +5158,36 @@
     function renderStockAllocations(id, movements) {
       const el = document.getElementById('stock-allot-' + id);
       if (!el) return;
-      if (!movements.length) {
-        el.innerHTML = '<p class="text-sm text-slate-400 py-2">No stock movements recorded yet.</p>';
+
+      // Only movements actually tied to an order - a plain manual +/-
+      // adjustment or "Initial stock" has nothing to allocate to, so it's
+      // filtered out entirely rather than shown as a dead-end "Adjustment"
+      // row. A pre-order_id movement still counts if its free-text reason
+      // names a real doc number ("Invoiced on INV-0025").
+      const allocated = movements.filter((m) => m.order_id || (m.reason && /\b(INV|Q)-\d{3,}\b/.test(m.reason)));
+
+      if (!allocated.length) {
+        el.innerHTML = '<p class="text-sm text-slate-400 py-2">Not currently allocated to any order.</p>';
         return;
       }
-      el.innerHTML = `<div class="divide-y divide-slate-200 border-t border-slate-200">${movements.map((m) => {
+
+      // Current stock for this item is negative -> at least one order
+      // still waiting on it can't actually be fulfilled from the shelf -
+      // flags every order that took stock (not a restock/+ row) with the
+      // same flashing bell used on the Quotes & Invoices list, since which
+      // exact order is "the" short one isn't something this ledger can
+      // resolve on its own (first-come-first-served isn't tracked).
+      const s = stockById[id];
+      const currentlyShort = s && (Number(s.quantity) || 0) < 0;
+
+      el.innerHTML = `<div class="divide-y divide-slate-200 border-t border-slate-200">${allocated.map((m) => {
         const docNumber = m.doc_type === 'invoice' ? m.invoice_number : m.quote_number;
         const deltaCls = m.delta < 0 ? 'text-rose-600' : 'text-emerald-600';
         const deltaLabel = (m.delta > 0 ? '+' : '') + m.delta;
-        // A movement from before stock_movements.order_id existed has no
-        // order_id to link with, but its free-text reason usually still
-        // names the actual document ("Invoiced on INV-0025") - pull that
-        // number back out so it's clickable too, resolved to an id via
-        // ?doc_number= at click time rather than up front for every row.
         const reasonDocMatch = !m.order_id && m.reason ? m.reason.match(/\b(INV|Q)-\d{3,}\b/) : null;
         const label = docNumber
           ? `${escapeHtml(m.doc_type === 'invoice' ? 'Invoice' : 'Quote')} ${escapeHtml(docNumber)}${m.customer_name ? ' - ' + escapeHtml(m.customer_name) : ''}`
-          : escapeHtml(m.reason || 'Adjustment');
+          : escapeHtml(m.reason || '');
         let bodyHtml;
         if (m.order_id) {
           bodyHtml = `<button type="button" onclick="openOrderFromStock('${escapeAttr(m.order_id)}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-left">${label}</button>`;
@@ -5183,10 +5196,13 @@
         } else {
           bodyHtml = `<span class="text-slate-700">${label}</span>`;
         }
+        const shortBell = (m.delta < 0 && currentlyShort)
+          ? `<span class="stock-shortfall-flash text-rose-600" title="Not enough in stock right now to fulfill this">🔔</span>`
+          : '';
         return `
           <div class="flex items-center justify-between gap-3 py-2 text-sm">
             <div class="min-w-0">
-              ${bodyHtml}
+              ${bodyHtml} ${shortBell}
               <span class="block text-xs text-slate-400">${escapeHtml(ukDateTime(m.created_at))}</span>
             </div>
             <span class="${deltaCls} font-semibold shrink-0">${deltaLabel}</span>
