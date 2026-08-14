@@ -890,6 +890,10 @@
             <input id="stock-edit-item" placeholder="e.g. Polo Shirt" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
           <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Code</span>
+            <input id="stock-edit-code" placeholder="e.g. RX101" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Brand</span>
             <input id="stock-edit-brand" list="stock-brand-options" placeholder="e.g. PenCarrie, Uneek" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
             <datalist id="stock-brand-options"><option value="PenCarrie"><option value="Uneek"></datalist>
@@ -928,7 +932,7 @@
 
       <div id="stock-list-view">
         <div class="relative mb-4 max-w-md">
-          <input id="stock-search" type="text" placeholder="Search by item, brand, colour or size…" oninput="filterStock()" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+          <input id="stock-search" type="text" placeholder="Search by item, code, brand, colour or size…" oninput="filterStock()" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
           <button type="button" onclick="clearStockSearch()" id="stock-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
         </div>
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -936,6 +940,7 @@
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
                 <th class="p-4">Item</th>
+                <th class="p-4">Code</th>
                 <th class="p-4">Brand</th>
                 <th class="p-4">Colour</th>
                 <th class="p-4">Size</th>
@@ -946,7 +951,7 @@
               </tr>
             </thead>
             <tbody id="stock-table-body" class="divide-y divide-slate-100 text-sm">
-              <tr><td colspan="8" class="p-8 text-center text-slate-400">Loading stock…</td></tr>
+              <tr><td colspan="9" class="p-8 text-center text-slate-400">Loading stock…</td></tr>
             </tbody>
           </table>
         </div>
@@ -4779,7 +4784,7 @@
 
     async function loadStock() {
       const tbody = document.getElementById('stock-table-body');
-      tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">Loading stock…</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">Loading stock…</td></tr>';
       try {
         const res = await fetch(API_STOCK_URL, { cache: 'no-store' });
         allStock = await res.json();
@@ -4787,7 +4792,7 @@
         allStock.forEach((s) => { stockById[s.id] = s; });
         filterStock();
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
       }
     }
 
@@ -4795,7 +4800,7 @@
       const raw = (document.getElementById('stock-search').value || '').trim().toLowerCase();
       document.getElementById('stock-search-clear').classList.toggle('hidden', !raw);
       const filtered = raw
-        ? allStock.filter((s) => [s.item, s.brand, s.colour, s.size].filter(Boolean).some((f) => f.toLowerCase().includes(raw)))
+        ? allStock.filter((s) => [s.item, s.supplier_code, s.brand, s.colour, s.size].filter(Boolean).some((f) => f.toLowerCase().includes(raw)))
         : allStock;
       renderStockTable(filtered);
     }
@@ -4807,67 +4812,86 @@
       input.focus();
     }
 
+    function stockQtyCellHtml(s) {
+      const qty = Number(s.quantity) || 0;
+      const qtyCls = qty <= 0 ? 'text-rose-600 font-bold' : 'text-slate-900 font-semibold';
+      return `
+        <div class="flex items-center gap-1.5">
+          <button onclick="adjustStockLive('${escapeAttr(s.id)}', -1)" title="Subtract 1" class="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 text-slate-700 rounded font-bold leading-none">−</button>
+          <span id="stock-qty-${escapeAttr(s.id)}" class="${qtyCls} w-6 text-center inline-block" ${qty <= 0 ? 'title="Out of stock"' : ''}>${qty}</span>
+          <button onclick="adjustStockLive('${escapeAttr(s.id)}', 1)" title="Add 1" class="w-6 h-6 flex items-center justify-center bg-white border border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-700 rounded font-bold leading-none">+</button>
+        </div>`;
+    }
+
     function renderStockTable(items) {
       const tbody = document.getElementById('stock-table-body');
       if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-slate-400">' + (allStock.length ? 'No stock items match your search.' : 'No stock yet - add your first item above.') + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">' + (allStock.length ? 'No stock items match your search.' : 'No stock yet - add your first item above.') + '</td></tr>';
         return;
       }
-      tbody.innerHTML = items.map((s) => {
-        const qty = Number(s.quantity) || 0;
-        const qtyCls = qty <= 0 ? 'text-rose-600 font-bold' : 'text-slate-900 font-semibold';
-        return `
+      tbody.innerHTML = items.map((s) => `
         <tr class="hover:bg-slate-50">
           <td class="p-4 font-semibold text-slate-900">${escapeHtml(s.item)}</td>
+          <td class="p-4 font-mono text-xs text-slate-600">${escapeHtml(s.supplier_code || '-')}</td>
           <td class="p-4">${escapeHtml(s.brand || '-')}</td>
           <td class="p-4">${escapeHtml(s.colour || '-')}</td>
           <td class="p-4">${escapeHtml(s.size || '-')}</td>
-          <td class="p-4 ${qtyCls}">${qty}${qty <= 0 ? ' <span class="text-xs font-normal">(out of stock)</span>' : ''}</td>
+          <td class="p-4" id="stock-qty-cell-${escapeAttr(s.id)}">${stockQtyCellHtml(s)}</td>
           <td class="p-4">${money(s.cost_price)}</td>
           <td class="p-4">${money(s.sale_price)}</td>
           <td class="p-4">
             <div class="flex flex-wrap justify-end gap-1.5">
-              <button onclick="adjustStock('${escapeAttr(s.id)}', 1)" title="Add stock" class="bg-white border border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-700 px-2 py-1 rounded text-xs font-semibold">+ Add</button>
-              <button onclick="adjustStock('${escapeAttr(s.id)}', -1)" title="Subtract stock" class="bg-white border border-slate-300 hover:bg-rose-50 hover:border-rose-300 hover:text-rose-700 text-slate-700 px-2 py-1 rounded text-xs font-semibold">− Subtract</button>
               <button onclick="openEditStockItemForm('${escapeAttr(s.id)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded text-xs font-semibold">Edit</button>
               <button onclick="deleteStockItem('${escapeAttr(s.id)}')" class="bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded text-xs font-semibold">Delete</button>
             </div>
           </td>
-        </tr>`;
-      }).join('');
+        </tr>`).join('');
     }
 
     // Amount typed is always positive - direction comes from which button
-    // was clicked (sign: 1 to add, -1 to subtract), not from asking someone
-    // to remember to type a minus sign.
-    async function adjustStock(id, sign) {
+    // was clicked (sign: 1 to add, -1 to subtract). No popup - click +/-
+    // repeatedly to add/subtract several at once, same as Martin does with
+    // a physical tally. Each click is still its own logged movement (see
+    // stock.js's ledger), just with no per-click reason attached; updates
+    // the on-screen count optimistically so clicking fast feels instant,
+    // then reconciles against whatever the server actually recomputed.
+    // stockAdjustSeq guards against an in-flight request's response landing
+    // *after* a later click's response already did - only the response for
+    // the most recently issued request for this item is allowed to write
+    // the displayed count.
+    let stockAdjustSeq = {};
+    async function adjustStockLive(id, sign) {
       const s = stockById[id];
       if (!s) return;
-      const amountStr = await promptModal(`${sign > 0 ? 'Add' : 'Subtract'} how many "${s.item}${s.colour ? ' - ' + s.colour : ''}${s.size ? ' / ' + s.size : ''}"? (currently ${s.quantity})`, '', 'number');
-      if (!amountStr) return;
-      const amount = Math.abs(Number(amountStr));
-      if (!amount) { showActionToast('⚠', 'Enter a number greater than zero.'); return; }
-      const reason = await promptModal('Reason (optional) - e.g. "Delivery from PenCarrie" or "Used on INV-0042":', '', 'text');
-
+      s.quantity = (Number(s.quantity) || 0) + sign;
+      updateStockQtyCell(id);
+      const seq = (stockAdjustSeq[id] || 0) + 1;
+      stockAdjustSeq[id] = seq;
       try {
         const res = await fetch(API_STOCK_URL, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, action: 'adjust', delta: sign * amount, reason: reason || '' }),
+          body: JSON.stringify({ id, action: 'adjust', delta: sign, reason: '' }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
-        showActionToast('✓', `${sign > 0 ? 'Added' : 'Subtracted'} ${amount} - now ${data.quantity} in stock.`);
-        loadStock();
+        if (stockAdjustSeq[id] === seq) { s.quantity = data.quantity; updateStockQtyCell(id); }
       } catch (e) {
         showActionToast('⚠', 'Could not adjust stock: ' + e.message);
+        loadStock();
       }
+    }
+
+    function updateStockQtyCell(id) {
+      const cell = document.getElementById('stock-qty-cell-' + id);
+      const s = stockById[id];
+      if (cell && s) cell.innerHTML = stockQtyCellHtml(s);
     }
 
     function openAddStockItemForm() {
       addingNewStock = true;
       editingStockId = null;
       document.getElementById('stock-edit-form-title').textContent = 'Add Stock Item';
-      ['stock-edit-item', 'stock-edit-brand', 'stock-edit-colour', 'stock-edit-size', 'stock-edit-qty', 'stock-edit-cost', 'stock-edit-sale', 'stock-edit-notes'].forEach((id) => {
+      ['stock-edit-item', 'stock-edit-code', 'stock-edit-brand', 'stock-edit-colour', 'stock-edit-size', 'stock-edit-qty', 'stock-edit-cost', 'stock-edit-sale', 'stock-edit-notes'].forEach((id) => {
         document.getElementById(id).value = '';
       });
       document.getElementById('stock-edit-qty-field').classList.remove('hidden');
@@ -4932,7 +4956,7 @@
       wrap.classList.remove('hidden');
       nameEl.textContent = (p.supplier_code ? p.supplier_code + ' - ' : '') + (p.title || '');
       fieldsEl.innerHTML = '<p class="text-sm text-slate-400">Loading colours/sizes…</p>';
-      stockGarmentPicked = { title: p.title, brand: p.brand, cost_price: p.cost_price, sell_price: p.sell_price };
+      stockGarmentPicked = { title: p.title, supplier_code: p.supplier_code, brand: p.brand, cost_price: p.cost_price, sell_price: p.sell_price };
 
       let variants = [p];
       if (p.supplier_code) {
@@ -4999,6 +5023,7 @@
       const p = stockGarmentPicked;
       if (!p) return;
       document.getElementById('stock-edit-item').value = p.title || '';
+      document.getElementById('stock-edit-code').value = p.supplier_code || '';
       document.getElementById('stock-edit-brand').value = p.brand || '';
       document.getElementById('stock-edit-colour').value = colour || '';
       document.getElementById('stock-edit-size').value = size || '';
@@ -5016,6 +5041,7 @@
       editingStockId = id;
       document.getElementById('stock-edit-form-title').textContent = 'Edit Stock Item';
       document.getElementById('stock-edit-item').value = s.item || '';
+      document.getElementById('stock-edit-code').value = s.supplier_code || '';
       document.getElementById('stock-edit-brand').value = s.brand || '';
       document.getElementById('stock-edit-colour').value = s.colour || '';
       document.getElementById('stock-edit-size').value = s.size || '';
@@ -5048,6 +5074,7 @@
 
       const payload = {
         item,
+        supplier_code: document.getElementById('stock-edit-code').value.trim(),
         brand: document.getElementById('stock-edit-brand').value.trim(),
         colour: document.getElementById('stock-edit-colour').value.trim(),
         size: document.getElementById('stock-edit-size').value.trim(),

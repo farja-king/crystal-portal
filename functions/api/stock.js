@@ -33,6 +33,7 @@ export async function onRequest(context) {
       CREATE TABLE IF NOT EXISTS stock_items (
         id TEXT PRIMARY KEY,
         item TEXT NOT NULL,
+        supplier_code TEXT,
         brand TEXT,
         colour TEXT,
         size TEXT,
@@ -44,6 +45,17 @@ export async function onRequest(context) {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    // supplier_code (the garment catalog's reference code, e.g. RX101) was
+    // added after this table already existed on live D1 - IF NOT EXISTS
+    // above is a no-op against an existing table, so it needs adding here
+    // too, same pattern as products.js. Purely informational: never used to
+    // link back to the catalog row it was copied from (see
+    // pickStockGarmentResult/applyStockGarmentVariant in admin.html).
+    try {
+      await db.prepare("ALTER TABLE stock_items ADD COLUMN supplier_code TEXT").run();
+    } catch {
+      // already exists
+    }
 
     // The actual ledger - every add/subtract, with why. reason is free text
     // (e.g. "Delivery from PenCarrie", "Used on INV-0042", "Damaged/written
@@ -91,10 +103,11 @@ export async function onRequest(context) {
 
       const id = crypto.randomUUID();
       await db.prepare(`
-        INSERT INTO stock_items (id, item, brand, colour, size, cost_price, sale_price, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO stock_items (id, item, supplier_code, brand, colour, size, cost_price, sale_price, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id, item,
+        String(data.supplier_code || "").trim(),
         String(data.brand || "").trim(),
         String(data.colour || "").trim(),
         String(data.size || "").trim(),
@@ -138,10 +151,11 @@ export async function onRequest(context) {
       }
 
       await db.prepare(`
-        UPDATE stock_items SET item = ?, brand = ?, colour = ?, size = ?, cost_price = ?, sale_price = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+        UPDATE stock_items SET item = ?, supplier_code = ?, brand = ?, colour = ?, size = ?, cost_price = ?, sale_price = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         String(data.item || existing.item).trim(),
+        data.supplier_code !== undefined ? String(data.supplier_code).trim() : existing.supplier_code,
         data.brand !== undefined ? String(data.brand).trim() : existing.brand,
         data.colour !== undefined ? String(data.colour).trim() : existing.colour,
         data.size !== undefined ? String(data.size).trim() : existing.size,
