@@ -8319,15 +8319,16 @@
           ? '<div class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold shrink-0">●</div>'
           : '<div class="w-6 h-6 rounded-full border-2 border-slate-300 shrink-0"></div>';
         const titleCls = isDone ? 'text-slate-400 line-through' : isCurrent ? 'text-slate-900 font-semibold' : 'text-slate-500';
-        // Shown on every step, including "Order collected", for a
-        // consistent row - genuinely disabled for that one step now (used
-        // to just be undocumented-inert while still ticking, which let it
-        // silently email the customer via schedulePickupReview's fallback
-        // to whatever was stored here - see the comment there). That step's
-        // only real customer touchpoint is the review-request popup.
-        const notifyToggle = `
-                <label title="${isCollectedStep ? "Not used for this step - ticking it done opens the review-request scheduling popup instead" : 'Email the customer automatically when this step is marked done'}" class="flex items-center gap-1 text-xs ${isCollectedStep ? 'text-slate-300' : 'text-slate-500'} px-1">
-                  <input type="checkbox" ${s.notify_customer ? 'checked' : ''} ${isCollectedStep ? 'disabled' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
+        // Not shown at all for "Order collected" - a disabled-but-visible
+        // checkbox sitting right next to the real ✓ "mark done" button read
+        // as "the tick box for this step is broken" (reasonably - it looks
+        // identical to a normal tick box, just dead). Removed entirely
+        // rather than left disabled, since it never did anything for this
+        // step either way - see schedulePickupReview, which is what
+        // actually completes it.
+        const notifyToggle = isCollectedStep ? '' : `
+                <label title="Email the customer automatically when this step is marked done" class="flex items-center gap-1 text-xs text-slate-500 px-1">
+                  <input type="checkbox" ${s.notify_customer ? 'checked' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
                   📧
                 </label>`;
         const pickupStatusHtml = isCollectedStep && order
@@ -8356,7 +8357,7 @@
               <input type="text" value="${escapeAttr(s.title)}" onblur="saveStepTitle('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" class="flex-1 min-w-[8rem] text-sm bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 ${titleCls}" />
               <div class="flex items-center gap-1 shrink-0">
                 ${notifyToggle}
-                <button type="button" onclick="toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone}, '${escapeAttr(s.title)}')" title="${isCollectedStep && !isDone ? 'Confirm pickup & schedule review request' : isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">${isDone ? '↺' : '✓'}</button>
+                <button type="button" onclick="toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone}, '${escapeAttr(s.title)}')" title="${isCollectedStep && !isDone ? 'Confirm pickup & schedule review request' : isDone ? 'Reopen' : 'Mark done'}" class="text-xs ${isCollectedStep && !isDone ? 'bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-600' : 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-700'} px-2 py-1 rounded font-semibold">${isCollectedStep && !isDone ? '✓ Confirm pickup' : isDone ? '↺' : '✓'}</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'up')" title="Move up" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▲</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'down')" title="Move down" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▼</button>
                 <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold cursor-pointer">
