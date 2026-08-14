@@ -985,10 +985,26 @@
           <input id="stock-search" type="text" placeholder="Search by item, code, brand, colour or size…" oninput="filterStock()" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
           <button type="button" onclick="clearStockSearch()" id="stock-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
         </div>
+
+        <!-- Bulk delete - same tick-rows-then-act pattern as the Customers
+             tab (see selectedStockIds/updateStockBulkBar/bulkDeleteStock),
+             repeated above and below the table so a long list doesn't mean
+             scrolling back up to act on what's ticked. -->
+        <div id="stock-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+          <span id="stock-bulk-count" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="bulkDeleteStock()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Delete selected
+          </button>
+          <button type="button" onclick="clearStockSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+            Clear selection
+          </button>
+        </div>
+
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="p-4 w-8"><input type="checkbox" id="stock-select-all" onchange="toggleSelectAllStock(this.checked)" class="rounded border-slate-300" /></th>
                 <th class="p-4">Item</th>
                 <th class="p-4">Code</th>
                 <th class="p-4">Brand</th>
@@ -1001,9 +1017,19 @@
               </tr>
             </thead>
             <tbody id="stock-table-body" class="divide-y divide-slate-100 text-sm">
-              <tr><td colspan="9" class="p-8 text-center text-slate-400">Loading stock…</td></tr>
+              <tr><td colspan="10" class="p-8 text-center text-slate-400">Loading stock…</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div id="stock-bulk-bar-bottom" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mt-3 text-sm">
+          <span id="stock-bulk-count-bottom" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="bulkDeleteStock()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Delete selected
+          </button>
+          <button type="button" onclick="clearStockSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+            Clear selection
+          </button>
         </div>
       </div>
     </section>
@@ -4834,15 +4860,18 @@
 
     async function loadStock() {
       const tbody = document.getElementById('stock-table-body');
-      tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">Loading stock…</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-slate-400">Loading stock…</td></tr>';
       try {
         const res = await fetch(API_STOCK_URL, { cache: 'no-store' });
         allStock = await res.json();
         stockById = {};
         allStock.forEach((s) => { stockById[s.id] = s; });
+        // Ticked rows that no longer exist (deleted elsewhere, or just
+        // gone after a reload) shouldn't linger in the bulk-action count.
+        selectedStockIds.forEach((id) => { if (!stockById[id]) selectedStockIds.delete(id); });
         filterStock();
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
       }
     }
 
@@ -4876,11 +4905,12 @@
     function renderStockTable(items) {
       const tbody = document.getElementById('stock-table-body');
       if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-slate-400">' + (allStock.length ? 'No stock items match your search.' : 'No stock yet - add your first item above.') + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="p-8 text-center text-slate-400">' + (allStock.length ? 'No stock items match your search.' : 'No stock yet - add your first item above.') + '</td></tr>';
         return;
       }
       tbody.innerHTML = items.map((s) => `
         <tr class="hover:bg-slate-50">
+          <td class="p-4"><input type="checkbox" class="stock-select-checkbox rounded border-slate-300" data-id="${escapeAttr(s.id)}" ${selectedStockIds.has(s.id) ? 'checked' : ''} onchange="toggleStockSelect('${escapeAttr(s.id)}', this.checked)" /></td>
           <td class="p-4 font-semibold text-slate-900">${escapeHtml(s.item)}</td>
           <td class="p-4 font-mono text-xs text-slate-600">${escapeHtml(s.supplier_code || '-')}</td>
           <td class="p-4">${escapeHtml(s.brand || '-')}</td>
@@ -4896,6 +4926,67 @@
             </div>
           </td>
         </tr>`).join('');
+      document.getElementById('stock-select-all').checked = items.length > 0 && items.every((s) => selectedStockIds.has(s.id));
+      updateStockBulkBar();
+    }
+
+    // Same tick-rows-then-act pattern as selectedCustomerIds/
+    // updateCustomerBulkBar/bulkDeleteCustomers.
+    let selectedStockIds = new Set();
+
+    function toggleStockSelect(id, checked) {
+      if (checked) selectedStockIds.add(id);
+      else selectedStockIds.delete(id);
+      updateStockBulkBar();
+    }
+
+    function toggleSelectAllStock(checked) {
+      document.querySelectorAll('#stock-table-body .stock-select-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) selectedStockIds.add(cb.dataset.id);
+        else selectedStockIds.delete(cb.dataset.id);
+      });
+      updateStockBulkBar();
+    }
+
+    function clearStockSelection() {
+      selectedStockIds = new Set();
+      filterStock();
+    }
+
+    function updateStockBulkBar() {
+      const count = selectedStockIds.size;
+      ['', '-bottom'].forEach((suffix) => {
+        const bar = document.getElementById('stock-bulk-bar' + suffix);
+        bar.classList.toggle('hidden', count === 0);
+        if (count === 0) return;
+        document.getElementById('stock-bulk-count' + suffix).textContent = count + ' selected';
+      });
+    }
+
+    // Same one-DELETE-per-row loop as bulkDeleteCustomers - a bad row
+    // doesn't block the rest, and each delete also clears that item's
+    // movement history, same as the per-row Delete button.
+    async function bulkDeleteStock() {
+      const ids = [...selectedStockIds];
+      if (!ids.length) return;
+      const names = ids.map((id) => (stockById[id] ? stockById[id].item : id)).join(', ');
+      if (!(await confirmModal(`Delete ${ids.length} stock item(s)?\n\n${names}\n\nThis also removes their add/subtract history. This cannot be undone.`))) return;
+
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          await fetch(API_STOCK_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+          delete stockById[id];
+          allStock = allStock.filter((s) => s.id !== id);
+          selectedStockIds.delete(id);
+        } catch (e) {
+          failed++;
+        }
+      }
+      filterStock();
+      if (failed) showActionToast('⚠', `${failed} item(s) could not be deleted.`);
+      else showActionToast('✓', `${ids.length} stock item(s) deleted.`);
     }
 
     // Amount typed is always positive - direction comes from which button
