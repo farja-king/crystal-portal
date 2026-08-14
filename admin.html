@@ -1487,10 +1487,28 @@
         </button>
       </div>
       <div id="trash-filter-tabs" class="flex flex-wrap gap-2 mb-4"></div>
+
+      <!-- Bulk actions - same tick-rows-then-act pattern as Stock/Customers/
+           Orders (see selectedTrashKeys/updateTrashBulkBar), just dispatched
+           per row to whichever API that row's type actually belongs to. -->
+      <div id="trash-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+        <span id="trash-bulk-count" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="bulkRestoreFromTrash()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Restore selected
+        </button>
+        <button type="button" onclick="bulkPermanentlyDeleteFromTrash()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected forever
+        </button>
+        <button type="button" onclick="clearTrashSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
+      </div>
+
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="w-full text-left text-sm">
           <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
             <tr>
+              <th class="p-4 w-8"><input type="checkbox" id="trash-select-all" onchange="toggleSelectAllTrash(this.checked)" class="rounded border-slate-300" /></th>
               <th class="p-4">Type</th>
               <th class="p-4">Item</th>
               <th class="p-4">Details</th>
@@ -1499,9 +1517,22 @@
             </tr>
           </thead>
           <tbody id="trash-table-body" class="divide-y divide-slate-100">
-            <tr><td colspan="5" class="p-8 text-center text-slate-400">Loading…</td></tr>
+            <tr><td colspan="6" class="p-8 text-center text-slate-400">Loading…</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div id="trash-bulk-bar-bottom" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mt-3 text-sm">
+        <span id="trash-bulk-count-bottom" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="bulkRestoreFromTrash()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Restore selected
+        </button>
+        <button type="button" onclick="bulkPermanentlyDeleteFromTrash()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected forever
+        </button>
+        <button type="button" onclick="clearTrashSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
       </div>
     </section>
 
@@ -9665,7 +9696,7 @@
 
     async function loadTrash() {
       const tbody = document.getElementById('trash-table-body');
-      tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">Loading…</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       trashRowsById = {};
       try {
         const [orders, stock, products, customers, proofs] = await Promise.all([
@@ -9687,7 +9718,7 @@
         renderTrashFilterTabs();
         renderTrashTable();
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-red-500">Could not load the trash: ' + escapeHtml(e.message) + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-red-500">Could not load the trash: ' + escapeHtml(e.message) + '</td></tr>';
       }
     }
 
@@ -9719,8 +9750,15 @@
         : trashAllEntries.filter(({ type, row }) => TRASH_TYPES[type].category(row) === trashActiveFilter);
 
       trashRowsById = {};
+      // Switching filters (or a fresh load) drops any ticks for rows that
+      // are no longer in view - a selection scoped to "Garments" shouldn't
+      // silently still include a Customer row you can't even see right now.
+      const visibleKeys = new Set(entries.map(({ type, row }) => type + ':' + row.id));
+      selectedTrashKeys.forEach((k) => { if (!visibleKeys.has(k)) selectedTrashKeys.delete(k); });
+
       if (!entries.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">Nothing here.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">Nothing here.</td></tr>';
+        updateTrashBulkBar();
         return;
       }
 
@@ -9731,6 +9769,7 @@
         const typeLabel = typeof spec.label === 'function' ? spec.label(row) : spec.label;
         return `
           <tr>
+            <td class="p-4"><input type="checkbox" class="trash-select-checkbox rounded border-slate-300" data-key="${escapeAttr(rowKey)}" ${selectedTrashKeys.has(rowKey) ? 'checked' : ''} onchange="toggleTrashSelect('${escapeAttr(rowKey)}', this.checked)" /></td>
             <td class="p-4"><span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(typeLabel)}</span></td>
             <td class="p-4 font-semibold text-slate-900">${escapeHtml(spec.title(row))}</td>
             <td class="p-4 text-slate-500 text-xs">${escapeHtml(spec.detail(row))}</td>
@@ -9741,6 +9780,8 @@
             </td>
           </tr>`;
       }).join('');
+      document.getElementById('trash-select-all').checked = entries.length > 0 && entries.every(({ type, row }) => selectedTrashKeys.has(type + ':' + row.id));
+      updateTrashBulkBar();
     }
 
     async function restoreFromTrash(rowKey) {
@@ -9775,6 +9816,100 @@
       } catch (e) {
         showActionToast('⚠', 'Could not delete: ' + e.message);
       }
+    }
+
+    // Same tick-rows-then-act pattern as selectedStockIds/selectedOrderIds/
+    // selectedCustomerIds - rowKey is "type:id" (see renderTrashTable),
+    // since a selection here can span several different underlying tables
+    // at once.
+    let selectedTrashKeys = new Set();
+
+    function toggleTrashSelect(rowKey, checked) {
+      if (checked) selectedTrashKeys.add(rowKey);
+      else selectedTrashKeys.delete(rowKey);
+      updateTrashBulkBar();
+    }
+
+    function toggleSelectAllTrash(checked) {
+      document.querySelectorAll('#trash-table-body .trash-select-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) selectedTrashKeys.add(cb.dataset.key);
+        else selectedTrashKeys.delete(cb.dataset.key);
+      });
+      updateTrashBulkBar();
+    }
+
+    function clearTrashSelection() {
+      selectedTrashKeys = new Set();
+      renderTrashTable();
+    }
+
+    function updateTrashBulkBar() {
+      const count = selectedTrashKeys.size;
+      ['', '-bottom'].forEach((suffix) => {
+        const bar = document.getElementById('trash-bulk-bar' + suffix);
+        bar.classList.toggle('hidden', count === 0);
+        if (count === 0) return;
+        document.getElementById('trash-bulk-count' + suffix).textContent = count + ' selected';
+      });
+    }
+
+    // Same one-request-per-row loop as bulkDeleteCustomers/bulkDeleteStock -
+    // a bad row doesn't block the rest, and rows can span several different
+    // APIs at once (a selection might mix a customer, a garment and an
+    // invoice), each dispatched via its own TRASH_TYPES entry.
+    async function bulkRestoreFromTrash() {
+      const keys = [...selectedTrashKeys];
+      if (!keys.length) return;
+      let failed = 0;
+      for (const key of keys) {
+        const entry = trashRowsById[key];
+        if (!entry) continue;
+        const spec = TRASH_TYPES[entry.type];
+        try {
+          const res = await fetch(spec.url, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: entry.row.id, restore: true }),
+          });
+          if (!res.ok) throw new Error();
+        } catch (e) {
+          failed++;
+        }
+      }
+      selectedTrashKeys = new Set();
+      loadTrash();
+      if (failed) showActionToast('⚠', `${failed} item(s) could not be restored.`);
+      else showActionToast('✓', `${keys.length} item(s) restored.`);
+    }
+
+    async function bulkPermanentlyDeleteFromTrash() {
+      const keys = [...selectedTrashKeys];
+      if (!keys.length) return;
+      const names = keys.map((key) => {
+        const entry = trashRowsById[key];
+        return entry ? TRASH_TYPES[entry.type].title(entry.row) : key;
+      }).join(', ');
+      if (!(await confirmModal(`Permanently delete ${keys.length} item(s)?\n\n${names}\n\nThis cannot be undone - there is no further recovery after this.`))) return;
+
+      let failed = 0;
+      for (const key of keys) {
+        const entry = trashRowsById[key];
+        if (!entry) continue;
+        const spec = TRASH_TYPES[entry.type];
+        try {
+          const res = await fetch(spec.url, {
+            method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: entry.row.id, permanent: true }),
+          });
+          if (!res.ok) throw new Error();
+        } catch (e) {
+          failed++;
+        }
+      }
+      selectedTrashKeys = new Set();
+      loadTrash();
+      if (failed) showActionToast('⚠', `${failed} item(s) could not be deleted.`);
+      else showActionToast('✓', `${keys.length} item(s) permanently deleted.`);
     }
 
     // Full version history for one quote/invoice's design proof(s) - v1, v2,
