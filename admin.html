@@ -5197,7 +5197,7 @@
           bodyHtml = `<span class="text-slate-700">${label}</span>`;
         }
         const shortBell = (m.delta < 0 && currentlyShort)
-          ? `<span class="stock-shortfall-flash text-rose-600" title="Not enough in stock right now to fulfill this">🔔</span>`
+          ? `<span class="stock-shortfall-flash ml-1 px-2 py-1 text-xs font-bold rounded-full bg-rose-600 text-white" title="Not enough in stock right now to fulfill this">🔔 Stock shortfall</span>`
           : '';
         return `
           <div class="flex items-center justify-between gap-3 py-2 text-sm">
