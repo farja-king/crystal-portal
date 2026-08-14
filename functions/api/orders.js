@@ -9,6 +9,7 @@
 // column here by analogy with products.js; that VAT is what Martin pays
 // suppliers (a cost), not something charged to his customers.
 import { logOrderEvent, ensureOrderEventsTable } from "../_lib/order-events.js";
+import { deductStockForOrder } from "../_lib/stock-deduct.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -574,6 +575,17 @@ export async function onRequest(context) {
 
       await logOrderEvent(db, id, "created", `${isInvoice ? "Invoice" : "Quote"} ${docNumber} created`);
 
+      // A job can be invoiced straight away, skipping the quote stage
+      // entirely (see the comment above this branch) - that's still "an
+      // invoice now exists", so stock comes off the shelf here too, same
+      // as the convert_to_invoice path below.
+      if (isInvoice) {
+        const deducted = await deductStockForOrder(db, priced.items, `Invoiced on ${docNumber}`);
+        if (deducted.length) {
+          await logOrderEvent(db, id, "stock", `Stock updated: ${deducted.map((d) => `${d.item} (${d.colour}/${d.size}) -${d.qty}`).join(", ")}`);
+        }
+      }
+
       return json({
         success: true, id, ...priced,
         quote_number: isInvoice ? null : docNumber,
@@ -773,6 +785,12 @@ export async function onRequest(context) {
           WHERE id = ?
         `).bind(invoice_number, data.id).run();
         await logOrderEvent(db, data.id, "converted", `Converted to invoice ${invoice_number}`);
+
+        const deducted = await deductStockForOrder(db, JSON.parse(existing.items || "[]"), `Invoiced on ${invoice_number}`);
+        if (deducted.length) {
+          await logOrderEvent(db, data.id, "stock", `Stock updated: ${deducted.map((d) => `${d.item} (${d.colour}/${d.size}) -${d.qty}`).join(", ")}`);
+        }
+
         return json({ success: true, invoice_number });
       }
 
