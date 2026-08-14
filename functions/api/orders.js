@@ -362,6 +362,18 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // deleted_at - soft-delete, same universal-Trash pattern as
+    // customers.deleted_at/stock_items.deleted_at/products.deleted_at (see
+    // admin.html's unified Trash tab, which pulls from all four). Distinct
+    // from archived_at above: archiving is a deliberate "tuck this away,
+    // it's done" that still counts everywhere (Dashboard stats, customer
+    // history); deleted_at means "gone", hidden from every listing until
+    // restored or purged via permanent:true on DELETE.
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN deleted_at TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // payments - the real ledger, one row per payment actually received.
     // paid_status on the order stays a quick-glance summary ('unpaid' |
@@ -530,6 +542,17 @@ export async function onRequest(context) {
         return json({ ...row, items: JSON.parse(row.items || "[]"), customer_address: customer || null });
       }
 
+      // ?trash=1 -> only soft-deleted orders, for the universal Trash tab.
+      // A completely separate simple query, same as customers.js's own
+      // ?trash=1 - a trashed row is never mixed into any other filter
+      // combination below.
+      if (url.searchParams.get("trash")) {
+        const { results } = await db.prepare(
+          "SELECT * FROM orders WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+        ).all();
+        return json(results.map((r) => ({ ...r, items: JSON.parse(r.items || "[]") })));
+      }
+
       // ?customer_id=X -> a customer's full quote/invoice history, used by
       // the Customer Directory's View button.
       const docType = url.searchParams.get("doc_type");
@@ -540,7 +563,10 @@ export async function onRequest(context) {
       // revenue/stats - archiving only declutters the working list, it was
       // never meant to erase a completed sale from the numbers.
       const includeAll = url.searchParams.get("all");
-      const where = [];
+      // Trashed rows are excluded everywhere else unconditionally - even
+      // ?all=1 reporting, since a deleted (not just archived) sale
+      // shouldn't count in the numbers until it's restored.
+      const where = ["deleted_at IS NULL"];
       const binds = [];
       if (docType) { where.push("doc_type = ?"); binds.push(docType); }
       if (customerId) { where.push("customer_id = ?"); binds.push(customerId); }
@@ -630,6 +656,15 @@ export async function onRequest(context) {
     // ------------------------------------------------------------------ PUT --
     if (request.method === "PUT") {
       const data = await request.json();
+
+      // Restore from the Trash - see DELETE below, and GET's ?trash=1.
+      // Doesn't touch stock/payments/anything else the order affected,
+      // since a soft-delete never touched those either - restoring just
+      // makes the order visible again, exactly as it was.
+      if (data.restore) {
+        await db.prepare("UPDATE orders SET deleted_at = NULL WHERE id = ?").bind(data.id).run();
+        return json({ success: true });
+      }
 
       // Not scoped to any one order (no data.id involved) - lets an admin
       // correct the invoice numbering sequence, e.g. after a batch of test
@@ -1050,28 +1085,39 @@ export async function onRequest(context) {
         return json({ success: true, purged: orphaned.length });
       }
 
-      const { id, ids } = data;
+      const { id, ids, permanent } = data;
       const originUrl = new URL(request.url).origin;
+
+      // The real, unrecoverable delete - everything the old DELETE used to
+      // do unconditionally, now gated behind permanent:true (sent only by
+      // the Trash tab's own "Delete forever"). Stock only gets restored
+      // here, not on a soft-delete - a trashed order still conceptually
+      // exists (it might get restored), so its stock effects stay in place
+      // until it's actually gone for good.
+      async function permanentlyDeleteOrders(orderIds) {
+        await deleteOrphanedDesignProofs(orderIds);
+        await deleteOrphanedProductionSteps(orderIds);
+        await deleteManualInvoicePdfs(orderIds);
+        await deleteOrderPaymentsAndLogs(orderIds);
+        for (const orderId of orderIds) await restoreStockForOrder(db, orderId, env, originUrl);
+        const placeholders = orderIds.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...orderIds).run();
+      }
+
       if (Array.isArray(ids) && ids.length) {
-        await deleteOrphanedDesignProofs(ids);
-        await deleteOrphanedProductionSteps(ids);
-        await deleteManualInvoicePdfs(ids);
-        await deleteOrderPaymentsAndLogs(ids);
-        // Whatever these orders took off the shelf goes back - see
-        // restoreStockForOrder. Sequential rather than Promise.all so two
-        // orders that both touch the same stock item don't race each
-        // other's recompute.
-        for (const orderId of ids) await restoreStockForOrder(db, orderId, env, originUrl);
-        const placeholders = ids.map(() => "?").join(",");
-        await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...ids).run();
+        if (permanent) {
+          await permanentlyDeleteOrders(ids);
+        } else {
+          const placeholders = ids.map(() => "?").join(",");
+          await db.prepare(`UPDATE orders SET deleted_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...ids).run();
+        }
         return json({ success: true, count: ids.length });
       }
-      await deleteOrphanedDesignProofs([id]);
-      await deleteOrphanedProductionSteps([id]);
-      await deleteManualInvoicePdfs([id]);
-      await deleteOrderPaymentsAndLogs([id]);
-      await restoreStockForOrder(db, id, env, originUrl);
-      await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
+      if (permanent) {
+        await permanentlyDeleteOrders([id]);
+      } else {
+        await db.prepare("UPDATE orders SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      }
       return json({ success: true });
     }
 

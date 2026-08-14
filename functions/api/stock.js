@@ -76,7 +76,11 @@ export async function onRequest(context) {
     // threshold itself as the restock target, so an item with no target
     // set behaves exactly as before this field existed - see
     // reorderTargetFor() in admin.html's printReorderList.
-    for (const col of ["supplier_code TEXT", "reorder_threshold REAL", "low_stock_alerted_at TEXT", "min_stock_level REAL"]) {
+    // deleted_at - soft-delete, same universal-Trash pattern as
+    // customers.js/orders.js/products.js (see admin.html's unified Trash
+    // tab). DELETE sets this by default; permanent:true does the real
+    // delete (and only then cleans up stock_movements).
+    for (const col of ["supplier_code TEXT", "reorder_threshold REAL", "low_stock_alerted_at TEXT", "min_stock_level REAL", "deleted_at TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE stock_items ADD COLUMN ${col}`).run();
       } catch {
@@ -133,8 +137,18 @@ export async function onRequest(context) {
       return json(results);
     }
 
+    // ?trash=1 -> only soft-deleted stock items, for the universal Trash tab.
+    if (request.method === "GET" && url.searchParams.get("trash")) {
+      const { results } = await db.prepare(
+        "SELECT * FROM stock_items WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+      ).all();
+      return json(results);
+    }
+
     if (request.method === "GET") {
-      const { results } = await db.prepare("SELECT * FROM stock_items ORDER BY item ASC, colour ASC, size ASC").all();
+      const { results } = await db.prepare(
+        "SELECT * FROM stock_items WHERE deleted_at IS NULL ORDER BY item ASC, colour ASC, size ASC"
+      ).all();
       return json(results);
     }
 
@@ -207,6 +221,13 @@ export async function onRequest(context) {
     if (request.method === "PUT") {
       const data = await request.json();
       if (!data.id) return json({ error: "id is required" }, 400);
+
+      // Restore from the Trash - see DELETE below, and GET's ?trash=1.
+      if (data.restore) {
+        await db.prepare("UPDATE stock_items SET deleted_at = NULL WHERE id = ?").bind(data.id).run();
+        return json({ success: true });
+      }
+
       const existing = await db.prepare("SELECT * FROM stock_items WHERE id = ?").bind(data.id).first();
       if (!existing) return json({ error: "Stock item not found" }, 404);
 
@@ -257,8 +278,12 @@ export async function onRequest(context) {
     if (request.method === "DELETE") {
       const data = await request.json();
       if (!data.id) return json({ error: "id is required" }, 400);
-      await db.prepare("DELETE FROM stock_movements WHERE stock_item_id = ?").bind(data.id).run();
-      await db.prepare("DELETE FROM stock_items WHERE id = ?").bind(data.id).run();
+      if (data.permanent) {
+        await db.prepare("DELETE FROM stock_movements WHERE stock_item_id = ?").bind(data.id).run();
+        await db.prepare("DELETE FROM stock_items WHERE id = ?").bind(data.id).run();
+      } else {
+        await db.prepare("UPDATE stock_items SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
+      }
       return json({ success: true });
     }
 

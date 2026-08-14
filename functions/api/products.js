@@ -100,7 +100,15 @@ export async function onRequest(context) {
     // must run before the index creation below - CREATE INDEX on a column
     // that doesn't exist yet throws "no such column", which would otherwise
     // break every request against a table that predates customer_id.
-    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0", "customer_id TEXT", "item_type TEXT DEFAULT 'garment'"]) {
+    // deleted_at - soft-delete, same universal-Trash pattern as
+    // customers.js/orders.js/stock.js (see admin.html's unified Trash tab).
+    // DELETE sets this by default now; permanent:true does the real
+    // removal. The bulk supplier-wipe/reset_prices tools below are
+    // deliberately NOT routed through this - they're import-correction
+    // tools that can touch thousands of rows at once, not a "delete this
+    // one item" action, and flooding the Trash with a whole supplier's
+    // worth of rows would make it useless for its actual purpose.
+    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "on_website INTEGER DEFAULT 0", "customer_id TEXT", "item_type TEXT DEFAULT 'garment'", "deleted_at TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run();
       } catch {
@@ -130,6 +138,7 @@ export async function onRequest(context) {
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_title ON products (title)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_brand ON products (brand)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_customer ON products (customer_id)"),
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_products_deleted ON products (deleted_at)"),
     ]);
 
     // ------------------------------------------------------------------ GET --
@@ -137,13 +146,21 @@ export async function onRequest(context) {
       const url = new URL(request.url);
       const p = url.searchParams;
 
+      // ?trash=1 -> only soft-deleted products, for the universal Trash tab.
+      if (p.get("trash")) {
+        const { results } = await db.prepare(
+          "SELECT * FROM products WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 500"
+        ).all();
+        return json({ results });
+      }
+
       // ?facets=1 -> the dropdown values the catalog UI filters by. Customer-
       // specific items (see customer_id below) are excluded - they're a
       // per-customer price list, not part of the general catalog Martin
       // browses/bulk-prices here.
       if (p.get("facets")) {
         const facetItemType = (p.get("item_type") || "").trim();
-        const globalOnly = "(customer_id IS NULL OR customer_id = '')"
+        const globalOnly = "deleted_at IS NULL AND (customer_id IS NULL OR customer_id = '')"
           + (facetItemType === "garment" || facetItemType === "service" ? ` AND item_type = '${facetItemType}'` : "");
         const [suppliers, brands, categories, totals] = await db.batch([
           db.prepare(`SELECT supplier AS value, COUNT(*) AS n FROM products WHERE ${globalOnly} GROUP BY supplier ORDER BY supplier`),
@@ -176,14 +193,14 @@ export async function onRequest(context) {
         const { results } = await db.prepare(`
           SELECT pr.*, c.name AS owner_customer_name
           FROM products pr JOIN customers c ON c.id = pr.customer_id
-          WHERE pr.customer_id IS NOT NULL AND pr.customer_id <> '' AND pr.customer_id <> ?1
+          WHERE pr.deleted_at IS NULL AND pr.customer_id IS NOT NULL AND pr.customer_id <> '' AND pr.customer_id <> ?1
             AND (pr.title LIKE ?2 OR pr.supplier_code LIKE ?2 OR pr.colour LIKE ?2 OR pr.category LIKE ?2)
           ORDER BY pr.title LIMIT 25
         `).bind(otherCustomersFor, `%${query}%`).all();
         return json({ results });
       }
 
-      const where = [];
+      const where = ["deleted_at IS NULL"];
       const binds = [];
 
       const q = (p.get("q") || "").trim();
@@ -403,6 +420,12 @@ export async function onRequest(context) {
     if (request.method === "PUT") {
       const data = await request.json();
 
+      // Restore from the Trash - see DELETE below, and GET's ?trash=1.
+      if (data.restore) {
+        await db.prepare("UPDATE products SET deleted_at = NULL WHERE id = ?").bind(data.id).run();
+        return json({ success: true });
+      }
+
       // Bulk pricing: setting ~6.3k sell prices by hand is not realistic, so a
       // markup/margin can be applied across a filtered slice, or a fixed price
       // can be set on all filtered items (useful for "copy this price to all").
@@ -506,11 +529,19 @@ export async function onRequest(context) {
       const data = await request.json();
       if (Array.isArray(data.ids) && data.ids.length) {
         const placeholders = data.ids.map(() => "?").join(",");
-        await db.prepare(`DELETE FROM products WHERE id IN (${placeholders})`).bind(...data.ids).run();
+        if (data.permanent) {
+          await db.prepare(`DELETE FROM products WHERE id IN (${placeholders})`).bind(...data.ids).run();
+        } else {
+          await db.prepare(`UPDATE products SET deleted_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`).bind(...data.ids).run();
+        }
         return json({ success: true, count: data.ids.length });
       }
       if (data.id) {
-        await db.prepare("DELETE FROM products WHERE id = ?").bind(data.id).run();
+        if (data.permanent) {
+          await db.prepare("DELETE FROM products WHERE id = ?").bind(data.id).run();
+        } else {
+          await db.prepare("UPDATE products SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
+        }
         return json({ success: true });
       }
       // Clearing a supplier is how a bad import gets rolled back.
