@@ -33,11 +33,13 @@ export async function onRequest(context) {
     { title: "Garments ordered", notify: false },
     { title: "In production", notify: false },
     { title: "Ready for collection/dispatch", notify: true },
-    // Not notify-enabled itself - marking this one done is what triggers
-    // the "Confirmed Pickup?" review-request scheduling popup in admin.html
-    // (see toggleStepDone/schedulePickupReview and
-    // functions/api/review-requests.js), not a plain notify email.
-    { title: "Order collected", notify: false },
+    // notify here doesn't trigger a plain step email like the others - it
+    // gates whether marking this step done opens the "Confirmed Pickup?"
+    // review-request scheduling popup in admin.html at all (see
+    // toggleStepDone/schedulePickupReview and functions/api/review-requests.js).
+    // Defaults on so new orders keep asking for a review unless Martin
+    // unticks it for a specific order.
+    { title: "Order collected", notify: true },
   ];
 
   if (!bucket) {
