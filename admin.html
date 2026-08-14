@@ -1006,6 +1006,10 @@
             <span class="block font-medium text-slate-700 mb-1">Reorder threshold (default 3 - override here)</span>
             <input id="stock-edit-threshold" type="number" step="1" min="0" placeholder="3" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
           </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Minimum stock level to hold</span>
+            <input id="stock-edit-min-level" type="number" step="1" min="0" placeholder="Same as threshold" title="How many you actually want back on the shelf when reordering - can be higher than the alert threshold above (e.g. alert at 3, but always restock this one up to 10)" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
         </div>
         <label class="text-sm block mt-4">
           <span class="block font-medium text-slate-700 mb-1">Notes</span>
@@ -4961,8 +4965,9 @@
 
       const rows = lowItems.map((s) => {
         const threshold = effectiveReorderThreshold(s);
+        const target = reorderTargetFor(s);
         const qty = Number(s.quantity) || 0;
-        const toOrder = Math.max(1, threshold - qty);
+        const toOrder = Math.max(1, target - qty);
         return `<tr>
           <td>${escapeHtml(s.item)}</td>
           <td>${escapeHtml(s.supplier_code || '-')}</td>
@@ -4971,6 +4976,7 @@
           <td>${escapeHtml(s.size || '-')}</td>
           <td>${qty}</td>
           <td>${threshold}</td>
+          <td>${target}</td>
           <td><strong>${toOrder}</strong></td>
         </tr>`;
       }).join('');
@@ -4989,11 +4995,11 @@
           <h1>Crystal Custom Embroidery</h1>
           <div class="muted">26 Grove Street, Raunds, NN9 6DS</div>
           <div class="muted" style="margin-top:12px;font-size:1rem;color:#0f172a;font-weight:600;">Reorder List</div>
-          <div class="muted">Everything at or below its reorder threshold, and how many to buy to bring it back up to that threshold</div>
+          <div class="muted">Everything at or below its reorder threshold, and how many to buy to bring it back up to its minimum stock level</div>
           <div class="muted" style="margin-top:4px;">Printed ${escapeHtml(new Date().toLocaleString('en-GB'))}</div>
           ${lowItems.length ? `
           <table>
-            <thead><tr><th>Item</th><th>Code</th><th>Brand</th><th>Colour</th><th>Size</th><th>Current</th><th>Threshold</th><th>Order qty</th></tr></thead>
+            <thead><tr><th>Item</th><th>Code</th><th>Brand</th><th>Colour</th><th>Size</th><th>Current</th><th>Threshold</th><th>Target</th><th>Order qty</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>` : '<p style="margin-top:24px;">Nothing is below its reorder threshold right now.</p>'}
           <script>window.print();<\/script>
@@ -5034,6 +5040,17 @@
 
     function isStockLow(s) {
       return (Number(s.quantity) || 0) <= effectiveReorderThreshold(s);
+    }
+
+    // The restock TARGET - how many to actually bring it back up to,
+    // distinct from the alert threshold above. min_stock_level lets an
+    // item be reordered up to more than its own alert point (e.g. alert at
+    // 3, but always restock a popular line back up to 10); unset, it
+    // falls back to the threshold itself, so an item with no target set
+    // behaves exactly as before this field existed.
+    function reorderTargetFor(s) {
+      const level = s.min_stock_level;
+      return (level === null || level === undefined || level === '') ? effectiveReorderThreshold(s) : Number(level);
     }
 
     function stockQtyCellHtml(s) {
@@ -5316,7 +5333,7 @@
       addingNewStock = true;
       editingStockId = null;
       document.getElementById('stock-edit-form-title').textContent = 'Add Stock Item';
-      ['stock-edit-item', 'stock-edit-code', 'stock-edit-brand', 'stock-edit-colour', 'stock-edit-size', 'stock-edit-qty', 'stock-edit-cost', 'stock-edit-sale', 'stock-edit-threshold', 'stock-edit-notes'].forEach((id) => {
+      ['stock-edit-item', 'stock-edit-code', 'stock-edit-brand', 'stock-edit-colour', 'stock-edit-size', 'stock-edit-qty', 'stock-edit-cost', 'stock-edit-sale', 'stock-edit-threshold', 'stock-edit-min-level', 'stock-edit-notes'].forEach((id) => {
         document.getElementById(id).value = '';
       });
       document.getElementById('stock-edit-qty-field').classList.remove('hidden');
@@ -5655,6 +5672,7 @@
       document.getElementById('stock-edit-cost').value = s.cost_price || 0;
       document.getElementById('stock-edit-sale').value = s.sale_price || 0;
       document.getElementById('stock-edit-threshold').value = s.reorder_threshold === null || s.reorder_threshold === undefined ? '' : s.reorder_threshold;
+      document.getElementById('stock-edit-min-level').value = s.min_stock_level === null || s.min_stock_level === undefined ? '' : s.min_stock_level;
       document.getElementById('stock-edit-notes').value = s.notes || '';
       recalcAddFormVat('stock-edit-cost', 'stock-edit-sale', 'stock-edit-vat', 'stock-edit-profit');
       // Quantity isn't edited here - only through Add/Subtract, so the
@@ -5691,6 +5709,7 @@
         cost_price: Number(document.getElementById('stock-edit-cost').value) || 0,
         sale_price: Number(document.getElementById('stock-edit-sale').value) || 0,
         reorder_threshold: document.getElementById('stock-edit-threshold').value === '' ? null : Number(document.getElementById('stock-edit-threshold').value),
+        min_stock_level: document.getElementById('stock-edit-min-level').value === '' ? null : Number(document.getElementById('stock-edit-min-level').value),
         notes: document.getElementById('stock-edit-notes').value.trim(),
       };
       if (addingNewStock) payload.quantity = Number(document.getElementById('stock-edit-qty').value) || 0;

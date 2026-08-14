@@ -67,7 +67,16 @@ export async function onRequest(context) {
     // below) without going through that helper first - guarded here too so
     // editing an item's threshold can't be the very first thing to touch
     // this column on a fresh deploy.
-    for (const col of ["supplier_code TEXT", "reorder_threshold REAL", "low_stock_alerted_at TEXT"]) {
+    // min_stock_level is a separate figure from reorder_threshold - the
+    // threshold is "alert me at/below this" (defaults to 3 for every item,
+    // see DEFAULT_REORDER_THRESHOLD in admin.html/_lib/stock-alerts.js);
+    // min_stock_level is "how many I actually want back on the shelf",
+    // which can be higher than the threshold (e.g. alert at 3, but always
+    // restock a popular line back up to 10). NULL falls back to the
+    // threshold itself as the restock target, so an item with no target
+    // set behaves exactly as before this field existed - see
+    // reorderTargetFor() in admin.html's printReorderList.
+    for (const col of ["supplier_code TEXT", "reorder_threshold REAL", "low_stock_alerted_at TEXT", "min_stock_level REAL"]) {
       try {
         await db.prepare(`ALTER TABLE stock_items ADD COLUMN ${col}`).run();
       } catch {
@@ -139,9 +148,11 @@ export async function onRequest(context) {
       const id = crypto.randomUUID();
       const threshold = data.reorder_threshold === undefined || data.reorder_threshold === null || data.reorder_threshold === ""
         ? null : Number(data.reorder_threshold);
+      const minStockLevel = data.min_stock_level === undefined || data.min_stock_level === null || data.min_stock_level === ""
+        ? null : Number(data.min_stock_level);
       await db.prepare(`
-        INSERT INTO stock_items (id, item, supplier_code, brand, colour, size, cost_price, sale_price, reorder_threshold, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO stock_items (id, item, supplier_code, brand, colour, size, cost_price, sale_price, reorder_threshold, min_stock_level, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id, item,
         String(data.supplier_code || "").trim(),
@@ -151,6 +162,7 @@ export async function onRequest(context) {
         Number(data.cost_price) || 0,
         Number(data.sale_price) || 0,
         threshold,
+        minStockLevel,
         String(data.notes || "").trim()
       ).run();
 
@@ -220,8 +232,11 @@ export async function onRequest(context) {
       // threshold cleanly, rather than possibly staying silently
       // "already alerted" under a threshold that no longer applies.
       const thresholdChanged = threshold !== existing.reorder_threshold;
+      const minStockLevel = data.min_stock_level === undefined
+        ? existing.min_stock_level
+        : (data.min_stock_level === null || data.min_stock_level === "" ? null : Number(data.min_stock_level));
       await db.prepare(`
-        UPDATE stock_items SET item = ?, supplier_code = ?, brand = ?, colour = ?, size = ?, cost_price = ?, sale_price = ?, reorder_threshold = ?, notes = ?, updated_at = CURRENT_TIMESTAMP${thresholdChanged ? ", low_stock_alerted_at = NULL" : ""}
+        UPDATE stock_items SET item = ?, supplier_code = ?, brand = ?, colour = ?, size = ?, cost_price = ?, sale_price = ?, reorder_threshold = ?, min_stock_level = ?, notes = ?, updated_at = CURRENT_TIMESTAMP${thresholdChanged ? ", low_stock_alerted_at = NULL" : ""}
         WHERE id = ?
       `).bind(
         String(data.item || existing.item).trim(),
@@ -232,6 +247,7 @@ export async function onRequest(context) {
         data.cost_price !== undefined ? Number(data.cost_price) || 0 : existing.cost_price,
         data.sale_price !== undefined ? Number(data.sale_price) || 0 : existing.sale_price,
         threshold,
+        minStockLevel,
         data.notes !== undefined ? String(data.notes).trim() : existing.notes,
         data.id
       ).run();
