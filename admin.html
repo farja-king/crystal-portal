@@ -1480,12 +1480,13 @@
       <div class="flex justify-between items-center mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Trash</h2>
-          <p class="text-slate-500 text-sm">Anything deleted from anywhere in the portal - orders, stock, garments, services, customers. Stays here until you restore it or delete it forever.</p>
+          <p class="text-slate-500 text-sm">Anything deleted from anywhere in the portal - quotes, invoices, stock, garments, services, customers, design proofs. Stays here until you restore it or delete it forever.</p>
         </div>
         <button onclick="loadTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
           🔄 Refresh
         </button>
       </div>
+      <div id="trash-filter-tabs" class="flex flex-wrap gap-2 mb-4"></div>
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="w-full text-left text-sm">
           <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
@@ -9606,80 +9607,140 @@
 
     // ============================== Trash ==============================
     // One universal bin for anything deleted anywhere in the portal - each
-    // API (orders/stock/products/customers) soft-deletes via its own
-    // deleted_at column and exposes ?trash=1; this just fetches all four in
-    // parallel and merges them into one list. Restore/permanent-delete are
-    // dispatched to the right endpoint per row via TRASH_TYPES below, so
-    // adding a fifth trashable thing later is just one more entry here.
+    // API (orders/stock/products/customers/design-proofs) soft-deletes via
+    // its own deleted_at column and exposes ?trash=1; this fetches all five
+    // in parallel and merges them into one list. Restore/permanent-delete
+    // are dispatched to the right endpoint per row via TRASH_TYPES below,
+    // so adding a sixth trashable thing later is just one more entry here.
+    //
+    // "type" (order/stock/product/customer/proof) picks the API; a
+    // separate "category" (quote/invoice/garment/service/stock/customer/
+    // proof) is what the filter tabs actually filter on, since a single
+    // type can cover two categories (an "order" row is either a quote or
+    // an invoice, a "product" row either a garment or a service).
     const TRASH_TYPES = {
       order: {
-        label: 'Order', url: API_ORDERS_URL,
+        label: (o) => o.doc_type === 'invoice' ? 'Invoice' : 'Quote', url: API_ORDERS_URL,
+        category: (o) => o.doc_type === 'invoice' ? 'invoice' : 'quote',
         title: (o) => (o.invoice_number || o.quote_number || 'Untitled') + (o.customer_name ? ' - ' + o.customer_name : ''),
         detail: (o) => `${o.doc_type === 'invoice' ? 'Invoice' : 'Quote'} · ${money(o.total)}`,
       },
       stock: {
-        label: 'Stock Item', url: API_STOCK_URL,
+        label: 'Stock Item', url: API_STOCK_URL, category: () => 'stock',
         title: (s) => s.item,
         detail: (s) => [s.supplier_code, s.brand, s.colour, s.size].filter(Boolean).join(' · ') || '-',
       },
       product: {
         label: (p) => p.item_type === 'service' ? 'Service' : 'Garment', url: API_PRODUCTS_URL,
+        category: (p) => p.item_type === 'service' ? 'service' : 'garment',
         title: (p) => p.title || p.supplier_code || 'Untitled',
         detail: (p) => [p.supplier_code, p.brand, p.colour, p.size].filter(Boolean).join(' · ') || '-',
       },
       customer: {
-        label: 'Customer', url: API_CUSTOMERS_URL,
+        label: 'Customer', url: API_CUSTOMERS_URL, category: () => 'customer',
         title: (c) => c.name,
         detail: (c) => [c.company, c.email].filter(Boolean).join(' · ') || '-',
       },
+      proof: {
+        label: 'Design Proof', url: API_DESIGN_PROOFS_URL, category: () => 'proof',
+        title: (p) => p.filename + (p.version > 1 ? ` (v${p.version})` : ''),
+        detail: (p) => (p.invoice_number || p.quote_number) ? `${p.doc_type === 'invoice' ? 'Invoice' : 'Quote'} ${p.invoice_number || p.quote_number}${p.customer_name ? ' - ' + p.customer_name : ''}` : '-',
+      },
     };
 
+    const TRASH_FILTERS = [
+      { key: 'all', label: 'All' },
+      { key: 'customer', label: 'Customers' },
+      { key: 'garment', label: 'Garments' },
+      { key: 'service', label: 'Services' },
+      { key: 'quote', label: 'Quotes' },
+      { key: 'invoice', label: 'Invoices' },
+      { key: 'stock', label: 'Stock' },
+      { key: 'proof', label: 'Design Proofs' },
+    ];
+
     let trashRowsById = {};
+    let trashAllEntries = [];
+    let trashActiveFilter = 'all';
 
     async function loadTrash() {
       const tbody = document.getElementById('trash-table-body');
       tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       trashRowsById = {};
       try {
-        const [orders, stock, products, customers] = await Promise.all([
+        const [orders, stock, products, customers, proofs] = await Promise.all([
           fetch(API_ORDERS_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
           fetch(API_STOCK_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
           fetch(API_PRODUCTS_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).then((d) => d.results || []).catch(() => []),
           fetch(API_CUSTOMERS_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+          fetch(API_DESIGN_PROOFS_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
         ]);
 
-        const rows = [
+        trashAllEntries = [
           ...(Array.isArray(orders) ? orders : []).map((r) => ({ type: 'order', row: r })),
           ...(Array.isArray(stock) ? stock : []).map((r) => ({ type: 'stock', row: r })),
           ...(Array.isArray(products) ? products : []).map((r) => ({ type: 'product', row: r })),
           ...(Array.isArray(customers) ? customers : []).map((r) => ({ type: 'customer', row: r })),
+          ...(Array.isArray(proofs) ? proofs : []).map((r) => ({ type: 'proof', row: r })),
         ].sort((a, b) => (b.row.deleted_at || '').localeCompare(a.row.deleted_at || ''));
 
-        if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">Nothing in the trash.</td></tr>';
-          return;
-        }
-
-        tbody.innerHTML = rows.map(({ type, row }) => {
-          const spec = TRASH_TYPES[type];
-          const rowKey = type + ':' + row.id;
-          trashRowsById[rowKey] = { type, row };
-          const typeLabel = typeof spec.label === 'function' ? spec.label(row) : spec.label;
-          return `
-            <tr>
-              <td class="p-4"><span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(typeLabel)}</span></td>
-              <td class="p-4 font-semibold text-slate-900">${escapeHtml(spec.title(row))}</td>
-              <td class="p-4 text-slate-500 text-xs">${escapeHtml(spec.detail(row))}</td>
-              <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDateTime(row.deleted_at))}</td>
-              <td class="p-4 text-right whitespace-nowrap space-x-2">
-                <button type="button" onclick="restoreFromTrash('${escapeAttr(rowKey)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">Restore</button>
-                <button type="button" onclick="permanentlyDeleteFromTrash('${escapeAttr(rowKey)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-3 py-1 rounded text-xs font-semibold shadow-sm">Delete forever</button>
-              </td>
-            </tr>`;
-        }).join('');
+        renderTrashFilterTabs();
+        renderTrashTable();
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-red-500">Could not load the trash: ' + escapeHtml(e.message) + '</td></tr>';
       }
+    }
+
+    function renderTrashFilterTabs() {
+      const el = document.getElementById('trash-filter-tabs');
+      if (!el) return;
+      const counts = { all: trashAllEntries.length };
+      trashAllEntries.forEach(({ type, row }) => {
+        const cat = TRASH_TYPES[type].category(row);
+        counts[cat] = (counts[cat] || 0) + 1;
+      });
+      el.innerHTML = TRASH_FILTERS.map((f) => {
+        const count = f.key === 'all' ? counts.all : (counts[f.key] || 0);
+        const active = trashActiveFilter === f.key;
+        return `<button type="button" onclick="setTrashFilter('${f.key}')" class="px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm ${active ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'}">${f.label} (${count})</button>`;
+      }).join('');
+    }
+
+    function setTrashFilter(key) {
+      trashActiveFilter = key;
+      renderTrashFilterTabs();
+      renderTrashTable();
+    }
+
+    function renderTrashTable() {
+      const tbody = document.getElementById('trash-table-body');
+      const entries = trashActiveFilter === 'all'
+        ? trashAllEntries
+        : trashAllEntries.filter(({ type, row }) => TRASH_TYPES[type].category(row) === trashActiveFilter);
+
+      trashRowsById = {};
+      if (!entries.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">Nothing here.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = entries.map(({ type, row }) => {
+        const spec = TRASH_TYPES[type];
+        const rowKey = type + ':' + row.id;
+        trashRowsById[rowKey] = { type, row };
+        const typeLabel = typeof spec.label === 'function' ? spec.label(row) : spec.label;
+        return `
+          <tr>
+            <td class="p-4"><span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(typeLabel)}</span></td>
+            <td class="p-4 font-semibold text-slate-900">${escapeHtml(spec.title(row))}</td>
+            <td class="p-4 text-slate-500 text-xs">${escapeHtml(spec.detail(row))}</td>
+            <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDateTime(row.deleted_at))}</td>
+            <td class="p-4 text-right whitespace-nowrap space-x-2">
+              <button type="button" onclick="restoreFromTrash('${escapeAttr(rowKey)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">Restore</button>
+              <button type="button" onclick="permanentlyDeleteFromTrash('${escapeAttr(rowKey)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-3 py-1 rounded text-xs font-semibold shadow-sm">Delete forever</button>
+            </td>
+          </tr>`;
+      }).join('');
     }
 
     async function restoreFromTrash(rowKey) {

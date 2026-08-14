@@ -19,7 +19,7 @@ export async function onRequest(context) {
 
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Cache-Control": "no-store",
   };
@@ -147,6 +147,16 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // deleted_at - soft-delete, same universal-Trash pattern as
+    // orders.js/stock.js/products.js/customers.js (see admin.html's
+    // unified Trash tab). Soft-delete deliberately leaves r2_key alone -
+    // the actual file only gets removed from R2 on permanent:true, so a
+    // restored proof still has its image, not just a dangling record.
+    try {
+      await db.prepare(`ALTER TABLE design_proofs ADD COLUMN deleted_at TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     const url = new URL(request.url);
 
@@ -184,7 +194,7 @@ export async function onRequest(context) {
         SELECT p.id, p.version, p.filename, p.content_type, p.status, p.decision_notes, p.token, p.image_consent,
                o.quote_number, o.invoice_number, o.doc_type, o.customer_name
         FROM design_proofs p JOIN orders o ON o.id = p.order_id
-        WHERE p.token = ?
+        WHERE p.token = ? AND p.deleted_at IS NULL
       `).bind(url.searchParams.get("token")).first();
       if (!row) return json({ error: "This proof link isn't valid." }, 404);
       const docNumber = row.doc_type === "invoice" ? row.invoice_number : row.quote_number;
@@ -212,6 +222,17 @@ export async function onRequest(context) {
       return json(results);
     }
 
+    // GET ?trash=1 -> only soft-deleted proofs, for the universal Trash tab.
+    if (request.method === "GET" && url.searchParams.get("trash")) {
+      const { results } = await db.prepare(`
+        SELECT p.id, p.order_id, p.version, p.filename, p.deleted_at,
+               o.quote_number, o.invoice_number, o.doc_type, o.customer_name
+        FROM design_proofs p LEFT JOIN orders o ON o.id = p.order_id
+        WHERE p.deleted_at IS NOT NULL ORDER BY p.deleted_at DESC
+      `).all();
+      return json(results);
+    }
+
     // GET ?all=1 - every proof across every customer, latest version per
     // order only (older superseded versions would just be noise here),
     // newest-sent-or-created first. Backs the master Design Proofs
@@ -225,7 +246,8 @@ export async function onRequest(context) {
                o.quote_number, o.invoice_number, o.doc_type, o.customer_name
         FROM design_proofs p
         JOIN orders o ON o.id = p.order_id
-        WHERE p.version = (SELECT MAX(version) FROM design_proofs WHERE order_id = p.order_id)
+        WHERE p.deleted_at IS NULL
+          AND p.version = (SELECT MAX(version) FROM design_proofs WHERE order_id = p.order_id AND deleted_at IS NULL)
         ORDER BY COALESCE(p.sent_at, p.created_at) DESC
       `).all();
       return json(results);
@@ -244,7 +266,7 @@ export async function onRequest(context) {
                p.created_at, p.sent_at, p.decided_at, p.image_consent, o.quote_number, o.invoice_number, o.doc_type,
                (p.r2_key <> '') AS has_file
         FROM design_proofs p JOIN orders o ON o.id = p.order_id
-        WHERE ${where} ORDER BY p.order_id, p.version DESC
+        WHERE p.deleted_at IS NULL AND ${where} ORDER BY p.order_id, p.version DESC
       `).bind(orderId || customerId).all();
       return json(results);
     }
@@ -511,12 +533,29 @@ export async function onRequest(context) {
       }
 
       if (!data.id) return json({ error: "id is required" }, 400);
-      const row = await db.prepare("SELECT r2_key FROM design_proofs WHERE id = ?").bind(data.id).first();
-      if (row) {
-        if (row.r2_key) await bucket.delete(row.r2_key);
-        await db.prepare("DELETE FROM design_proofs WHERE id = ?").bind(data.id).run();
+      if (data.permanent) {
+        const row = await db.prepare("SELECT r2_key FROM design_proofs WHERE id = ?").bind(data.id).first();
+        if (row) {
+          if (row.r2_key) await bucket.delete(row.r2_key);
+          await db.prepare("DELETE FROM design_proofs WHERE id = ?").bind(data.id).run();
+        }
+      } else {
+        // Soft-delete - the R2 file stays put so a restore has its image
+        // back, not just a dangling record. See PUT {restore:true} below.
+        await db.prepare("UPDATE design_proofs SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(data.id).run();
       }
       return json({ success: true });
+    }
+
+    if (request.method === "PUT") {
+      const data = await request.json();
+      if (!data.id) return json({ error: "id is required" }, 400);
+      // Restore from the Trash - see DELETE above, and GET's ?trash=1.
+      if (data.restore) {
+        await db.prepare("UPDATE design_proofs SET deleted_at = NULL WHERE id = ?").bind(data.id).run();
+        return json({ success: true });
+      }
+      return json({ error: "Unknown action" }, 400);
     }
 
     return json({ error: "Method not allowed" }, 405);
