@@ -692,6 +692,35 @@ export async function onRequest(context) {
       const existing = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.id).first();
       if (!existing) return json({ error: "Order not found" }, 404);
 
+      // Puts an order on the customer's My Orders page and ensures it has
+      // the tokens (accept_token/pay_token) needed to actually do anything
+      // there - previously only send-email.js's actual Resend send did
+      // both of these, so an order shared purely via WhatsApp (admin.html's
+      // sendOrderViaWhatsApp) never showed up in My Orders at all, and
+      // couldn't have been accepted/paid from there even if it had. This
+      // reuses email_sent_at as the same "has this genuinely gone out"
+      // signal my-orders.js already filters on - deliberately NOT touching
+      // email_sent_count (that still means "how many real emails", used by
+      // send-email.js's isFirstSend/deposit-ask logic), so a later actual
+      // email still correctly treats itself as the first real send.
+      if (data.action === "mark_shared") {
+        let acceptToken = existing.accept_token;
+        let payToken = existing.pay_token;
+        if (existing.doc_type === "quote" && !acceptToken) {
+          acceptToken = crypto.randomUUID();
+          await db.prepare("UPDATE orders SET accept_token = ? WHERE id = ?").bind(acceptToken, existing.id).run();
+        }
+        if (existing.doc_type === "invoice" && existing.paid_status !== "paid" && !payToken) {
+          payToken = crypto.randomUUID();
+          await db.prepare("UPDATE orders SET pay_token = ? WHERE id = ?").bind(payToken, existing.id).run();
+        }
+        if (!existing.email_sent_at) {
+          await db.prepare("UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(existing.id).run();
+        }
+        await logOrderEvent(db, existing.id, "sent", "Shared via WhatsApp");
+        return json({ success: true, accept_token: acceptToken, pay_token: payToken });
+      }
+
       if (data.action === "archive") {
         const bucket = data.bucket === "completed" ? "completed" : "pending";
         await db.prepare("UPDATE orders SET archived_at = CURRENT_TIMESTAMP, archive_bucket = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(bucket, data.id).run();

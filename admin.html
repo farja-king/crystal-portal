@@ -7333,10 +7333,21 @@
         // step-update instead of - or as well as - the actual review
         // request below. This step's only real customer touchpoint is that
         // review request, never the generic per-step notification.
-        await fetch(API_PRODUCTION_STEPS_URL, {
+        const stepRes = await fetch(API_PRODUCTION_STEPS_URL, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: stepId, status: 'done', notify_customer: false }),
         });
+        // Previously unchecked - a failure here (network blip, stale
+        // session, whatever) used to pass silently straight through to the
+        // review-request call below, which could still succeed on its own
+        // and show a success toast even though the step itself was never
+        // actually marked done - exactly the "ticked it, got a success
+        // message, but it's still showing unticked" symptom this was
+        // reported as.
+        if (!stepRes.ok) {
+          const stepData = await stepRes.json().catch(() => ({}));
+          throw new Error(stepData.error || 'Could not mark the step done');
+        }
         const res = await fetch('/api/review-requests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           // "Now" deliberately omits send_at rather than sending the
@@ -9490,6 +9501,21 @@
       } catch (e) {
         // Falls through with no link below - still opens WhatsApp with a
         // plain text message rather than blocking the whole thing.
+      }
+
+      // Marks this order as "shared" (see the mark_shared PUT action in
+      // orders.js) - without this, an order only ever sent via WhatsApp
+      // (never emailed) wouldn't show up on the My Orders link above at
+      // all, since that page only lists what's actually gone out. Also
+      // ensures the order itself has an accept_token/pay_token, so the
+      // Accept/Pay buttons on that page actually work for it.
+      try {
+        await fetch(API_ORDERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: o.id, action: 'mark_shared' }),
+        });
+      } catch (e) {
+        // Same reasoning as above - still send the WhatsApp message either way.
       }
 
       const text = `Hi ${firstName}, here's your ${docLabel} ${docNumber} (${money(o.total)})${myOrdersUrl ? ` - you can view${o.doc_type === 'invoice' ? ' and pay' : ' and accept'} it here: ${myOrdersUrl}` : '.'}`;
