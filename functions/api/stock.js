@@ -12,7 +12,12 @@
 // ledger-over-raw-number philosophy as payments.js: quantity on the item
 // row is a denormalized running total, always recomputed from the
 // movements that actually happened, never trusted as a value handed in
-// from the client.
+// from the client. That recompute (plus the low-stock email check that
+// rides along with it) lives in _lib/stock-alerts.js, shared with
+// stock-deduct.js so a manual adjust and an invoice auto-deducting stock
+// both go through the exact same alert logic.
+import { recomputeStockAndAlert } from "../_lib/stock-alerts.js";
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -52,10 +57,17 @@ export async function onRequest(context) {
     // products.js. supplier_code is purely informational (never used to
     // link back to the catalog row it was copied from - see
     // pickStockGarmentResult/applyStockGarmentVariant in admin.html).
-    // reorder_threshold is NULL by default (no alert) rather than 0 -
-    // most stock items don't need a reorder point tracked at all, and NULL
-    // reads unambiguously as "not set" instead of "alert once it hits zero".
-    for (const col of ["supplier_code TEXT", "reorder_threshold REAL"]) {
+    // reorder_threshold is NULL until Martin sets one explicitly - a NULL
+    // row uses the portal-wide default (DEFAULT_REORDER_THRESHOLD in
+    // _lib/stock-alerts.js, currently 3) rather than never alerting, so
+    // every item gets a sensible low-stock check without needing setup.
+    // low_stock_alerted_at is also guarded lazily in _lib/stock-alerts.js
+    // (the "adjust" path below goes through that), but this file's own PUT
+    // edit path references the column directly (see thresholdChanged
+    // below) without going through that helper first - guarded here too so
+    // editing an item's threshold can't be the very first thing to touch
+    // this column on a fresh deploy.
+    for (const col of ["supplier_code TEXT", "reorder_threshold REAL", "low_stock_alerted_at TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE stock_items ADD COLUMN ${col}`).run();
       } catch {
@@ -79,14 +91,8 @@ export async function onRequest(context) {
     `).run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements (stock_item_id)").run();
 
-    async function recomputeQuantity(itemId) {
-      const row = await db.prepare("SELECT COALESCE(SUM(delta), 0) AS total FROM stock_movements WHERE stock_item_id = ?").bind(itemId).first();
-      const qty = row ? row.total : 0;
-      await db.prepare("UPDATE stock_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(qty, itemId).run();
-      return qty;
-    }
-
     const url = new URL(request.url);
+    const recomputeQuantity = (itemId) => recomputeStockAndAlert(db, env, itemId, url.origin);
 
     // GET ?movements_for=X - the adjustment history for one item, newest
     // first, for the "Recent activity" panel on that item's row.
@@ -187,8 +193,14 @@ export async function onRequest(context) {
       const threshold = data.reorder_threshold === undefined
         ? existing.reorder_threshold
         : (data.reorder_threshold === null || data.reorder_threshold === "" ? null : Number(data.reorder_threshold));
+      // Changing the threshold changes what "low" even means for this item,
+      // so any past alert is no longer necessarily still valid - clearing
+      // it here means the very next movement re-evaluates against the new
+      // threshold cleanly, rather than possibly staying silently
+      // "already alerted" under a threshold that no longer applies.
+      const thresholdChanged = threshold !== existing.reorder_threshold;
       await db.prepare(`
-        UPDATE stock_items SET item = ?, supplier_code = ?, brand = ?, colour = ?, size = ?, cost_price = ?, sale_price = ?, reorder_threshold = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+        UPDATE stock_items SET item = ?, supplier_code = ?, brand = ?, colour = ?, size = ?, cost_price = ?, sale_price = ?, reorder_threshold = ?, notes = ?, updated_at = CURRENT_TIMESTAMP${thresholdChanged ? ", low_stock_alerted_at = NULL" : ""}
         WHERE id = ?
       `).bind(
         String(data.item || existing.item).trim(),

@@ -9,7 +9,14 @@
 // opt-in, not every garment on every order has a shelf count kept for
 // it. Called from orders.js; never throws, since a failure here must
 // never block the invoice action it's attached to.
-export async function deductStockForOrder(db, items, reason) {
+//
+// env/originUrl are passed straight through to recomputeStockAndAlert so
+// an invoice that drops an item to/below its reorder threshold sends the
+// exact same low-stock email a manual +/- adjustment would - see
+// _lib/stock-alerts.js for the shared crossing-detection logic.
+import { recomputeStockAndAlert } from "./stock-alerts.js";
+
+export async function deductStockForOrder(db, items, reason, env, originUrl) {
   const deducted = [];
   try {
     // stock_items/stock_movements are created lazily by stock.js - guard
@@ -55,13 +62,7 @@ export async function deductStockForOrder(db, items, reason) {
           "INSERT INTO stock_movements (id, stock_item_id, delta, reason) VALUES (?, ?, ?, ?)"
         ).bind(crypto.randomUUID(), stockItem.id, -qty, reason).run();
 
-        const totalRow = await db.prepare(
-          "SELECT COALESCE(SUM(delta), 0) AS total FROM stock_movements WHERE stock_item_id = ?"
-        ).bind(stockItem.id).first();
-        const newQty = totalRow ? totalRow.total : 0;
-        await db.prepare(
-          "UPDATE stock_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).bind(newQty, stockItem.id).run();
+        const newQty = await recomputeStockAndAlert(db, env, stockItem.id, originUrl);
 
         deducted.push({ item: stockItem.item, colour, size, qty, newQty });
       }

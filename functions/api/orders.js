@@ -600,7 +600,7 @@ export async function onRequest(context) {
       // invoice now exists", so stock comes off the shelf here too, same
       // as the convert_to_invoice path below.
       if (isInvoice) {
-        const deducted = await deductStockForOrder(db, priced.items, `Invoiced on ${docNumber}`);
+        const deducted = await deductStockForOrder(db, priced.items, `Invoiced on ${docNumber}`, env, new URL(request.url).origin);
         if (deducted.length) {
           await logOrderEvent(db, id, "stock", `Stock updated: ${deducted.map((d) => `${d.item} (${d.colour}/${d.size}) -${d.qty}`).join(", ")}`);
         }
@@ -807,7 +807,7 @@ export async function onRequest(context) {
         `).bind(invoice_number, data.id).run();
         await logOrderEvent(db, data.id, "converted", `Converted to invoice ${invoice_number}`);
 
-        const deducted = await deductStockForOrder(db, JSON.parse(existing.items || "[]"), `Invoiced on ${invoice_number}`);
+        const deducted = await deductStockForOrder(db, JSON.parse(existing.items || "[]"), `Invoiced on ${invoice_number}`, env, new URL(request.url).origin);
         if (deducted.length) {
           await logOrderEvent(db, data.id, "stock", `Stock updated: ${deducted.map((d) => `${d.item} (${d.colour}/${d.size}) -${d.qty}`).join(", ")}`);
         }
