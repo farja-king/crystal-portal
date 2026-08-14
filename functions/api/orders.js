@@ -9,7 +9,7 @@
 // column here by analogy with products.js; that VAT is what Martin pays
 // suppliers (a cost), not something charged to his customers.
 import { logOrderEvent, ensureOrderEventsTable } from "../_lib/order-events.js";
-import { deductStockForOrder } from "../_lib/stock-deduct.js";
+import { deductStockForOrder, restoreStockForOrder } from "../_lib/stock-deduct.js";
 
 // A new invoice restarts that customer's reorder-reminder clock - see
 // functions/api/reorder-reminders.js, which times its ~11-month nudge off
@@ -1051,11 +1051,17 @@ export async function onRequest(context) {
       }
 
       const { id, ids } = data;
+      const originUrl = new URL(request.url).origin;
       if (Array.isArray(ids) && ids.length) {
         await deleteOrphanedDesignProofs(ids);
         await deleteOrphanedProductionSteps(ids);
         await deleteManualInvoicePdfs(ids);
         await deleteOrderPaymentsAndLogs(ids);
+        // Whatever these orders took off the shelf goes back - see
+        // restoreStockForOrder. Sequential rather than Promise.all so two
+        // orders that both touch the same stock item don't race each
+        // other's recompute.
+        for (const orderId of ids) await restoreStockForOrder(db, orderId, env, originUrl);
         const placeholders = ids.map(() => "?").join(",");
         await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...ids).run();
         return json({ success: true, count: ids.length });
@@ -1064,6 +1070,7 @@ export async function onRequest(context) {
       await deleteOrphanedProductionSteps([id]);
       await deleteManualInvoicePdfs([id]);
       await deleteOrderPaymentsAndLogs([id]);
+      await restoreStockForOrder(db, id, env, originUrl);
       await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
       return json({ success: true });
     }

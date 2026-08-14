@@ -80,3 +80,34 @@ export async function deductStockForOrder(db, items, reason, env, originUrl, ord
   }
   return deducted;
 }
+
+// Reverses whatever deductStockForOrder took for this order - called from
+// orders.js right before an order is actually deleted, so a test invoice
+// (or any deleted one) doesn't leave Stock permanently short. Adds one
+// positive movement per original deduction (order_id left NULL - the order
+// itself is about to stop existing, so there's nothing left to link it to;
+// the original deduction row stays as history, same as any other movement
+// on a since-deleted order). Never throws, for the same reason
+// deductStockForOrder doesn't - a failed restore must never block the
+// delete it's attached to.
+export async function restoreStockForOrder(db, orderId, env, originUrl) {
+  if (!orderId) return [];
+  const restored = [];
+  try {
+    const { results: movements } = await db.prepare(
+      "SELECT stock_item_id, delta FROM stock_movements WHERE order_id = ?"
+    ).bind(orderId).all();
+
+    for (const m of movements) {
+      if (!m.delta) continue;
+      await db.prepare(
+        "INSERT INTO stock_movements (id, stock_item_id, delta, reason, order_id) VALUES (?, ?, ?, ?, NULL)"
+      ).bind(crypto.randomUUID(), m.stock_item_id, -m.delta, "Order deleted - stock restored").run();
+      const newQty = await recomputeStockAndAlert(db, env, m.stock_item_id, originUrl);
+      restored.push({ stock_item_id: m.stock_item_id, delta: -m.delta, newQty });
+    }
+  } catch (e) {
+    // Never let a failed restore block the order delete it's attached to.
+  }
+  return restored;
+}
