@@ -7367,6 +7367,31 @@
       }
     }
 
+    // Live stock levels for the order builder's breakdown rows - a flat
+    // index (code|colour|size -> quantity) rather than one API call per
+    // row, since the whole Stock list is small. Refetched every time the
+    // builder opens (see openOrderBuilderModal) so it can't go stale
+    // across a long editing session; not refetched on every keystroke,
+    // since typing a qty doesn't change what's actually on the shelf.
+    let stockLevelsIndex = {};
+    function stockLevelKey(code, colour, size) {
+      return [code, colour, size].map((v) => String(v || '').trim().toLowerCase()).join('|');
+    }
+    async function loadStockLevelsIndex() {
+      try {
+        const res = await fetch(API_STOCK_URL, { cache: 'no-store' });
+        const rows = await res.json();
+        stockLevelsIndex = {};
+        (rows || []).forEach((s) => {
+          if (!s.supplier_code) return; // nothing to match a garment line's code against
+          stockLevelsIndex[stockLevelKey(s.supplier_code, s.colour, s.size)] = Number(s.quantity) || 0;
+        });
+        renderOrderLines();
+      } catch (e) {
+        // Stock is a nice-to-have overlay here, not required to build a quote/invoice
+      }
+    }
+
     // Pulls available colours and sizes for this product code from the
     // available_colours and available_sizes fields (scraped from the website).
     // These are the primary source - they come directly from the website scraping.
@@ -7436,12 +7461,50 @@
 
     function updateBreakdownField(idx, rowIdx, field, value) {
       orderLines[idx].breakdown[rowIdx][field] = value;
+      updateBreakdownStockDisplay(idx, rowIdx);
     }
 
     function updateBreakdownQtyLive(idx, rowIdx, value) {
       orderLines[idx].breakdown[rowIdx].qty = Math.max(1, parseInt(value, 10) || 1);
       renderOrderTotals();
       updateLineTotalDisplay(idx);
+      updateBreakdownStockDisplay(idx, rowIdx);
+    }
+
+    // Live "N in stock -> M left" next to a breakdown row, from the index
+    // loadStockLevelsIndex builds when the builder opens - see that
+    // function for why this doesn't refetch per keystroke. null (no text
+    // shown) whenever there's nothing to say: no colour/size picked yet,
+    // or this exact code/colour/size just isn't tracked in Stock at all
+    // (most garments aren't - Stock is opt-in, not comprehensive).
+    function stockPreviewFor(line, b) {
+      if (!line || !b || !line.supplier_code || !b.colour || !b.size) return null;
+      const stockQty = stockLevelsIndex[stockLevelKey(line.supplier_code, b.colour, b.size)];
+      if (stockQty === undefined) return null;
+      const remaining = stockQty - (Number(b.qty) || 0);
+      const short = remaining < 0;
+      return {
+        text: short ? `⚠ Only ${stockQty} in stock` : `${stockQty} in stock → ${remaining} left`,
+        cls: short ? 'text-rose-600 font-semibold' : 'text-slate-400',
+      };
+    }
+
+    function breakdownStockHtml(idx, rowIdx) {
+      const line = orderLines[idx];
+      const preview = line ? stockPreviewFor(line, line.breakdown[rowIdx]) : null;
+      return `<span id="breakdown-stock-${idx}-${rowIdx}" class="text-xs ${preview ? preview.cls : ''}" title="Current stock for this exact colour/size">${preview ? escapeHtml(preview.text) : ''}</span>`;
+    }
+
+    // Surgical update (not a full renderOrderLines()) so typing a qty or
+    // picking a colour/size doesn't reset focus mid-edit - same reasoning
+    // as updateLineTotalDisplay.
+    function updateBreakdownStockDisplay(idx, rowIdx) {
+      const el = document.getElementById(`breakdown-stock-${idx}-${rowIdx}`);
+      if (!el) return;
+      const line = orderLines[idx];
+      const preview = line ? stockPreviewFor(line, line.breakdown[rowIdx]) : null;
+      el.className = 'text-xs ' + (preview ? preview.cls : '');
+      el.textContent = preview ? preview.text : '';
     }
 
     // Decorations scoped to one specific breakdown row (one colour/size),
@@ -7676,6 +7739,7 @@
                   </select>
                   <input type="number" min="1" value="${b.qty}" oninput="updateBreakdownQtyLive(${idx}, ${rowIdx}, this.value)" class="w-16 rounded border border-slate-300 px-2 py-1 text-sm bg-white" />
                   <button type="button" onclick="removeBreakdownRow(${idx}, ${rowIdx})" class="w-5 text-rose-500 hover:text-rose-700 text-sm ${line.breakdown.length <= 1 ? 'invisible' : ''}">✕</button>
+                  ${breakdownStockHtml(idx, rowIdx)}
                 </div>
                 ${rowDecorationsHtml}
                 <button type="button" onclick="addBreakdownDecoration(${idx}, ${rowIdx})" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1.5">+ Add decoration for this item</button>
@@ -7793,6 +7857,7 @@
 
     function openOrderBuilderModal() {
       document.getElementById('ord-builder-modal').classList.remove('hidden');
+      loadStockLevelsIndex();
     }
 
     function closeOrderBuilderModal() {
