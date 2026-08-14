@@ -5,6 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Crystal Embroidery - Back Office Admin</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Genuinely blinking (not just Tailwind's fade-based animate-pulse) -
+       used for the "can't fulfill this from stock" bell on the Quotes &
+       Invoices list, see orderStockShortfall() in the page script below.
+       Deliberately more attention-grabbing than the page's other badges,
+       since this one means "don't send this out, you'll come up short". */
+    @keyframes stock-shortfall-flash {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
+    .stock-shortfall-flash { animation: stock-shortfall-flash 1s step-start infinite; }
+  </style>
 </head>
 <body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
   
@@ -8554,6 +8566,29 @@
       if (r.status !== 'contacted') markQuoteRequestStatus(id, 'contacted');
     }
 
+    // Does this order need a garment that's currently in the negative on
+    // Stock - i.e. more has already gone out than was ever on the shelf?
+    // Checked against stockLevelsIndex (see loadStockLevelsIndex, shared
+    // with the order builder's live "N in stock" preview) rather than a
+    // stored flag on the order - self-healing: restocking the item clears
+    // the warning on the very next list load, no separate "resolved"
+    // action needed. Only flags negative, not merely low/zero - a
+    // shortfall is "we've promised more than we have", not just "getting low".
+    function orderStockShortfall(o) {
+      const shortages = [];
+      (o.items || []).forEach((item) => {
+        if (item.source !== 'catalog' || !item.supplier_code) return;
+        (item.breakdown || []).forEach((b) => {
+          if (!b.colour || !b.size) return;
+          const qty = stockLevelsIndex[stockLevelKey(item.supplier_code, b.colour, b.size)];
+          if (qty !== undefined && qty < 0) {
+            shortages.push(`${item.title || item.supplier_code} (${b.colour}/${b.size}): ${qty} in stock`);
+          }
+        });
+      });
+      return shortages;
+    }
+
     async function loadOrders() {
       ordersLoaded = true;
       loadReminderDays();
@@ -8565,6 +8600,7 @@
         const [res, productionRes] = await Promise.all([
           fetch(API_ORDERS_URL, { cache: 'no-store' }),
           fetch('/api/production-steps?all=1', { cache: 'no-store' }).catch(() => null),
+          loadStockLevelsIndex(),
         ]);
         const rows = await res.json();
         ordersById = {};
@@ -8595,6 +8631,10 @@
           const statusBadge = isInvoice
             ? `<span class="px-2 py-1 text-xs font-semibold rounded-full ${paidStatusBadgeClass(o.paid_status)}">${paidStatusBadgeLabel(o)}</span>`
             : `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(o.status || 'draft')}</span>`;
+          const stockShortages = orderStockShortfall(o);
+          const stockShortfallBadge = stockShortages.length
+            ? `<span class="stock-shortfall-flash ml-1 px-2 py-1 text-xs font-bold rounded-full bg-rose-600 text-white" title="${escapeAttr('Not enough in Stock to fulfill: ' + stockShortages.join('; '))}">🔔 Stock shortfall</span>`
+            : '';
           // See functions/api/quote-followups.js - a quote that's been sent
           // but sat undecided past the follow-up threshold, still eligible
           // for its one-off nudge (followup_sent_at not yet set).
@@ -8659,7 +8699,7 @@
               <td class="p-4">${escapeHtml(o.customer_name)}</td>
               <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
               <td class="p-4 font-semibold">${money(o.total)}</td>
-              <td class="p-4">${statusBadge}${staleBadge}${productionBadge}${o.reminder_paused ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-600" title="Automatic payment reminders are stopped for this invoice">🔕 Paused</span>` : ''}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}${o.followup_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Follow-up sent ${escapeHtml(ukDate(o.followup_sent_at))}</span>` : ''}</td>
+              <td class="p-4">${statusBadge}${stockShortfallBadge}${staleBadge}${productionBadge}${o.reminder_paused ? `<span class="ml-1 px-2 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-600" title="Automatic payment reminders are stopped for this invoice">🔕 Paused</span>` : ''}${o.email_sent_at ? `<span class="block text-xs text-slate-400 mt-1">Emailed ${o.email_sent_count > 1 ? o.email_sent_count + '× · last ' : ''}${escapeHtml(ukDate(o.email_sent_at))}</span>` : ''}${o.last_reminder_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Reminder sent ${escapeHtml(ukDate(o.last_reminder_sent_at))}</span>` : ''}${o.followup_sent_at ? `<span class="block text-xs text-amber-600 mt-1">Follow-up sent ${escapeHtml(ukDate(o.followup_sent_at))}</span>` : ''}</td>
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
