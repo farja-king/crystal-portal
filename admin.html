@@ -61,6 +61,9 @@
           <button id="tab-backups" onclick="switchTab('backups')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             🗄 Backups
           </button>
+          <button id="tab-trash" onclick="switchTab('trash')" title="Anything deleted from anywhere in the portal lands here first, recoverable until you empty it yourself" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            🗑️ Trash
+          </button>
         </div>
         <button id="api-key-btn" onclick="generateApiKey()" title="Generate/reveal an API key - lets the crystal-inbox-worker call the portal's payment-reminder cron endpoint without the portal password" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
           API Key
@@ -295,7 +298,7 @@
           <button onclick="openAddCustomerForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Customer
           </button>
-          <button onclick="openCustomerTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+          <button onclick="switchTab('trash')" title="Deleted customers now live in the portal-wide Trash tab, alongside deleted orders/stock/garments" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🗑️ Trash
           </button>
           <button onclick="exportCustomersCsv()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
@@ -304,35 +307,6 @@
           <button onclick="loadCustomers()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🔄 Refresh Customers
           </button>
-        </div>
-      </div>
-
-      <!-- Trash - deleted (including merged-away) customers, recoverable
-           until someone explicitly empties them. See customers.js's
-           deleted_at column - DELETE soft-deletes by default. -->
-      <div id="customer-trash-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6">
-          <div class="flex justify-between items-start mb-4">
-            <div>
-              <h3 class="text-lg font-bold text-slate-900">Deleted Customers</h3>
-              <p class="text-sm text-slate-500">Restore a customer deleted by mistake - their quotes/invoices and Custom Price List items were never moved, only the customer record itself was removed.</p>
-            </div>
-            <button onclick="closeCustomerTrash()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
-          </div>
-          <div class="overflow-x-auto border border-slate-200 rounded-lg">
-            <table class="w-full text-left text-sm">
-              <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                <tr>
-                  <th class="p-2">Name</th>
-                  <th class="p-2">Company</th>
-                  <th class="p-2">Contact</th>
-                  <th class="p-2">Deleted</th>
-                  <th class="p-2 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="customer-trash-body" class="divide-y divide-slate-100"></tbody>
-            </table>
-          </div>
         </div>
       </div>
 
@@ -1496,6 +1470,40 @@
       </div>
     </section>
 
+    <!-- Universal Trash - anything deleted from anywhere in the portal
+         (Orders, Stock, Garments/Services, Customers) lands here first via
+         each API's deleted_at soft-delete, not a real removal. Pulls
+         ?trash=1 from all four in parallel and merges into one list - see
+         loadTrash(). Nothing here is gone until "Delete forever" is
+         clicked, same mental model as a PC's Recycle Bin. -->
+    <section id="section-trash" class="hidden">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Trash</h2>
+          <p class="text-slate-500 text-sm">Anything deleted from anywhere in the portal - orders, stock, garments, services, customers. Stays here until you restore it or delete it forever.</p>
+        </div>
+        <button onclick="loadTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+          🔄 Refresh
+        </button>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+            <tr>
+              <th class="p-4">Type</th>
+              <th class="p-4">Item</th>
+              <th class="p-4">Details</th>
+              <th class="p-4">Deleted</th>
+              <th class="p-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="trash-table-body" class="divide-y divide-slate-100">
+            <tr><td colspan="5" class="p-8 text-center text-slate-400">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 
   <!-- Reusable Yes/No confirm overlay - see confirmModal() - replaces the
@@ -2303,7 +2311,7 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'stock', 'orders', 'inbox', 'proofs', 'backups'];
+    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'stock', 'orders', 'inbox', 'proofs', 'backups', 'trash'];
     function switchTab(tab) {
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
@@ -2336,6 +2344,7 @@
       if (tab === 'dashboard') loadDashboard();
       if (tab === 'proofs') loadProofsDashboard();
       if (tab === 'backups') loadBackups();
+      if (tab === 'trash') loadTrash();
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
@@ -4350,67 +4359,9 @@
       }
     }
 
-    // Trash - deleted (including merged-away) customers stay recoverable
-    // here until explicitly purged. See customers.js's deleted_at column.
-    async function openCustomerTrash() {
-      const modal = document.getElementById('customer-trash-modal');
-      const tbody = document.getElementById('customer-trash-body');
-      tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
-      modal.classList.remove('hidden');
-
-      try {
-        const res = await fetch(API_CUSTOMERS_URL + '?trash=1', { cache: 'no-store' });
-        const trashed = res.ok ? await res.json() : [];
-        if (!trashed.length) {
-          tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing in the trash.</td></tr>';
-          return;
-        }
-        tbody.innerHTML = trashed.map((c) => `
-          <tr>
-            <td class="p-2 font-medium text-slate-900">${escapeHtml(c.name)}</td>
-            <td class="p-2 text-slate-600">${escapeHtml(c.company) || '-'}</td>
-            <td class="p-2 text-xs text-slate-500">${escapeHtml([c.email, c.phone].filter(Boolean).join(' · ')) || '-'}</td>
-            <td class="p-2 text-xs text-slate-500">${escapeHtml(ukDate(c.deleted_at))}</td>
-            <td class="p-2 text-right space-x-2 whitespace-nowrap">
-              <button type="button" onclick="restoreCustomerFromTrash('${escapeAttr(c.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">Restore</button>
-              <button type="button" onclick="permanentlyDeleteCustomer('${escapeAttr(c.id)}', '${escapeAttr(c.name)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-3 py-1 rounded text-xs font-semibold shadow-sm">Delete forever</button>
-            </td>
-          </tr>
-        `).join('');
-      } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-500 text-sm">Could not load the trash.</td></tr>';
-      }
-    }
-
-    function closeCustomerTrash() {
-      document.getElementById('customer-trash-modal').classList.add('hidden');
-    }
-
-    async function restoreCustomerFromTrash(id) {
-      try {
-        await fetch(API_CUSTOMERS_URL, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, restore: true }),
-        });
-        openCustomerTrash();
-        loadCustomers();
-      } catch (e) {
-        showActionToast('⚠', 'Could not restore: ' + e.message);
-      }
-    }
-
-    async function permanentlyDeleteCustomer(id, name) {
-      if (!(await confirmModal(`Permanently delete "${name}"? This cannot be undone - there is no further recovery after this.`))) return;
-      try {
-        await fetch(API_CUSTOMERS_URL, {
-          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, permanent: true }),
-        });
-        openCustomerTrash();
-      } catch (e) {
-        showActionToast('⚠', 'Could not delete: ' + e.message);
-      }
-    }
+    // Deleted-customer trash now lives in the portal-wide Trash tab (see
+    // loadTrash()/TRASH_TYPES.customer) alongside orders/stock/garments -
+    // this used to be its own modal here.
 
     // Update Quote Status in D1 Database
     async function updateStatus(id, newStatus) {
@@ -4614,7 +4565,7 @@
     async function bulkDeleteCatalog() {
       const ids = [...selectedCatalogIds];
       if (!ids.length) return;
-      if (!(await confirmModal(`Delete ${ids.length} product(s) from the catalog? This cannot be undone.`))) return;
+      if (!(await confirmModal(`Delete ${ids.length} product(s) from the catalog? You can restore them from Trash afterward if needed.`))) return;
       try {
         const res = await fetch(API_PRODUCTS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
@@ -5279,7 +5230,7 @@
       const ids = [...selectedStockIds];
       if (!ids.length) return;
       const names = ids.map((id) => (stockById[id] ? stockById[id].item : id)).join(', ');
-      if (!(await confirmModal(`Delete ${ids.length} stock item(s)?\n\n${names}\n\nThis also removes their add/subtract history. This cannot be undone.`))) return;
+      if (!(await confirmModal(`Delete ${ids.length} stock item(s)?\n\n${names}\n\nYou can restore them from Trash afterward if needed.`))) return;
 
       let failed = 0;
       for (const id of ids) {
@@ -5748,7 +5699,7 @@
 
     async function deleteStockItem(id) {
       const s = stockById[id];
-      if (!(await confirmModal(`Delete "${s ? s.item : id}" from stock? This also removes its add/subtract history. This cannot be undone.`))) return;
+      if (!(await confirmModal(`Delete "${s ? s.item : id}" from stock? You can restore it from Trash afterward if needed.`))) return;
       try {
         await fetch(API_STOCK_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
         loadStock();
@@ -5880,7 +5831,7 @@
 
     async function deleteService(id) {
       const s = servicesById[id];
-      if (!(await confirmModal(`Delete "${s ? s.title : id}"? This cannot be undone.`))) return;
+      if (!(await confirmModal(`Delete "${s ? s.title : id}"? You can restore it from Trash afterward if needed.`))) return;
       try {
         await fetch(API_PRODUCTS_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
         loadServices();
@@ -5920,7 +5871,7 @@
     async function bulkDeleteServices() {
       const ids = [...selectedServiceIds];
       if (!ids.length) return;
-      if (!(await confirmModal(`Delete ${ids.length} service(s)? This cannot be undone.`))) return;
+      if (!(await confirmModal(`Delete ${ids.length} service(s)? You can restore them from Trash afterward if needed.`))) return;
       try {
         const res = await fetch(API_PRODUCTS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
@@ -6493,7 +6444,7 @@
     }
 
     async function deleteCatalogProduct(id) {
-      const ok = await confirmModal('Delete this product from the catalog? This cannot be undone.');
+      const ok = await confirmModal('Delete this product from the catalog? You can restore it from Trash afterward if needed.');
       if (!ok) return;
       try {
         await fetch(API_PRODUCTS_URL, {
@@ -8942,7 +8893,7 @@
     async function bulkDeleteOrders() {
       const ids = [...selectedOrderIds];
       if (!ids.length) return;
-      if (!(await confirmModal(`Delete ${ids.length} quote(s)/invoice(s)? This cannot be undone.`))) return;
+      if (!(await confirmModal(`Delete ${ids.length} quote(s)/invoice(s)? You can restore them from Trash afterward if needed.`))) return;
       try {
         const res = await fetch(API_ORDERS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
@@ -9653,6 +9604,118 @@
       }
     }
 
+    // ============================== Trash ==============================
+    // One universal bin for anything deleted anywhere in the portal - each
+    // API (orders/stock/products/customers) soft-deletes via its own
+    // deleted_at column and exposes ?trash=1; this just fetches all four in
+    // parallel and merges them into one list. Restore/permanent-delete are
+    // dispatched to the right endpoint per row via TRASH_TYPES below, so
+    // adding a fifth trashable thing later is just one more entry here.
+    const TRASH_TYPES = {
+      order: {
+        label: 'Order', url: API_ORDERS_URL,
+        title: (o) => (o.invoice_number || o.quote_number || 'Untitled') + (o.customer_name ? ' - ' + o.customer_name : ''),
+        detail: (o) => `${o.doc_type === 'invoice' ? 'Invoice' : 'Quote'} · ${money(o.total)}`,
+      },
+      stock: {
+        label: 'Stock Item', url: API_STOCK_URL,
+        title: (s) => s.item,
+        detail: (s) => [s.supplier_code, s.brand, s.colour, s.size].filter(Boolean).join(' · ') || '-',
+      },
+      product: {
+        label: (p) => p.item_type === 'service' ? 'Service' : 'Garment', url: API_PRODUCTS_URL,
+        title: (p) => p.title || p.supplier_code || 'Untitled',
+        detail: (p) => [p.supplier_code, p.brand, p.colour, p.size].filter(Boolean).join(' · ') || '-',
+      },
+      customer: {
+        label: 'Customer', url: API_CUSTOMERS_URL,
+        title: (c) => c.name,
+        detail: (c) => [c.company, c.email].filter(Boolean).join(' · ') || '-',
+      },
+    };
+
+    let trashRowsById = {};
+
+    async function loadTrash() {
+      const tbody = document.getElementById('trash-table-body');
+      tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">Loading…</td></tr>';
+      trashRowsById = {};
+      try {
+        const [orders, stock, products, customers] = await Promise.all([
+          fetch(API_ORDERS_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+          fetch(API_STOCK_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+          fetch(API_PRODUCTS_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).then((d) => d.results || []).catch(() => []),
+          fetch(API_CUSTOMERS_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+        ]);
+
+        const rows = [
+          ...(Array.isArray(orders) ? orders : []).map((r) => ({ type: 'order', row: r })),
+          ...(Array.isArray(stock) ? stock : []).map((r) => ({ type: 'stock', row: r })),
+          ...(Array.isArray(products) ? products : []).map((r) => ({ type: 'product', row: r })),
+          ...(Array.isArray(customers) ? customers : []).map((r) => ({ type: 'customer', row: r })),
+        ].sort((a, b) => (b.row.deleted_at || '').localeCompare(a.row.deleted_at || ''));
+
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">Nothing in the trash.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = rows.map(({ type, row }) => {
+          const spec = TRASH_TYPES[type];
+          const rowKey = type + ':' + row.id;
+          trashRowsById[rowKey] = { type, row };
+          const typeLabel = typeof spec.label === 'function' ? spec.label(row) : spec.label;
+          return `
+            <tr>
+              <td class="p-4"><span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(typeLabel)}</span></td>
+              <td class="p-4 font-semibold text-slate-900">${escapeHtml(spec.title(row))}</td>
+              <td class="p-4 text-slate-500 text-xs">${escapeHtml(spec.detail(row))}</td>
+              <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDateTime(row.deleted_at))}</td>
+              <td class="p-4 text-right whitespace-nowrap space-x-2">
+                <button type="button" onclick="restoreFromTrash('${escapeAttr(rowKey)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">Restore</button>
+                <button type="button" onclick="permanentlyDeleteFromTrash('${escapeAttr(rowKey)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-3 py-1 rounded text-xs font-semibold shadow-sm">Delete forever</button>
+              </td>
+            </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-red-500">Could not load the trash: ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    async function restoreFromTrash(rowKey) {
+      const entry = trashRowsById[rowKey];
+      if (!entry) return;
+      const spec = TRASH_TYPES[entry.type];
+      try {
+        const res = await fetch(spec.url, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: entry.row.id, restore: true }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || 'Restore failed');
+        showActionToast('✓', `${typeof spec.label === 'function' ? spec.label(entry.row) : spec.label} restored.`);
+        loadTrash();
+      } catch (e) {
+        showActionToast('⚠', 'Could not restore: ' + e.message);
+      }
+    }
+
+    async function permanentlyDeleteFromTrash(rowKey) {
+      const entry = trashRowsById[rowKey];
+      if (!entry) return;
+      const spec = TRASH_TYPES[entry.type];
+      if (!(await confirmModal(`Permanently delete "${spec.title(entry.row)}"? This cannot be undone - there is no further recovery after this.`))) return;
+      try {
+        const res = await fetch(spec.url, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: entry.row.id, permanent: true }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || 'Delete failed');
+        loadTrash();
+      } catch (e) {
+        showActionToast('⚠', 'Could not delete: ' + e.message);
+      }
+    }
+
     // Full version history for one quote/invoice's design proof(s) - v1, v2,
     // v3... newest first. Only the newest is ever the "live" one a customer
     // link points at; older ones just sit here as a permanent record of
@@ -10358,7 +10421,7 @@
 
     async function deleteOrder(id) {
       const o = ordersById[id];
-      if (!(await confirmModal(`Delete ${o ? (o.invoice_number || o.quote_number) : id}? This also permanently deletes any attached design proofs and production tracker photos. This cannot be undone.`))) return;
+      if (!(await confirmModal(`Delete ${o ? (o.invoice_number || o.quote_number) : id}? You can restore it from Trash afterward if needed.`))) return;
       await fetch(API_ORDERS_URL, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
       });
