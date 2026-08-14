@@ -5082,20 +5082,48 @@
         const docNumber = m.doc_type === 'invoice' ? m.invoice_number : m.quote_number;
         const deltaCls = m.delta < 0 ? 'text-rose-600' : 'text-emerald-600';
         const deltaLabel = (m.delta > 0 ? '+' : '') + m.delta;
+        // A movement from before stock_movements.order_id existed has no
+        // order_id to link with, but its free-text reason usually still
+        // names the actual document ("Invoiced on INV-0025") - pull that
+        // number back out so it's clickable too, resolved to an id via
+        // ?doc_number= at click time rather than up front for every row.
+        const reasonDocMatch = !m.order_id && m.reason ? m.reason.match(/\b(INV|Q)-\d{3,}\b/) : null;
         const label = docNumber
           ? `${escapeHtml(m.doc_type === 'invoice' ? 'Invoice' : 'Quote')} ${escapeHtml(docNumber)}${m.customer_name ? ' - ' + escapeHtml(m.customer_name) : ''}`
           : escapeHtml(m.reason || 'Adjustment');
+        let bodyHtml;
+        if (m.order_id) {
+          bodyHtml = `<button type="button" onclick="openOrderFromStock('${escapeAttr(m.order_id)}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-left">${label}</button>`;
+        } else if (reasonDocMatch) {
+          bodyHtml = `<button type="button" onclick="openOrderByNumber('${escapeAttr(reasonDocMatch[0])}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-left">${label}</button>`;
+        } else {
+          bodyHtml = `<span class="text-slate-700">${label}</span>`;
+        }
         return `
           <div class="flex items-center justify-between gap-3 py-2 text-sm">
             <div class="min-w-0">
-              ${m.order_id
-                ? `<button type="button" onclick="openOrderFromStock('${escapeAttr(m.order_id)}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-left">${label}</button>`
-                : `<span class="text-slate-700">${label}</span>`}
+              ${bodyHtml}
               <span class="block text-xs text-slate-400">${escapeHtml(ukDateTime(m.created_at))}</span>
             </div>
             <span class="${deltaCls} font-semibold shrink-0">${deltaLabel}</span>
           </div>`;
       }).join('')}</div>`;
+    }
+
+    // Resolves an order/quote NUMBER (not an id) to its id and opens it -
+    // the fallback path for a pre-order_id movement, see reasonDocMatch
+    // above. A number that no longer matches anything (the order was since
+    // deleted) fails visibly rather than silently doing nothing.
+    async function openOrderByNumber(docNumber) {
+      if (!docNumber) return;
+      try {
+        const res = await fetch(API_ORDERS_URL + '?doc_number=' + encodeURIComponent(docNumber), { cache: 'no-store' });
+        const row = await res.json();
+        if (!row || !row.id) { showActionToast('⚠', `Could not find ${docNumber} - it may have been deleted.`); return; }
+        await openOrderFromStock(row.id);
+      } catch (e) {
+        showActionToast('⚠', `Could not open ${docNumber}: ` + e.message);
+      }
     }
 
     // Jumps to the Quotes & Invoices tab and opens one specific order -

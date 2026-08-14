@@ -504,6 +504,19 @@ export async function onRequest(context) {
         ).all();
         return json(results);
       }
+      // ?doc_number=X -> just the id/doc_type for a quote/invoice number
+      // (e.g. "INV-0025"), looked up regardless of archived status. Used
+      // by the Stock tab's "Allocated to" dropdown to make an OLDER
+      // movement's free-text reason ("Invoiced on INV-0025", from before
+      // stock_movements.order_id existed) clickable too, by resolving the
+      // number it already shows back to an id.
+      const docNumber = url.searchParams.get("doc_number");
+      if (docNumber) {
+        const row = await db.prepare(
+          "SELECT id, doc_type FROM orders WHERE invoice_number = ?1 OR quote_number = ?1 LIMIT 1"
+        ).bind(docNumber).first();
+        return json(row || null);
+      }
       if (id) {
         const row = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(id).first();
         if (!row) return json({ error: "Not found" }, 404);
