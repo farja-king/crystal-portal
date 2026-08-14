@@ -855,6 +855,22 @@
       <!-- Add/Edit Stock Item form -->
       <div id="stock-edit-form" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
         <h3 id="stock-edit-form-title" class="text-lg font-bold text-slate-900 mb-4">Add Stock Item</h3>
+
+        <!-- Optional shortcut: pick an existing garment from the Garment
+             Catalog (see functions/api/products.js) to fill in the fields
+             below instead of typing them by hand - see
+             searchStockGarmentCatalog()/pickStockGarmentResult(). Purely a
+             convenience; the fields it fills stay freely editable
+             afterward, and stock rows aren't linked back to the catalog
+             row they came from. -->
+        <div id="stock-garment-picker" class="relative mb-4 max-w-xl">
+          <input id="stock-garment-search" type="text" autocomplete="off" placeholder="Search the Garment Catalog by title, brand, code or colour…"
+                 oninput="searchStockGarmentCatalog(this.value); toggleSearchClear(this)"
+                 class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+          <button type="button" onclick="clearSearchField('stock-garment-search'); document.getElementById('stock-garment-search-results').innerHTML=''" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          <div id="stock-garment-search-results" class="absolute z-10 w-full mt-1 max-h-64 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-lg shadow-lg empty:border-0"></div>
+        </div>
+
         <div class="grid gap-4 md:grid-cols-3">
           <label class="text-sm">
             <span class="block font-medium text-slate-700 mb-1">Item</span>
@@ -4843,9 +4859,58 @@
       });
       document.getElementById('stock-edit-qty-field').classList.remove('hidden');
       document.getElementById('stock-edit-msg').textContent = '';
+      document.getElementById('stock-garment-picker').classList.remove('hidden');
+      document.getElementById('stock-garment-search').value = '';
+      document.getElementById('stock-garment-search-results').innerHTML = '';
       document.getElementById('stock-edit-form').classList.remove('hidden');
       document.getElementById('stock-list-view').classList.add('hidden');
-      document.getElementById('stock-edit-item').focus();
+      document.getElementById('stock-garment-search').focus();
+    }
+
+    let stockGarmentSearchTimer = null;
+    let stockGarmentSearchResults = [];
+
+    // Debounced the same way as searchCvCatalogPicker - flat, ungrouped
+    // matches (not group_by_code) since a stock row is one exact
+    // colour/size variant, not a whole product's spread of them.
+    function searchStockGarmentCatalog(raw) {
+      clearTimeout(stockGarmentSearchTimer);
+      const resultsEl = document.getElementById('stock-garment-search-results');
+      const query = raw.trim();
+      if (!query) { resultsEl.innerHTML = ''; return; }
+      stockGarmentSearchTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(API_PRODUCTS_URL + '?q=' + encodeURIComponent(query) + '&item_type=garment&limit=15', { cache: 'no-store' });
+          const data = await res.json();
+          stockGarmentSearchResults = data.results || [];
+          resultsEl.innerHTML = stockGarmentSearchResults.length
+            ? stockGarmentSearchResults.map((p, i) => `
+                <button type="button" onclick="pickStockGarmentResult(${i})" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm">
+                  <span class="text-slate-700">${escapeHtml(p.title || '')}</span>
+                  <span class="block text-xs text-slate-400">${[p.brand, p.colour, p.size].filter(Boolean).map(escapeHtml).join(' · ') || ' '}</span>
+                </button>`).join('')
+            : '<p class="px-3 py-2 text-sm text-slate-400">No matches in the Garment Catalog.</p>';
+        } catch (e) {
+          resultsEl.innerHTML = '<p class="px-3 py-2 text-sm text-red-500">Search failed.</p>';
+        }
+      }, 250);
+    }
+
+    // Fills the fields below, same as picking a template does elsewhere -
+    // nothing is locked afterward, and the stock row isn't linked back to
+    // this catalog product once saved (see stock.js).
+    function pickStockGarmentResult(i) {
+      const p = stockGarmentSearchResults[i];
+      if (!p) return;
+      document.getElementById('stock-edit-item').value = p.title || '';
+      document.getElementById('stock-edit-brand').value = p.brand || '';
+      document.getElementById('stock-edit-colour').value = p.colour || '';
+      document.getElementById('stock-edit-size').value = p.size || '';
+      document.getElementById('stock-edit-cost').value = p.cost_price || '';
+      document.getElementById('stock-edit-sale').value = p.sell_price || '';
+      document.getElementById('stock-garment-search').value = '';
+      document.getElementById('stock-garment-search-results').innerHTML = '';
+      document.getElementById('stock-edit-qty').focus();
     }
 
     function openEditStockItemForm(id) {
@@ -4866,6 +4931,7 @@
       // is hidden rather than shown-but-ignored.
       document.getElementById('stock-edit-qty-field').classList.add('hidden');
       document.getElementById('stock-edit-msg').textContent = '';
+      document.getElementById('stock-garment-picker').classList.add('hidden');
       document.getElementById('stock-edit-form').classList.remove('hidden');
       document.getElementById('stock-list-view').classList.add('hidden');
       document.getElementById('stock-edit-item').focus();
