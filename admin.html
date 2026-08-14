@@ -1783,6 +1783,9 @@
           <button type="button" id="cv-send-statement-btn" onclick="sendCustomerStatement()" title="Emails every invoice on this customer's account (number, date, total, status, balance) plus the overall balance due - can be sent any time" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
             Send Statement
           </button>
+          <button type="button" id="cv-send-reorder-btn" onclick="sendReorderReminderNow()" title="Nudges this customer to reorder - normally only sent automatically ~11 months after their last invoice (see functions/api/reorder-reminders.js), this sends one right now regardless" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+            Send Reorder Reminder
+          </button>
           <button onclick="closeCustomerViewModal()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
         </div>
       </div>
@@ -9922,6 +9925,34 @@
         }
         if (btn) { btn.disabled = false; btn.textContent = originalText; }
       });
+    }
+
+    // Manual override of the automatic ~11-month nudge (see
+    // functions/api/reorder-reminders.js) - sends immediately regardless of
+    // whether this customer is actually due one yet, same "run_one" override
+    // pattern as the stale-quote follow-up's manual send.
+    async function sendReorderReminderNow() {
+      const id = cvNotesCustomerId;
+      if (!id) return;
+      if (!(await confirmModal('Send a reorder-reminder email to this customer now?'))) return;
+      const btn = document.getElementById('cv-send-reorder-btn');
+      const originalText = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+      try {
+        const res = await fetch('/api/reorder-reminders', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'run_one', id }),
+        });
+        const data = await res.json();
+        if (data.sent) {
+          showActionToast('✓', 'Reorder reminder sent.');
+        } else {
+          showActionToast('⚠', "Couldn't send" + (data.reason ? ': ' + data.reason : '.'));
+        }
+      } catch (e) {
+        showActionToast('⚠', "Couldn't send: " + e.message);
+      }
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
     }
 
     async function loadOrderPayments(orderId) {

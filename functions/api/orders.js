@@ -11,6 +11,26 @@
 import { logOrderEvent, ensureOrderEventsTable } from "../_lib/order-events.js";
 import { deductStockForOrder } from "../_lib/stock-deduct.js";
 
+// A new invoice restarts that customer's reorder-reminder clock - see
+// functions/api/reorder-reminders.js, which times its ~11-month nudge off
+// reorder_reminder_sent_at being NULL. Without this reset, a customer who
+// reorders right after getting nudged would never be eligible for the
+// *next* year's nudge - the flag would stay permanently set from the first
+// one. Best-effort: never let this block the invoice action it's attached to.
+async function resetReorderReminder(db, customerId) {
+  if (!customerId) return;
+  try {
+    await db.prepare("ALTER TABLE customers ADD COLUMN reorder_reminder_sent_at TEXT").run();
+  } catch {
+    // already exists
+  }
+  try {
+    await db.prepare("UPDATE customers SET reorder_reminder_sent_at = NULL WHERE id = ?").bind(customerId).run();
+  } catch {
+    // never let this break the invoice action it's attached to
+  }
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -584,6 +604,7 @@ export async function onRequest(context) {
         if (deducted.length) {
           await logOrderEvent(db, id, "stock", `Stock updated: ${deducted.map((d) => `${d.item} (${d.colour}/${d.size}) -${d.qty}`).join(", ")}`);
         }
+        await resetReorderReminder(db, data.customer_id);
       }
 
       return json({
@@ -790,6 +811,7 @@ export async function onRequest(context) {
         if (deducted.length) {
           await logOrderEvent(db, data.id, "stock", `Stock updated: ${deducted.map((d) => `${d.item} (${d.colour}/${d.size}) -${d.qty}`).join(", ")}`);
         }
+        await resetReorderReminder(db, existing.customer_id);
 
         return json({ success: true, invoice_number });
       }

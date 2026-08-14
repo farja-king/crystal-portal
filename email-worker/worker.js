@@ -264,6 +264,10 @@ export default {
       // safe to hit every 15 minutes like the other two sweeps, it just
       // no-ops most of the time.
       sweep("/api/backup"),
+      // ~11 months after a customer's last portal invoice, one nudge to
+      // reorder - see functions/api/reorder-reminders.js. Self-limiting
+      // the same way as quote-followups (only sends once per order cycle).
+      sweep("/api/reorder-reminders"),
     ]));
   },
 };
