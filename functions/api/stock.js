@@ -86,20 +86,41 @@ export async function onRequest(context) {
         stock_item_id TEXT NOT NULL,
         delta REAL NOT NULL,
         reason TEXT,
+        order_id TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    // order_id - which order/invoice this movement came from, when it came
+    // from one (a manual +/- adjustment leaves it NULL). Added after this
+    // table already existed on live D1, same guard as stock-deduct.js's
+    // (either file could be the first to touch this table on a deploy).
+    // Lets the "Allocated to" dropdown (see admin.html's
+    // loadStockMovements) link straight back to the order that took the
+    // stock, instead of just showing its free-text reason.
+    try {
+      await db.prepare("ALTER TABLE stock_movements ADD COLUMN order_id TEXT").run();
+    } catch {
+      // already exists
+    }
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements (stock_item_id)").run();
 
     const url = new URL(request.url);
     const recomputeQuantity = (itemId) => recomputeStockAndAlert(db, env, itemId, url.origin);
 
     // GET ?movements_for=X - the adjustment history for one item, newest
-    // first, for the "Recent activity" panel on that item's row.
+    // first, for the "Allocated to" dropdown on that item's row. Left-joined
+    // against orders so each movement can show which quote/invoice (and
+    // customer) it belongs to, not just the free-text reason - the order
+    // may since have been deleted, in which case these columns just come
+    // back NULL and the row falls back to showing reason alone.
     if (request.method === "GET" && url.searchParams.get("movements_for")) {
-      const { results } = await db.prepare(
-        "SELECT * FROM stock_movements WHERE stock_item_id = ? ORDER BY created_at DESC"
-      ).bind(url.searchParams.get("movements_for")).all();
+      const { results } = await db.prepare(`
+        SELECT m.*, o.doc_type, o.quote_number, o.invoice_number, o.customer_name
+        FROM stock_movements m
+        LEFT JOIN orders o ON o.id = m.order_id
+        WHERE m.stock_item_id = ?
+        ORDER BY m.created_at DESC
+      `).bind(url.searchParams.get("movements_for")).all();
       return json(results);
     }
 

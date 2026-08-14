@@ -16,7 +16,7 @@
 // _lib/stock-alerts.js for the shared crossing-detection logic.
 import { recomputeStockAndAlert } from "./stock-alerts.js";
 
-export async function deductStockForOrder(db, items, reason, env, originUrl) {
+export async function deductStockForOrder(db, items, reason, env, originUrl, orderId) {
   const deducted = [];
   try {
     // stock_items/stock_movements are created lazily by stock.js - guard
@@ -33,9 +33,17 @@ export async function deductStockForOrder(db, items, reason, env, originUrl) {
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS stock_movements (
         id TEXT PRIMARY KEY, stock_item_id TEXT NOT NULL, delta REAL NOT NULL,
-        reason TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        reason TEXT, order_id TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    // order_id was added after this table already existed on live D1 - see
+    // functions/api/stock.js's own guard for the same column (either file
+    // could be the first to touch this table on a given deploy).
+    try {
+      await db.prepare("ALTER TABLE stock_movements ADD COLUMN order_id TEXT").run();
+    } catch {
+      // already exists
+    }
 
     for (const item of Array.isArray(items) ? items : []) {
       // Only real catalog garment lines carry a supplier_code that can be
@@ -59,8 +67,8 @@ export async function deductStockForOrder(db, items, reason, env, originUrl) {
         if (!stockItem) continue;
 
         await db.prepare(
-          "INSERT INTO stock_movements (id, stock_item_id, delta, reason) VALUES (?, ?, ?, ?)"
-        ).bind(crypto.randomUUID(), stockItem.id, -qty, reason).run();
+          "INSERT INTO stock_movements (id, stock_item_id, delta, reason, order_id) VALUES (?, ?, ?, ?, ?)"
+        ).bind(crypto.randomUUID(), stockItem.id, -qty, reason, orderId || null).run();
 
         const newQty = await recomputeStockAndAlert(db, env, stockItem.id, originUrl);
 

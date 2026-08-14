@@ -4899,6 +4899,11 @@
         // Ticked rows that no longer exist (deleted elsewhere, or just
         // gone after a reload) shouldn't linger in the bulk-action count.
         selectedStockIds.forEach((id) => { if (!stockById[id]) selectedStockIds.delete(id); });
+        // A full reload rebuilds every row collapsed anyway (see
+        // renderStockTable), so any cached "Allocated to" history is now
+        // for a dropdown that no longer exists - drop it rather than let
+        // it silently go stale for whenever it's next expanded.
+        stockMovementsCache = {};
         renderLowStockBanner();
         filterStock();
       } catch (e) {
@@ -4997,15 +5002,19 @@
       tbody.innerHTML = items.map((s) => {
         const { vat, profit, margin } = stockVatProfitMargin(s);
         const profitCls = profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold';
+        const id = escapeAttr(s.id);
         return `
         <tr class="hover:bg-slate-50">
-          <td class="p-4"><input type="checkbox" class="stock-select-checkbox rounded border-slate-300" data-id="${escapeAttr(s.id)}" ${selectedStockIds.has(s.id) ? 'checked' : ''} onchange="toggleStockSelect('${escapeAttr(s.id)}', this.checked)" /></td>
-          <td class="p-4 font-semibold text-slate-900">${escapeHtml(s.item)}</td>
+          <td class="p-4"><input type="checkbox" class="stock-select-checkbox rounded border-slate-300" data-id="${id}" ${selectedStockIds.has(s.id) ? 'checked' : ''} onchange="toggleStockSelect('${id}', this.checked)" /></td>
+          <td class="p-4 font-semibold text-slate-900">
+            <button type="button" onclick="toggleStockAllocations('${id}')" id="stock-allot-toggle-${id}" title="Show which orders this stock has been allocated to" class="mr-1 text-slate-400 hover:text-slate-700 align-middle">▸</button>
+            ${escapeHtml(s.item)}
+          </td>
           <td class="p-4 font-mono text-xs text-slate-600">${escapeHtml(s.supplier_code || '-')}</td>
           <td class="p-4">${escapeHtml(s.brand || '-')}</td>
           <td class="p-4">${escapeHtml(s.colour || '-')}</td>
           <td class="p-4">${escapeHtml(s.size || '-')}</td>
-          <td class="p-4" id="stock-qty-cell-${escapeAttr(s.id)}">${stockQtyCellHtml(s)}</td>
+          <td class="p-4" id="stock-qty-cell-${id}">${stockQtyCellHtml(s)}</td>
           <td class="p-4 text-right text-slate-700">${money(s.cost_price)}</td>
           <td class="p-4 text-right text-slate-600">${money(vat)}</td>
           <td class="p-4 text-right text-slate-900">${money(s.sale_price)}</td>
@@ -5013,14 +5022,92 @@
           <td class="p-4 text-right text-slate-600">${margin}</td>
           <td class="p-4">
             <div class="flex flex-wrap justify-end gap-1.5">
-              <button onclick="openEditStockItemForm('${escapeAttr(s.id)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded text-xs font-semibold">Edit</button>
-              <button onclick="deleteStockItem('${escapeAttr(s.id)}')" class="bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded text-xs font-semibold">Delete</button>
+              <button onclick="openEditStockItemForm('${id}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded text-xs font-semibold">Edit</button>
+              <button onclick="deleteStockItem('${id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded text-xs font-semibold">Delete</button>
             </div>
           </td>
+        </tr>
+        <tr id="stock-allot-row-${id}" class="hidden bg-slate-50">
+          <td></td>
+          <td colspan="12" class="px-4 pb-3" id="stock-allot-${id}"></td>
         </tr>`;
       }).join('');
       document.getElementById('stock-select-all').checked = items.length > 0 && items.every((s) => selectedStockIds.has(s.id));
       updateStockBulkBar();
+    }
+
+    // "Allocated to" dropdown - the same stock_movements ledger already
+    // used for +/- adjustments, just rendered per-item and enriched with
+    // which order each deduction came from (see stock.js's movements_for
+    // LEFT JOIN). Fetched lazily on first expand, cached after that -
+    // reloadStockAllocations forces a refresh (called after an edit that
+    // could change what's shown, e.g. none currently, but kept for parity
+    // with other "Recent activity" panels in this file).
+    let stockMovementsCache = {};
+
+    async function toggleStockAllocations(id) {
+      const row = document.getElementById('stock-allot-row-' + id);
+      const btn = document.getElementById('stock-allot-toggle-' + id);
+      if (!row || !btn) return;
+      const opening = row.classList.contains('hidden');
+      row.classList.toggle('hidden');
+      btn.textContent = opening ? '▾' : '▸';
+      if (opening && !stockMovementsCache[id]) {
+        await loadStockAllocations(id);
+      }
+    }
+
+    async function loadStockAllocations(id) {
+      const el = document.getElementById('stock-allot-' + id);
+      if (!el) return;
+      el.innerHTML = '<p class="text-sm text-slate-400 py-2">Loading…</p>';
+      try {
+        const res = await fetch(API_STOCK_URL + '?movements_for=' + encodeURIComponent(id), { cache: 'no-store' });
+        const movements = await res.json();
+        stockMovementsCache[id] = movements;
+        renderStockAllocations(id, movements);
+      } catch (e) {
+        el.innerHTML = '<p class="text-sm text-red-500 py-2">Could not load history.</p>';
+      }
+    }
+
+    function renderStockAllocations(id, movements) {
+      const el = document.getElementById('stock-allot-' + id);
+      if (!el) return;
+      if (!movements.length) {
+        el.innerHTML = '<p class="text-sm text-slate-400 py-2">No stock movements recorded yet.</p>';
+        return;
+      }
+      el.innerHTML = `<div class="divide-y divide-slate-200 border-t border-slate-200">${movements.map((m) => {
+        const docNumber = m.doc_type === 'invoice' ? m.invoice_number : m.quote_number;
+        const deltaCls = m.delta < 0 ? 'text-rose-600' : 'text-emerald-600';
+        const deltaLabel = (m.delta > 0 ? '+' : '') + m.delta;
+        const label = docNumber
+          ? `${escapeHtml(m.doc_type === 'invoice' ? 'Invoice' : 'Quote')} ${escapeHtml(docNumber)}${m.customer_name ? ' - ' + escapeHtml(m.customer_name) : ''}`
+          : escapeHtml(m.reason || 'Adjustment');
+        return `
+          <div class="flex items-center justify-between gap-3 py-2 text-sm">
+            <div class="min-w-0">
+              ${m.order_id
+                ? `<button type="button" onclick="openOrderFromStock('${escapeAttr(m.order_id)}')" class="text-indigo-600 hover:text-indigo-800 font-medium text-left">${label}</button>`
+                : `<span class="text-slate-700">${label}</span>`}
+              <span class="block text-xs text-slate-400">${escapeHtml(ukDateTime(m.created_at))}</span>
+            </div>
+            <span class="${deltaCls} font-semibold shrink-0">${deltaLabel}</span>
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Jumps to the Quotes & Invoices tab and opens one specific order -
+    // used by the "Allocated to" dropdown above. ordersById is populated by
+    // loadOrders(), which switchTab('orders') already kicks off but doesn't
+    // wait for, so this awaits its own call to make sure the order is
+    // actually there before viewOrder() looks it up.
+    async function openOrderFromStock(orderId) {
+      if (!orderId) return;
+      switchTab('orders');
+      await loadOrders();
+      viewOrder(orderId);
     }
 
     // Same tick-rows-then-act pattern as selectedCustomerIds/
@@ -5109,6 +5196,13 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
         if (stockAdjustSeq[id] === seq) { s.quantity = data.quantity; updateStockQtyCell(id); }
+        // This click just added a new stock_movements row - drop the cached
+        // allocations list so the next expand (or a re-render of one
+        // already open) fetches the fresh ledger instead of showing stale
+        // history missing this adjustment.
+        delete stockMovementsCache[id];
+        const allotRow = document.getElementById('stock-allot-row-' + id);
+        if (allotRow && !allotRow.classList.contains('hidden')) loadStockAllocations(id);
       } catch (e) {
         showActionToast('⚠', 'Could not adjust stock: ' + e.message);
         loadStock();
