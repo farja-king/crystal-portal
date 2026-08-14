@@ -96,10 +96,12 @@ export async function onRequest(context) {
       return json(results);
     }
 
-    if (request.method === "POST") {
-      const data = await request.json();
+    // Shared by a single POST body and each row of a { rows: [...] } bulk
+    // POST (see Bulk Add Stock in admin.html) - one insert, one optional
+    // "Initial stock" movement, same as before.
+    async function insertStockItem(data) {
       const item = String(data.item || "").trim();
-      if (!item) return json({ error: "Item name is required" }, 400);
+      if (!item) return { error: "Item name is required" };
 
       const id = crypto.randomUUID();
       await db.prepare(`
@@ -128,7 +130,30 @@ export async function onRequest(context) {
         await recomputeQuantity(id);
       }
 
-      return json({ success: true, id });
+      return { id };
+    }
+
+    if (request.method === "POST") {
+      const data = await request.json();
+
+      // Bulk Add Stock: several lines queued client-side (search a code,
+      // pick colour/size, repeat), all saved together in one request rather
+      // than one round-trip per line. A line with no item name is skipped
+      // rather than failing the whole batch - shouldn't happen from the UI,
+      // but a partial batch (everything valid still saved) beats losing
+      // everything typed so far over one bad row.
+      if (Array.isArray(data.rows)) {
+        let imported = 0;
+        for (const row of data.rows) {
+          const result = await insertStockItem(row);
+          if (!result.error) imported++;
+        }
+        return json({ success: true, imported });
+      }
+
+      const result = await insertStockItem(data);
+      if (result.error) return json({ error: result.error }, 400);
+      return json({ success: true, id: result.id });
     }
 
     if (request.method === "PUT") {

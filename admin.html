@@ -846,9 +846,59 @@
           <button onclick="openAddStockItemForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + Add Stock Item
           </button>
+          <button onclick="openBulkAddStockForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            📦 Bulk Add Stock
+          </button>
           <button onclick="loadStock()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
+        </div>
+      </div>
+
+      <!-- Bulk Add Stock: search a code, pick colour/size, it drops straight
+           into the queued list below and the search box clears itself for
+           the next code - polo, then hoodie, then sweatshirt, then beanie,
+           without a save round-trip in between. Nothing hits the database
+           until "Save all" - see openBulkAddStockForm()/
+           pickBulkGarmentResult()/addBulkStockLine()/saveBulkStock(). -->
+      <div id="stock-bulk-form" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <h3 class="text-lg font-bold text-slate-900 mb-4">Bulk Add Stock</h3>
+
+        <div id="stock-bulk-picker" class="relative mb-4 max-w-xl">
+          <input id="stock-bulk-search" type="text" autocomplete="off" placeholder="Search the Garment Catalog by title, brand, code or colour…"
+                 oninput="searchBulkGarmentCatalog(this.value); toggleSearchClear(this)"
+                 class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900 text-sm" />
+          <button type="button" onclick="clearSearchField('stock-bulk-search'); document.getElementById('stock-bulk-search-results').innerHTML=''" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          <div id="stock-bulk-search-results" class="absolute z-10 w-full mt-1 max-h-64 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-lg shadow-lg empty:border-0"></div>
+        </div>
+
+        <div id="stock-bulk-variant-picker" class="hidden mb-4 max-w-xl bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <p id="stock-bulk-variant-name" class="text-sm font-semibold text-slate-800 mb-2"></p>
+          <div id="stock-bulk-variant-fields" class="flex flex-wrap items-end gap-2"></div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4 empty:hidden" id="stock-bulk-table-wrap">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="p-3">Item</th>
+                <th class="p-3">Code</th>
+                <th class="p-3">Colour</th>
+                <th class="p-3">Size</th>
+                <th class="p-3">Qty</th>
+                <th class="p-3">Cost</th>
+                <th class="p-3">Sale</th>
+                <th class="p-3"></th>
+              </tr>
+            </thead>
+            <tbody id="stock-bulk-table-body"></tbody>
+          </table>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button onclick="saveBulkStock()" id="stock-bulk-save-btn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed" disabled>Save all (0)</button>
+          <button onclick="closeBulkAddStockForm()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Cancel</button>
+          <p id="stock-bulk-msg" class="text-sm"></p>
         </div>
       </div>
 
@@ -4900,6 +4950,7 @@
       document.getElementById('stock-garment-search').value = '';
       document.getElementById('stock-garment-search-results').innerHTML = '';
       document.getElementById('stock-garment-variant-picker').classList.add('hidden');
+      document.getElementById('stock-bulk-form').classList.add('hidden');
       document.getElementById('stock-edit-form').classList.remove('hidden');
       document.getElementById('stock-list-view').classList.add('hidden');
       document.getElementById('stock-garment-search').focus();
@@ -4934,30 +4985,13 @@
       }, 250);
     }
 
-    // The clicked search result is a price tier (e.g. "Colours / XS - XXL"),
-    // not one exact colour/size - so this loads that product code's full
-    // variant spread to get its real colour/size lists (same
-    // available_colours/available_sizes source and fallback as
-    // loadCvCatalogPickerVariants), then shows dropdowns to actually pick
-    // one of each before anything gets filled in.
-    let stockGarmentColourOptions = [];
-    let stockGarmentSizeOptions = [];
-    let stockGarmentPicked = null; // { title, brand, cost_price, sell_price }
-
-    async function pickStockGarmentResult(i) {
-      const p = stockGarmentSearchResults[i];
-      if (!p) return;
-      document.getElementById('stock-garment-search-results').innerHTML = '';
-      document.getElementById('stock-garment-search').value = p.title || '';
-
-      const nameEl = document.getElementById('stock-garment-variant-name');
-      const fieldsEl = document.getElementById('stock-garment-variant-fields');
-      const wrap = document.getElementById('stock-garment-variant-picker');
-      wrap.classList.remove('hidden');
-      nameEl.textContent = (p.supplier_code ? p.supplier_code + ' - ' : '') + (p.title || '');
-      fieldsEl.innerHTML = '<p class="text-sm text-slate-400">Loading colours/sizes…</p>';
-      stockGarmentPicked = { title: p.title, supplier_code: p.supplier_code, brand: p.brand, cost_price: p.cost_price, sell_price: p.sell_price };
-
+    // A search result is a price tier (e.g. "Colours / XS - XXL"), not one
+    // exact colour/size - so before anything gets filled in, this loads
+    // that product code's full variant spread to get its real colour/size
+    // lists (same available_colours/available_sizes source and fallback as
+    // loadCvCatalogPickerVariants). Shared by both the single Add Stock
+    // Item picker and the Bulk Add Stock picker below.
+    async function fetchGarmentVariantOptions(p) {
       let variants = [p];
       if (p.supplier_code) {
         try {
@@ -4977,8 +5011,26 @@
       } catch (e) { /* fall through to fallback below */ }
       if (colourOptions.length === 0) colourOptions = [...new Set(variants.map((v) => v.colour).filter(Boolean))];
       if (sizeOptions.length === 0) sizeOptions = [...new Set(variants.map((v) => v.size).filter(Boolean))];
-      stockGarmentColourOptions = colourOptions;
-      stockGarmentSizeOptions = sizeOptions;
+      return { colourOptions, sizeOptions };
+    }
+
+    let stockGarmentPicked = null; // { title, supplier_code, brand, cost_price, sell_price }
+
+    async function pickStockGarmentResult(i) {
+      const p = stockGarmentSearchResults[i];
+      if (!p) return;
+      document.getElementById('stock-garment-search-results').innerHTML = '';
+      document.getElementById('stock-garment-search').value = p.title || '';
+
+      const nameEl = document.getElementById('stock-garment-variant-name');
+      const fieldsEl = document.getElementById('stock-garment-variant-fields');
+      const wrap = document.getElementById('stock-garment-variant-picker');
+      wrap.classList.remove('hidden');
+      nameEl.textContent = (p.supplier_code ? p.supplier_code + ' - ' : '') + (p.title || '');
+      fieldsEl.innerHTML = '<p class="text-sm text-slate-400">Loading colours/sizes…</p>';
+      stockGarmentPicked = { title: p.title, supplier_code: p.supplier_code, brand: p.brand, cost_price: p.cost_price, sell_price: p.sell_price };
+
+      const { colourOptions, sizeOptions } = await fetchGarmentVariantOptions(p);
 
       if (!colourOptions.length && !sizeOptions.length) {
         // Nothing to choose between - fill in as-is, same as before.
@@ -5034,6 +5086,177 @@
       document.getElementById('stock-edit-qty').focus();
     }
 
+    // ------------------------------------------------------------- Bulk Add --
+    // Same search -> pick colour -> pick size flow as the single Add Stock
+    // Item form, except picking both colour and size immediately queues a
+    // line (qty defaults to 1, editable in the table) and resets the search
+    // box for the next code - nothing hits the database until "Save all".
+    let bulkGarmentSearchTimer = null;
+    let bulkGarmentSearchResults = [];
+    let bulkStockPicked = null; // { title, supplier_code, brand, cost_price, sell_price }
+    let bulkStockLines = [];
+
+    function openBulkAddStockForm() {
+      bulkStockLines = [];
+      document.getElementById('stock-bulk-search').value = '';
+      document.getElementById('stock-bulk-search-results').innerHTML = '';
+      document.getElementById('stock-bulk-variant-picker').classList.add('hidden');
+      document.getElementById('stock-bulk-msg').textContent = '';
+      renderBulkStockTable();
+      document.getElementById('stock-bulk-form').classList.remove('hidden');
+      document.getElementById('stock-edit-form').classList.add('hidden');
+      document.getElementById('stock-list-view').classList.add('hidden');
+      document.getElementById('stock-bulk-search').focus();
+    }
+
+    function closeBulkAddStockForm() {
+      document.getElementById('stock-bulk-form').classList.add('hidden');
+      document.getElementById('stock-list-view').classList.remove('hidden');
+    }
+
+    function searchBulkGarmentCatalog(raw) {
+      clearTimeout(bulkGarmentSearchTimer);
+      const resultsEl = document.getElementById('stock-bulk-search-results');
+      const query = raw.trim();
+      if (!query) { resultsEl.innerHTML = ''; return; }
+      bulkGarmentSearchTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(API_PRODUCTS_URL + '?q=' + encodeURIComponent(query) + '&item_type=garment&limit=15', { cache: 'no-store' });
+          const data = await res.json();
+          bulkGarmentSearchResults = data.results || [];
+          resultsEl.innerHTML = bulkGarmentSearchResults.length
+            ? bulkGarmentSearchResults.map((p, i) => `
+                <button type="button" onclick="pickBulkGarmentResult(${i})" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm">
+                  <span class="text-slate-700">${escapeHtml(p.title || '')}</span>
+                  <span class="block text-xs text-slate-400">${[p.supplier_code, p.brand, p.colour, p.size].filter(Boolean).map(escapeHtml).join(' · ') || ' '}</span>
+                </button>`).join('')
+            : '<p class="px-3 py-2 text-sm text-slate-400">No matches in the Garment Catalog.</p>';
+        } catch (e) {
+          resultsEl.innerHTML = '<p class="px-3 py-2 text-sm text-red-500">Search failed.</p>';
+        }
+      }, 250);
+    }
+
+    async function pickBulkGarmentResult(i) {
+      const p = bulkGarmentSearchResults[i];
+      if (!p) return;
+      document.getElementById('stock-bulk-search-results').innerHTML = '';
+
+      const nameEl = document.getElementById('stock-bulk-variant-name');
+      const fieldsEl = document.getElementById('stock-bulk-variant-fields');
+      const wrap = document.getElementById('stock-bulk-variant-picker');
+      wrap.classList.remove('hidden');
+      nameEl.textContent = (p.supplier_code ? p.supplier_code + ' - ' : '') + (p.title || '');
+      fieldsEl.innerHTML = '<p class="text-sm text-slate-400">Loading colours/sizes…</p>';
+      bulkStockPicked = { title: p.title, supplier_code: p.supplier_code, brand: p.brand, cost_price: p.cost_price, sell_price: p.sell_price };
+
+      const { colourOptions, sizeOptions } = await fetchGarmentVariantOptions(p);
+
+      if (!colourOptions.length && !sizeOptions.length) {
+        // Nothing to choose between - queue it as-is, same as the single form does.
+        addBulkStockLine(p.colour || '', p.size || '');
+        return;
+      }
+      fieldsEl.innerHTML = `
+        <label class="text-xs text-slate-600">
+          <span class="block mb-1">Colour</span>
+          <select id="stock-bulk-variant-colour" onchange="maybeAddBulkStockLine()" class="w-36 rounded border border-slate-300 px-2 py-1.5 text-sm">
+            <option value="">Choose colour…</option>
+            ${colourOptions.map((c) => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="text-xs text-slate-600">
+          <span class="block mb-1">Size</span>
+          <select id="stock-bulk-variant-size" onchange="maybeAddBulkStockLine()" class="w-36 rounded border border-slate-300 px-2 py-1.5 text-sm">
+            <option value="">Choose size…</option>
+            ${sizeOptions.map((s) => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join('')}
+          </select>
+        </label>
+        <button type="button" onclick="document.getElementById('stock-bulk-variant-picker').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-600 font-medium pb-1.5">Cancel</button>
+      `;
+    }
+
+    function maybeAddBulkStockLine() {
+      const colour = document.getElementById('stock-bulk-variant-colour').value;
+      const size = document.getElementById('stock-bulk-variant-size').value;
+      if (colour && size) addBulkStockLine(colour, size);
+    }
+
+    // Queues a line and immediately resets the search box/picker so the
+    // next code can be typed straight away - this is the "polo, then
+    // hoodie, then sweatshirt, then beanie" flow, one after another with no
+    // save round-trip in between.
+    function addBulkStockLine(colour, size) {
+      const p = bulkStockPicked;
+      if (!p) return;
+      bulkStockLines.push({
+        item: p.title || '',
+        supplier_code: p.supplier_code || '',
+        brand: p.brand || '',
+        colour: colour || '',
+        size: size || '',
+        quantity: 1,
+        cost_price: Number(p.cost_price) || 0,
+        sale_price: Number(p.sell_price) || 0,
+      });
+      renderBulkStockTable();
+      document.getElementById('stock-bulk-variant-picker').classList.add('hidden');
+      document.getElementById('stock-bulk-search').value = '';
+      document.getElementById('stock-bulk-search').focus();
+    }
+
+    function updateBulkLineQty(idx, value) {
+      const n = Number(value);
+      bulkStockLines[idx].quantity = isFinite(n) ? n : 0;
+    }
+
+    function removeBulkStockLine(idx) {
+      bulkStockLines.splice(idx, 1);
+      renderBulkStockTable();
+    }
+
+    function renderBulkStockTable() {
+      const tbody = document.getElementById('stock-bulk-table-body');
+      const saveBtn = document.getElementById('stock-bulk-save-btn');
+      saveBtn.textContent = `Save all (${bulkStockLines.length})`;
+      saveBtn.disabled = bulkStockLines.length === 0;
+      tbody.innerHTML = bulkStockLines.map((l, idx) => `
+        <tr class="border-b border-slate-100">
+          <td class="p-3 font-semibold text-slate-900">${escapeHtml(l.item)}</td>
+          <td class="p-3 font-mono text-xs text-slate-600">${escapeHtml(l.supplier_code || '-')}</td>
+          <td class="p-3">${escapeHtml(l.colour || '-')}</td>
+          <td class="p-3">${escapeHtml(l.size || '-')}</td>
+          <td class="p-3"><input type="number" step="1" value="${l.quantity}" oninput="updateBulkLineQty(${idx}, this.value)" class="w-16 rounded border border-slate-300 px-2 py-1 text-sm" /></td>
+          <td class="p-3">${money(l.cost_price)}</td>
+          <td class="p-3">${money(l.sale_price)}</td>
+          <td class="p-3"><button type="button" onclick="removeBulkStockLine(${idx})" class="text-rose-500 hover:text-rose-700 text-sm font-medium">Remove</button></td>
+        </tr>`).join('');
+    }
+
+    async function saveBulkStock() {
+      if (!bulkStockLines.length) return;
+      const msg = document.getElementById('stock-bulk-msg');
+      const saveBtn = document.getElementById('stock-bulk-save-btn');
+      saveBtn.disabled = true;
+      msg.className = 'text-sm';
+      msg.textContent = 'Saving…';
+      try {
+        const res = await fetch(API_STOCK_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: bulkStockLines }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+        showActionToast('✓', `Added ${data.imported} stock item${data.imported === 1 ? '' : 's'}.`);
+        closeBulkAddStockForm();
+        loadStock();
+      } catch (e) {
+        msg.className = 'text-sm text-red-600';
+        msg.textContent = e.message;
+        saveBtn.disabled = false;
+      }
+    }
+
     function openEditStockItemForm(id) {
       const s = stockById[id];
       if (!s) return;
@@ -5055,6 +5278,7 @@
       document.getElementById('stock-edit-msg').textContent = '';
       document.getElementById('stock-garment-picker').classList.add('hidden');
       document.getElementById('stock-garment-variant-picker').classList.add('hidden');
+      document.getElementById('stock-bulk-form').classList.add('hidden');
       document.getElementById('stock-edit-form').classList.remove('hidden');
       document.getElementById('stock-list-view').classList.add('hidden');
       document.getElementById('stock-edit-item').focus();
