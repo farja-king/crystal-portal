@@ -6090,23 +6090,30 @@
             data.ambiguous_skus.map(function (a) { return a.sku + ' (' + a.pages.length + ' pages)'; }).join(', ') + '</p>'
           : '';
 
-        if (!data.changes_proposed) {
+        const totalChanges = data.changes_proposed + (data.collection_card_changes_proposed || 0);
+
+        if (!totalChanges) {
           panel.innerHTML = '<p class="text-sm text-amber-800">✅ Live site already matches the catalog - nothing to push (' +
             data.up_to_date + ' page(s) checked).</p>' + ambiguousHtml;
         } else {
           const rows = data.candidates.map(function (c) {
             return '<tr><td class="pr-4 py-1 font-mono">' + c.sku + '</td>' +
-              '<td class="pr-4 py-1">£' + c.live_price + ' → £' + c.new_price + '</td></tr>';
+              '<td class="pr-4 py-1">£' + c.live_price + ' → £' + c.new_price + '</td>' +
+              '<td class="pr-4 py-1 text-amber-600">product page</td></tr>';
+          }).join('') + (data.collection_mismatches || []).map(function (c) {
+            return '<tr><td class="pr-4 py-1 font-mono">' + c.sku + '</td>' +
+              '<td class="pr-4 py-1">£' + c.live_price + ' → £' + c.new_price + '</td>' +
+              '<td class="pr-4 py-1 text-amber-600">category card (' + c.collection_url.split('/').pop() + ')</td></tr>';
           }).join('');
           panel.innerHTML =
-            '<p class="text-sm text-amber-900 font-semibold mb-2">' + data.changes_proposed + ' price(s) will change on the live site:</p>' +
+            '<p class="text-sm text-amber-900 font-semibold mb-2">' + totalChanges + ' price(s) will change on the live site:</p>' +
             '<table class="text-sm text-amber-900 mb-3">' + rows + '</table>' +
             (data.codes_not_in_catalog && data.codes_not_in_catalog.length
               ? '<p class="text-xs text-amber-700 mb-3">On the site but not in catalog: ' + data.codes_not_in_catalog.join(', ') + '</p>'
               : '') +
             ambiguousHtml +
             '<div class="flex items-center gap-2">' +
-            '<button onclick="pushPricesToWebsiteConfirm(' + data.changes_proposed + ')" class="bg-amber-700 hover:bg-amber-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Confirm & push ' + data.changes_proposed + ' change(s) live</button>' +
+            '<button onclick="pushPricesToWebsiteConfirm(' + totalChanges + ')" class="bg-amber-700 hover:bg-amber-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Confirm & push ' + totalChanges + ' change(s) live</button>' +
             '<button onclick="document.getElementById(\'cat-push-preview\').classList.add(\'hidden\')" class="text-amber-700 hover:underline text-xs font-medium">Cancel</button>' +
             '</div>';
         }

@@ -1,5 +1,5 @@
 // Write-back counterpart to sync-prices.js: pushes this catalog's sell_price
-// out to the live embroidery.click product pages, by committing straight to
+// out to the live embroidery.click pages, by committing straight to
 // farja-king/embroidery-portal (a separate GitHub Pages repo) via the
 // GitHub Contents API. GitHub Pages rebuilds automatically after the commit.
 //
@@ -7,10 +7,19 @@
 // see push-price-test.js) before being pointed here - see the session-4/5
 // handoff. Discovery of which pages exist mirrors sync-prices.js exactly
 // (sitemap + collection crawl) so the two stay in sync with each other; the
-// live page is fetched over plain HTTPS (no auth needed, matches the read
+// live pages are fetched over plain HTTPS (no auth needed, matches the read
 // sync) purely to compare against the DB price, and the GitHub API (which
 // does need auth) is only touched for pages that actually need a change -
 // keeps this well under GitHub's rate limit even for a full-catalog run.
+//
+// A product's price actually lives in TWO places on the live site: its own
+// product page (JSON-LD + display price), and a card on every collection/
+// category page that lists it (its own independent "<div class=\"price\">",
+// unrelated to the product page - found in production: pushing RX350's new
+// price updated its product page correctly but the Hoodies & Sweatshirts
+// category page kept showing the old price). Both are compared against the
+// catalog independently, since a collection card can drift even when the
+// product page itself is already correct.
 //
 // Always dry-run first (dryRun: true) - returns the list of proposed changes
 // without committing anything. Only a second call with dryRun: false (or
@@ -45,7 +54,9 @@ export async function onRequest(context) {
     }
 
     // 1. Same discovery as sync-prices.js: sitemap first, then crawl every
-    // collection page for anything the sitemap hasn't indexed yet.
+    // collection page for anything the sitemap hasn't indexed yet. Each
+    // collection page's HTML is kept (collectionHtmlByUrl) so the card-price
+    // scan below doesn't need to re-fetch it.
     const sitemapRes = await fetch(`${STORE_BASE}/sitemap.xml`);
     if (!sitemapRes.ok) return json({ error: `Could not fetch sitemap: ${sitemapRes.status}` }, 502);
     const sitemapXml = await sitemapRes.text();
@@ -58,11 +69,13 @@ export async function onRequest(context) {
     const collectionUrls = [...sitemapXml.matchAll(/<loc>(https:\/\/embroidery\.click\/collections\/[a-z0-9-]+\.html)<\/loc>/gi)]
       .map((m) => m[1]);
 
+    const collectionHtmlByUrl = new Map();
     for (const collectionUrl of collectionUrls) {
       try {
         const collectionRes = await fetch(collectionUrl);
         if (!collectionRes.ok) continue;
         const collectionHtml = await collectionRes.text();
+        collectionHtmlByUrl.set(collectionUrl, collectionHtml);
         for (const m of collectionHtml.matchAll(/href="\.\.\/products\/([a-z0-9-]+)\.html"/gi)) {
           productUrls.add(`${STORE_BASE}/products/${m[1]}.html`);
         }
@@ -73,17 +86,33 @@ export async function onRequest(context) {
 
     if (!productUrls.size) return json({ error: "No product URLs found in sitemap or collections" }, 502);
 
-    // 2. Work out which pages actually need a new price, comparing the live
-    // page (cheap, unauthenticated fetch) against this catalog's sell_price.
-    let failed = 0;
+    // 2. Catalog price lookup, cached per code since both the product-page
+    // and collection-card comparisons below need it and a code can appear
+    // on several collection pages. (customer_id IS NULL OR '') matters here
+    // - without it this can pick up a customer-specific price-list row
+    // (Sloane Helicopters, Karl Sports, etc - same supplier_code, their own
+    // negotiated price) instead of the shared catalog price that's actually
+    // meant to be on the public site, same filter products.js applies by
+    // default when no customer_id is requested.
+    const catalogPriceCache = new Map(); // code -> price or null (not in catalog / unpriced)
+    async function catalogPriceFor(code) {
+      if (catalogPriceCache.has(code)) return catalogPriceCache.get(code);
+      const row = await db.prepare(
+        "SELECT sell_price FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND sell_price IS NOT NULL LIMIT 1"
+      ).bind(code).first();
+      const price = row && isFinite(Number(row.sell_price)) && Number(row.sell_price) >= 0 ? Number(row.sell_price) : null;
+      catalogPriceCache.set(code, price);
+      return price;
+    }
 
-    // Pass 1: read every live page's own sku+price, before touching the DB
-    // at all - this is what catches a sku reused across more than one page
-    // (found in production: products/custom-printed-tshirt.html embeds
-    // "sku":"AT002", the same code as the real products/at002.html). A sku
-    // with more than one page is ambiguous - there's no safe way to know
-    // which page a catalog price change is meant for - so it's excluded
+    // 3a. Product pages: read every live page's own sku+price first, before
+    // touching the DB at all - this is what catches a sku reused across more
+    // than one page (found in production: products/custom-printed-tshirt.html
+    // embeds "sku":"AT002", the same code as the real products/at002.html).
+    // A sku with more than one page is ambiguous - there's no safe way to
+    // know which page a catalog price change is meant for - so it's excluded
     // from candidates entirely rather than guessed at.
+    let failed = 0;
     const skuPages = new Map(); // code -> [{ url, livePrice }]
     for (const url of productUrls) {
       try {
@@ -117,21 +146,19 @@ export async function onRequest(context) {
         continue;
       }
       const { url, livePrice } = pages[0];
+      const dbPrice = await catalogPriceFor(code);
 
-      // (customer_id IS NULL OR '') matters here - without it this can pick
-      // up a customer-specific price-list row (Sloane Helicopters, Karl
-      // Sports, etc - same supplier_code, their own negotiated price)
-      // instead of the shared catalog price that's actually meant to be
-      // on the public site, same filter products.js applies by default
-      // when no customer_id is requested.
-      const row = await db.prepare(
-        "SELECT sell_price FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND sell_price IS NOT NULL LIMIT 1"
-      ).bind(code).first();
-
-      if (!row) { notInCatalog++; notInCatalogCodes.push(code); continue; }
-
-      const dbPrice = Number(row.sell_price);
-      if (!isFinite(dbPrice) || dbPrice < 0) { noSellPrice++; continue; }
+      if (dbPrice === null) {
+        if (catalogPriceCache.get(code) === null) {
+          // Distinguish "not in catalog at all" from "in catalog but unpriced"
+          // only for the dry-run summary counts - both mean nothing to push.
+          const exists = await db.prepare(
+            "SELECT 1 FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL LIMIT 1"
+          ).bind(code).first();
+          if (exists) noSellPrice++; else { notInCatalog++; notInCatalogCodes.push(code); }
+        }
+        continue;
+      }
 
       if (Math.abs(dbPrice - livePrice) < 0.005) { upToDate++; continue; }
 
@@ -144,22 +171,54 @@ export async function onRequest(context) {
       });
     }
 
+    // 3b. Collection cards: independent of the product-page comparison above
+    // - a card can drift even when the product's own page is already
+    // correct, since the two are unrelated pieces of HTML on the live site.
+    // Ambiguity doesn't apply here the way it does for product pages: the
+    // catalog price for a code is well-defined regardless of how many
+    // product pages happen to exist for it, so every mismatching card gets
+    // fixed.
+    const collectionMismatches = []; // { sku, collection_url, repo_path, live_price, new_price }
+    for (const [collectionUrl, html] of collectionHtmlByUrl) {
+      const seenOnThisPage = new Set();
+      for (const m of html.matchAll(/\(([A-Z0-9]+)\)<\/div>\s*<div class="price">£([\d.]+)/g)) {
+        const code = m[1];
+        if (seenOnThisPage.has(code)) continue; // same code shouldn't repeat on one page, but be safe
+        seenOnThisPage.add(code);
+
+        const dbPrice = await catalogPriceFor(code);
+        if (dbPrice === null) continue; // not in catalog / unpriced - nothing to compare against
+        const liveCardPrice = Number(m[2]);
+        if (Math.abs(dbPrice - liveCardPrice) < 0.005) continue;
+
+        collectionMismatches.push({
+          sku: code,
+          collection_url: collectionUrl,
+          repo_path: collectionUrl.slice(STORE_BASE.length + 1),
+          live_price: liveCardPrice.toFixed(2),
+          new_price: dbPrice.toFixed(2),
+        });
+      }
+    }
+
     if (dryRun) {
       return json({
         success: true,
         dryRun: true,
         products_found_on_site: productUrls.size,
         changes_proposed: candidates.length,
+        collection_card_changes_proposed: collectionMismatches.length,
         up_to_date: upToDate,
         codes_not_in_catalog: notInCatalogCodes,
         no_sell_price: noSellPrice,
         ambiguous_skus: ambiguousSkus,
         failed,
         candidates,
+        collection_mismatches: collectionMismatches,
       });
     }
 
-    // 3. Commit each change via the GitHub Contents API - only touched here,
+    // 4. Commit each change via the GitHub Contents API - only touched here,
     // never during the dry-run pass above.
     const ghHeaders = {
       Authorization: `Bearer ${env.GITHUB_LIVE_REPO_TOKEN}`,
@@ -169,7 +228,6 @@ export async function onRequest(context) {
 
     let updated = 0;
     const commitFailed = [];
-    const updatedCandidates = [];
 
     for (const c of candidates) {
       try {
@@ -213,62 +271,55 @@ export async function onRequest(context) {
 
         if (!putRes.ok) { commitFailed.push({ sku: c.sku, error: `PUT ${putRes.status}` }); continue; }
         updated++;
-        updatedCandidates.push(c);
       } catch (err) {
         commitFailed.push({ sku: c.sku, error: err.message });
       }
     }
 
-    // 4. Each product also appears as its own card on one or more collection/
-    // category pages (e.g. products/rx350.html AND collections/hoodies-
-    // sweatshirts-category.html both show RX350's price independently) -
-    // found in production: the product page updated correctly but the
-    // Hoodies category page kept showing the old price, since it has its
-    // own hardcoded "<div class=\"price\">" per card, unrelated to the
-    // product page's JSON-LD. Every collection page is checked for every
-    // updated sku, patching just that card's price line; one commit per
-    // collection page (covering however many of its cards changed) rather
-    // than one per product, to avoid redundant commits.
+    // 5. Collection cards - grouped by page so a page with several
+    // mismatching cards only gets one commit, not one per card.
     let collectionPagesUpdated = 0;
-    if (updatedCandidates.length) {
-      for (const collectionUrl of collectionUrls) {
-        try {
-          const repoPath = collectionUrl.slice(STORE_BASE.length + 1);
-          const apiUrl = `https://api.github.com/repos/${REPO}/contents/${repoPath}`;
-          const getRes = await fetch(apiUrl, { headers: ghHeaders });
-          if (!getRes.ok) continue;
-          const file = await getRes.json();
+    const collectionCommitFailed = [];
+    const mismatchesByPage = new Map(); // repo_path -> [{sku,new_price}]
+    for (const cm of collectionMismatches) {
+      if (!mismatchesByPage.has(cm.repo_path)) mismatchesByPage.set(cm.repo_path, []);
+      mismatchesByPage.get(cm.repo_path).push(cm);
+    }
 
-          let html = new TextDecoder().decode(
-            Uint8Array.from(atob(file.content.replace(/\n/g, "")), (ch) => ch.charCodeAt(0))
-          );
-          const original = html;
+    for (const [repoPath, mismatches] of mismatchesByPage) {
+      try {
+        const apiUrl = `https://api.github.com/repos/${REPO}/contents/${repoPath}`;
+        const getRes = await fetch(apiUrl, { headers: ghHeaders });
+        if (!getRes.ok) { collectionCommitFailed.push({ page: repoPath, error: `GET ${getRes.status}` }); continue; }
+        const file = await getRes.json();
 
-          for (const c of updatedCandidates) {
-            const codeEscaped = c.sku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const cardPricePattern = new RegExp(
-              `(\\(${codeEscaped}\\)</div>\\s*<div class="price">)£[\\d.]+`
-            );
-            html = html.replace(cardPricePattern, `$1£${c.new_price}`);
-          }
+        let html = new TextDecoder().decode(
+          Uint8Array.from(atob(file.content.replace(/\n/g, "")), (ch) => ch.charCodeAt(0))
+        );
+        const original = html;
 
-          if (html === original) continue;
-
-          const newContentB64 = btoa(String.fromCharCode(...new TextEncoder().encode(html)));
-          const putRes = await fetch(apiUrl, {
-            method: "PUT",
-            headers: { ...ghHeaders, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              message: `Update collection card price(s): ${updatedCandidates.map((c) => c.sku).join(", ")} (via Crystal Portal)`,
-              content: newContentB64,
-              sha: file.sha,
-            }),
-          });
-          if (putRes.ok) collectionPagesUpdated++;
-        } catch {
-          // one bad collection page shouldn't abort the whole run - the
-          // product's own page is already correct regardless
+        for (const cm of mismatches) {
+          const codeEscaped = cm.sku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const cardPricePattern = new RegExp(`(\\(${codeEscaped}\\)</div>\\s*<div class="price">)£[\\d.]+`);
+          html = html.replace(cardPricePattern, `$1£${cm.new_price}`);
         }
+
+        if (html === original) { collectionCommitFailed.push({ page: repoPath, error: "Price pattern not found on re-read - skipped" }); continue; }
+
+        const newContentB64 = btoa(String.fromCharCode(...new TextEncoder().encode(html)));
+        const putRes = await fetch(apiUrl, {
+          method: "PUT",
+          headers: { ...ghHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: `Update collection card price(s): ${mismatches.map((m) => m.sku).join(", ")} (via Crystal Portal)`,
+            content: newContentB64,
+            sha: file.sha,
+          }),
+        });
+        if (!putRes.ok) { collectionCommitFailed.push({ page: repoPath, error: `PUT ${putRes.status}` }); continue; }
+        collectionPagesUpdated++;
+      } catch (err) {
+        collectionCommitFailed.push({ page: repoPath, error: err.message });
       }
     }
 
@@ -278,6 +329,7 @@ export async function onRequest(context) {
       updated,
       collection_pages_updated: collectionPagesUpdated,
       failed_commits: commitFailed,
+      collection_failed_commits: collectionCommitFailed,
       up_to_date: upToDate,
       codes_not_in_catalog: notInCatalogCodes,
       no_sell_price: noSellPrice,
