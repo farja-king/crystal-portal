@@ -123,14 +123,35 @@ export async function onRequest(context) {
           );
 
           // Remove the whole <a class="product-card" ... > ... </a> block
-          // that links to this product - matched non-greedily so a page
-          // with several cards only loses the one that's actually ours.
-          const codeEscaped = productRepoPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const cardPattern = new RegExp(
-            `\\s*<a class="product-card"[\\s\\S]*?href="\\.\\./${codeEscaped}"[\\s\\S]*?<\\/a>`
-          );
-          const updatedHtml = html.replace(cardPattern, "");
-          if (updatedHtml === html) { collectionFailures.push({ path, error: "Card not found on re-read" }); continue; }
+          // that links to this product. Found in production: a regex like
+          // "<a class=\"product-card\"[\s\S]*?href=\"...\"[\s\S]*?</a>" is
+          // NOT scoped to one card - since [\s\S]*? only cares about
+          // reaching the target href eventually, on a page with several
+          // cards it happily bridges from the very FIRST card's opening tag
+          // through several unrelated ones to reach the target, deleting
+          // all of them as collateral damage (wiped 3 real listings off
+          // headwear-category.html on a live test before this fix). Instead:
+          // find the unique href first, then walk backward/forward from
+          // that exact position to the nearest card boundaries - cards
+          // never nest, so the nearest preceding "<a class=\"product-card\""
+          // and nearest following "</a>" are guaranteed to be this card's
+          // own, not a neighbour's.
+          const hrefNeedle = `href="../${productRepoPath}"`;
+          const hrefIdx = html.indexOf(hrefNeedle);
+          if (hrefIdx === -1) { collectionFailures.push({ path, error: "Card not found on re-read" }); continue; }
+          const cardStart = html.lastIndexOf('<a class="product-card"', hrefIdx);
+          const cardCloseIdx = html.indexOf("</a>", hrefIdx);
+          if (cardStart === -1 || cardCloseIdx === -1) { collectionFailures.push({ path, error: "Could not locate card boundaries" }); continue; }
+          const cardEnd = cardCloseIdx + "</a>".length;
+
+          // Trim back over the leading whitespace/newline this card sits on,
+          // so removing it doesn't leave a blank line behind.
+          let removeStart = cardStart;
+          while (removeStart > 0 && /[ \t]/.test(html[removeStart - 1])) removeStart--;
+          if (removeStart > 0 && html[removeStart - 1] === "\n") removeStart--;
+
+          const updatedHtml = html.slice(0, removeStart) + html.slice(cardEnd);
+          if (updatedHtml === html) { collectionFailures.push({ path, error: "Card removal produced no change" }); continue; }
 
           const putRes = await fetch(apiUrl, {
             method: "PUT",
