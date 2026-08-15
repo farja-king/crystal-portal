@@ -500,7 +500,7 @@ export async function onRequest(context) {
         UPDATE products SET
           supplier = ?, supplier_code = ?, supplier_ref = ?, brand = ?, title = ?,
           colour = ?, size = ?, category = ?, cost_price = ?, surcharge_category = ?,
-          vat_rate = ?, sell_price = ?, profit = ?, active = ?, customer_id = ?, updated_at = CURRENT_TIMESTAMP
+          vat_rate = ?, sell_price = ?, profit = ?, active = ?, customer_id = ?, on_website = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(
         data.supplier ?? existing.supplier,
@@ -518,6 +518,7 @@ export async function onRequest(context) {
         sell === "" ? null : profitOf(sell, cost, data.vat_rate ?? existing.vat_rate),
         data.active ?? existing.active,
         data.customer_id ?? existing.customer_id,
+        data.on_website ?? existing.on_website,
         data.id
       ).run();
 

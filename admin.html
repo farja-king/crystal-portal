@@ -518,8 +518,8 @@
           <button onclick="toggleAddProductForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Product
           </button>
-          <button id="cat-sync-btn" onclick="syncPricesFromWebsite()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
-            🌐 Sync Prices from Website
+          <button id="cat-sync-btn" onclick="syncColoursFromPenCarrie()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            🎨 Sync Colours/Sizes
           </button>
           <button id="cat-push-btn" onclick="pushPricesToWebsitePreview()" class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             ⬆️ Push Prices to Website
@@ -714,11 +714,12 @@
               <th class="p-3 text-right">Sale Price</th>
               <th class="p-3 text-right">Profit</th>
               <th class="p-3 text-right">Margin</th>
+              <th class="p-3 text-center" title="Shows on embroidery.click">On Website</th>
               <th class="p-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody id="catalog-table-body" class="divide-y divide-slate-100 text-sm">
-            <tr><td colspan="11" class="p-8 text-center text-slate-400">Loading catalog…</td></tr>
+            <tr><td colspan="12" class="p-8 text-center text-slate-400">Loading catalog…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1071,8 +1072,8 @@
           <button onclick="openNewOrderBuilder('invoice')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + New Invoice
           </button>
-          <button id="ord-sync-btn" onclick="syncDataFromWebsite()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
-            🌐 Sync Data
+          <button id="ord-sync-btn" onclick="syncColourData()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            🎨 Sync Colours/Sizes
           </button>
           <button onclick="openOrderArchive()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🗄️ Archived
@@ -6004,59 +6005,46 @@
       }
     }
 
-    // Shared by both sync buttons (Garment Catalog + Quotes & Invoices tabs):
-    // prices/on_website come from embroidery.click, colours/sizes come from
-    // PenCarrie (see sync-colours.js for why they're split). Runs price sync
-    // first since it's the quicker of the two, then colours, and reports both.
-    async function runFullSync(btn, status, idleLabel) {
+    // Shared by both sync buttons (Garment Catalog + Quotes & Invoices tabs).
+    // This used to also pull sell_price/on_website from embroidery.click,
+    // but that direction was removed after it silently overwrote both the
+    // shared catalog and several customers' negotiated prices with whatever
+    // the live site happened to show (see functions/api/push-prices-live.js
+    // for the correct direction - catalog -> website, always previewed
+    // before anything commits). Colours/sizes still come from PenCarrie
+    // (the actual wholesaler, not embroidery.click) and are unaffected -
+    // that source was never implicated in the pricing bug.
+    async function runColourSync(btn, status, idleLabel) {
       btn.disabled = true;
-      btn.textContent = '🌐 Syncing…';
+      btn.textContent = '🎨 Syncing…';
       status.classList.remove('hidden');
-      status.textContent = 'Fetching current prices from embroidery.click…';
+      status.textContent = 'Fetching colours/sizes from PenCarrie…';
 
-      const parts = [];
-      try {
-        const priceRes = await fetch('/api/sync-prices', { method: 'POST' });
-        const priceData = await priceRes.json();
-        if (!priceRes.ok || !priceData.success) throw new Error(priceData.error || 'HTTP ' + priceRes.status);
-
-        let priceMsg = 'Prices: found ' + priceData.products_found_on_site + ' page(s), updated ' + priceData.variants_updated + ' variant(s).';
-        if (priceData.codes_not_in_catalog && priceData.codes_not_in_catalog.length) {
-          priceMsg += ' Not in catalog: ' + priceData.codes_not_in_catalog.join(', ') + '.';
-        }
-        if (priceData.failed) priceMsg += ' (' + priceData.failed + ' page(s) failed.)';
-        parts.push(priceMsg);
-      } catch (e) {
-        parts.push('Prices: sync failed - ' + e.message);
-      }
-
-      status.textContent = parts.join(' ') + ' Fetching colours/sizes from PenCarrie…';
-
+      let msg;
       try {
         const colourRes = await fetch('/api/sync-colours', { method: 'POST' });
         const colourData = await colourRes.json();
         if (!colourRes.ok || !colourData.success) throw new Error(colourData.error || 'HTTP ' + colourRes.status);
 
-        let colourMsg = 'Colours/sizes: checked ' + colourData.codes_checked + ' code(s), updated ' + colourData.variants_updated + ' variant(s).';
+        msg = 'Colours/sizes: checked ' + colourData.codes_checked + ' code(s), updated ' + colourData.variants_updated + ' variant(s).';
         if (colourData.codes_not_on_pencarrie && colourData.codes_not_on_pencarrie.length) {
-          colourMsg += ' Not found on PenCarrie: ' + colourData.codes_not_on_pencarrie.join(', ') + '.';
+          msg += ' Not found on PenCarrie: ' + colourData.codes_not_on_pencarrie.join(', ') + '.';
         }
-        if (colourData.failed) colourMsg += ' (' + colourData.failed + ' request(s) failed.)';
-        parts.push(colourMsg);
+        if (colourData.failed) msg += ' (' + colourData.failed + ' request(s) failed.)';
       } catch (e) {
-        parts.push('Colours/sizes: sync failed - ' + e.message);
+        msg = 'Colours/sizes: sync failed - ' + e.message;
       }
 
-      status.textContent = parts.join(' ');
+      status.textContent = msg;
       btn.disabled = false;
       btn.textContent = idleLabel;
     }
 
-    async function syncPricesFromWebsite() {
-      await runFullSync(
+    async function syncColoursFromPenCarrie() {
+      await runColourSync(
         document.getElementById('cat-sync-btn'),
         document.getElementById('cat-sync-status'),
-        '🌐 Sync Prices from Website'
+        '🎨 Sync Colours/Sizes'
       );
       loadCatalog(catalogOffset);
     }
@@ -6376,7 +6364,7 @@
       document.getElementById('cat-stat-matching').textContent = catalogVariantTotal.toLocaleString();
 
       if (!groups.length) {
-        tbody.innerHTML = '<tr><td colspan="11" class="p-8 text-center text-slate-400">No products match these filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="p-8 text-center text-slate-400">No products match these filters.</td></tr>';
       } else {
         tbody.innerHTML = groups.map((g) => {
           const variants = g.variants || [];
@@ -6422,6 +6410,7 @@
                 '<td class="p-2 text-right"><input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" data-sell-id="' + escapeAttr(p.id) + '" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
                 '<td class="p-2 text-right text-xs text-slate-400">auto</td>' +
                 '<td class="p-2 text-right text-xs text-slate-400">auto</td>' +
+                '<td class="p-2 text-center"><input type="checkbox" ' + (p.on_website ? 'checked' : '') + ' onchange="toggleOnWebsite(\'' + escapeAttr(p.id) + '\', this.checked)" class="rounded border-slate-300" /></td>' +
                 '<td class="p-2 text-right whitespace-nowrap">' +
                   '<button type="button" onclick="saveCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold mr-2">Save</button>' +
                   '<button type="button" onclick="cancelCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-slate-400 hover:text-slate-600 text-xs">Cancel</button>' +
@@ -6445,6 +6434,7 @@
                 'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
               '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '-' : money(profit)) + '</td>' +
               '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
+              '<td class="p-3 text-center"><input type="checkbox" ' + (p.on_website ? 'checked' : '') + ' onchange="toggleOnWebsite(\'' + escapeAttr(p.id) + '\', this.checked)" class="rounded border-slate-300" /></td>' +
               '<td class="p-3 text-right whitespace-nowrap">' +
                 '<button type="button" onclick="startCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">Edit</button>' +
                 '<button type="button" onclick="deleteCatalogProduct(\'' + escapeAttr(p.id) + '\')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>' +
@@ -6519,6 +6509,26 @@
         showActionToast('⚠', 'Could not save that sell price: ' + e.message);
       } finally {
         input.disabled = false;
+      }
+    }
+
+    // "On my website" used to be set automatically by the price-sync job -
+    // now that syncing prices from the live site has been removed (it was
+    // the source of a real pricing corruption incident), this is the only
+    // way to mark a product as listed on embroidery.click.
+    async function toggleOnWebsite(id, checked) {
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, on_website: checked ? 1 : 0 }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const row = lastCatalogGroups.flatMap((g) => g.variants || []).find((v) => v.id === id);
+        if (row) row.on_website = checked ? 1 : 0;
+      } catch (e) {
+        showActionToast('⚠', 'Could not update On Website: ' + e.message);
+        renderCatalogGroups(lastCatalogGroups);
       }
     }
 
@@ -9022,11 +9032,11 @@
 
     let viewingOrderId = null;
 
-    async function syncDataFromWebsite() {
-      await runFullSync(
+    async function syncColourData() {
+      await runColourSync(
         document.getElementById('ord-sync-btn'),
         document.getElementById('ord-sync-status'),
-        '🌐 Sync Data'
+        '🎨 Sync Colours/Sizes'
       );
     }
 
