@@ -3,18 +3,22 @@
 // push-prices-live.js. Three files get committed: a new products/<code>.html
 // page, a new card on the chosen collection page, and a new sitemap.xml entry.
 //
-// Colours, sizes, and the exact per-colour image filename all come from
-// PenCarrie's own public product API (pencarrie.com/api/internal/products/
-// <code>?detail=1 - same source sync-colours.js already uses for colour/size
-// sync) rather than being guessed - PenCarrie's colour "code" field (e.g.
-// "BLK") is exactly what the embroidery.click image CDN URLs use, but the
-// filename suffix isn't always predictable ("FRONT.jpg" vs "FRONT 1.jpg" -
-// see RX151's Turquoise Blue/Stone in the live site's own template), so each
-// candidate filename is HEAD-checked against the real CDN before being used.
+// Colours, sizes, and the exact per-colour image filename come from the
+// product's own supplier - PenCarrie's public product API for most brands,
+// or Uneek's live API (functions/_lib/uneek.js) when products.supplier is
+// "UNEEK" (set by importUneekCsv/uneek-sync.js). PenCarrie's colour "code"
+// field (e.g. "BLK") is exactly what the embroidery.click image CDN URLs
+// use, but the filename suffix isn't always predictable ("FRONT.jpg" vs
+// "FRONT 1.jpg" - see RX151's Turquoise Blue/Stone in the live site's own
+// template), so each candidate filename is HEAD-checked against the real
+// CDN before being used. Uneek's response already gives a real, resolved
+// per-colour image URL directly - no CDN filename guessing needed there.
 //
 // Always dry-run first (dryRun: true) - returns a full preview (title, price,
 // resolved image per colour, sizes, material) without writing anything. Only
 // dryRun: false actually commits, matching push-prices-live.js's pattern.
+import { fetchUneekProductVariants } from "../_lib/uneek.js";
+
 export async function onRequest(context) {
   const { request, env } = context;
 
@@ -263,6 +267,7 @@ export async function onRequest(context) {
     const row = await db.prepare(
       "SELECT title, brand, supplier, sell_price FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND item_type = 'garment' LIMIT 1"
     ).bind(code).first();
+    const isUneek = row && row.supplier === "UNEEK";
 
     if (!row) return json({ error: `${code} not found in the shared catalog` }, 404);
     if (row.sell_price === null || row.sell_price === undefined) {
@@ -280,62 +285,102 @@ export async function onRequest(context) {
       return json({ error: `${code} already has a live product page - use the catalog's price sync instead` }, 400);
     }
 
-    // 3. PenCarrie is the source of truth for colours/sizes/material - same
-    // API sync-colours.js already uses, chosen there specifically because
-    // it has complete data regardless of what a given embroidery.click page
-    // template happens to expose.
-    const pcRes = await fetch(`${PENCARRIE_BASE}/api/internal/products/${encodeURIComponent(code)}?detail=1`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!pcRes.ok) return json({ error: `PenCarrie lookup failed for ${code}: HTTP ${pcRes.status}` }, 502);
-    const pc = await pcRes.json();
+    // 3. Colours/sizes/material come from the product's own supplier.
+    let brand, name, sizes, material, weight, IMG_BASE, colours, resolvedColours, mainColour, mainImageUrl;
 
-    const brand = pc.brand || row.brand || "";
-    const name = pc.name || row.title || code;
-    const brandColours = Array.isArray(pc.brand_colours) ? pc.brand_colours : [];
-    if (!brandColours.length) return json({ error: `PenCarrie has no colour data for ${code}` }, 502);
-
-    // Sizes/material/weight are per-colour in PenCarrie's response but
-    // uniform for the product in practice - first colour's values stand in
-    // for the whole product, same as every existing hand-built page here.
-    const firstColour = brandColours[0];
-    const sizes = Array.isArray(firstColour.sizes) ? [...new Set(firstColour.sizes.map((s) => s.size).filter(Boolean))] : [];
-    const material = firstColour.material || "";
-    const weight = firstColour.weight || "";
-
-    const IMG_BASE = `https://www.fullcollection.com/storage/phoenix/2026/Phoenix%20All%20Images/${encodeURIComponent(brand)}/Product%20Images/${code}/ProductCarouselMain/`;
-
-    // 4. Resolve each colour's real image filename - HEAD-checked against
-    // the actual CDN rather than assumed, since the suffix isn't always
-    // "FRONT.jpg" (some are "FRONT 1.jpg" - see RX151's own template).
-    const colours = [];
-    for (const bc of brandColours) {
-      const colourName = bc.name;
-      const colourCode = bc.code;
-      if (!colourName || !colourCode) continue;
-
-      const candidates = [
-        `${code}%20${colourCode}%20FRONT.jpg`,
-        `${code}%20${colourCode}%20FRONT%201.jpg`,
-      ];
-      let resolvedFile = null;
-      for (const candidate of candidates) {
-        try {
-          const headRes = await fetch(IMG_BASE + candidate, { method: "HEAD" });
-          if (headRes.ok) { resolvedFile = candidate; break; }
-        } catch {
-          // try the next candidate
-        }
+    if (isUneek) {
+      // Uneek's own API is the source of truth here - see functions/_lib/uneek.js
+      // for why this is a targeted string extraction rather than a full
+      // catalog parse (Cloudflare Worker CPU limit). Unlike PenCarrie, the
+      // response already gives a real, resolved per-colour image URL
+      // directly, so there's no CDN filename guessing/HEAD-checking needed
+      // and IMG_BASE stays empty (each colour's "file" is already the full URL).
+      let variants;
+      try {
+        variants = await fetchUneekProductVariants(env, code);
+      } catch (err) {
+        return json({ error: `Uneek lookup failed for ${code}: ${err.message}` }, 502);
       }
-      colours.push({ name: colourName, code: colourCode, file: resolvedFile, resolved: !!resolvedFile });
-    }
+      if (!variants.length) return json({ error: `Uneek has no data for ${code}` }, 502);
 
-    const resolvedColours = colours.filter((c) => c.resolved);
-    if (!resolvedColours.length) {
-      return json({ error: `Could not resolve a working image for any colour of ${code} - PenCarrie's CDN layout may not match the expected pattern` }, 502);
+      brand = "Uneek";
+      name = variants[0].ProductName || row.title || code;
+      sizes = [...new Set(variants.map((v) => v.Size).filter(Boolean))];
+      material = variants[0].Composition || "";
+      weight = variants[0].GSM ? `${variants[0].GSM}gsm` : "";
+      IMG_BASE = "";
+
+      const seenColours = new Map();
+      for (const v of variants) {
+        if (!v.Colour || seenColours.has(v.Colour)) continue;
+        const file = v.ColourImage || v.Image || "";
+        seenColours.set(v.Colour, { name: v.Colour, code: v.ColourCode || "", file, resolved: !!file });
+      }
+      colours = [...seenColours.values()];
+      resolvedColours = colours.filter((c) => c.resolved);
+      if (!resolvedColours.length) {
+        return json({ error: `Uneek returned no usable image for any colour of ${code}` }, 502);
+      }
+      mainColour = resolvedColours[0];
+      mainImageUrl = mainColour.file;
+    } else {
+      // PenCarrie is the source of truth for colours/sizes/material - same
+      // API sync-colours.js already uses, chosen there specifically because
+      // it has complete data regardless of what a given embroidery.click
+      // page template happens to expose.
+      const pcRes = await fetch(`${PENCARRIE_BASE}/api/internal/products/${encodeURIComponent(code)}?detail=1`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!pcRes.ok) return json({ error: `PenCarrie lookup failed for ${code}: HTTP ${pcRes.status}` }, 502);
+      const pc = await pcRes.json();
+
+      brand = pc.brand || row.brand || "";
+      name = pc.name || row.title || code;
+      const brandColours = Array.isArray(pc.brand_colours) ? pc.brand_colours : [];
+      if (!brandColours.length) return json({ error: `PenCarrie has no colour data for ${code}` }, 502);
+
+      // Sizes/material/weight are per-colour in PenCarrie's response but
+      // uniform for the product in practice - first colour's values stand in
+      // for the whole product, same as every existing hand-built page here.
+      const firstColour = brandColours[0];
+      sizes = Array.isArray(firstColour.sizes) ? [...new Set(firstColour.sizes.map((s) => s.size).filter(Boolean))] : [];
+      material = firstColour.material || "";
+      weight = firstColour.weight || "";
+
+      IMG_BASE = `https://www.fullcollection.com/storage/phoenix/2026/Phoenix%20All%20Images/${encodeURIComponent(brand)}/Product%20Images/${code}/ProductCarouselMain/`;
+
+      // Resolve each colour's real image filename - HEAD-checked against
+      // the actual CDN rather than assumed, since the suffix isn't always
+      // "FRONT.jpg" (some are "FRONT 1.jpg" - see RX151's own template).
+      colours = [];
+      for (const bc of brandColours) {
+        const colourName = bc.name;
+        const colourCode = bc.code;
+        if (!colourName || !colourCode) continue;
+
+        const candidates = [
+          `${code}%20${colourCode}%20FRONT.jpg`,
+          `${code}%20${colourCode}%20FRONT%201.jpg`,
+        ];
+        let resolvedFile = null;
+        for (const candidate of candidates) {
+          try {
+            const headRes = await fetch(IMG_BASE + candidate, { method: "HEAD" });
+            if (headRes.ok) { resolvedFile = candidate; break; }
+          } catch {
+            // try the next candidate
+          }
+        }
+        colours.push({ name: colourName, code: colourCode, file: resolvedFile, resolved: !!resolvedFile });
+      }
+
+      resolvedColours = colours.filter((c) => c.resolved);
+      if (!resolvedColours.length) {
+        return json({ error: `Could not resolve a working image for any colour of ${code} - PenCarrie's CDN layout may not match the expected pattern` }, 502);
+      }
+      mainColour = resolvedColours[0];
+      mainImageUrl = IMG_BASE + mainColour.file;
     }
-    const mainColour = resolvedColours[0];
-    const mainImageUrl = IMG_BASE + mainColour.file;
 
     const description = descriptionOverride ||
       "Price includes embroidery or DTF print to front. If we don't already have your logo on file, a £15 set-up fee applies — we'll confirm with you directly if needed.";

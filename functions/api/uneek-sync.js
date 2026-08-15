@@ -9,6 +9,8 @@
 // optionally UNEEK_CUSTOMER_NO) must be set as encrypted secrets on the
 // Cloudflare Pages project (Settings > Environment variables > Production),
 // same pattern as SQUARE_ACCESS_TOKEN etc in square-webhook.js.
+import { fetchUneekRawText } from "../_lib/uneek.js";
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -44,30 +46,20 @@ export async function onRequest(context) {
       try { await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run(); } catch { /* already exists */ }
     }
 
-    const customerNo = env.UNEEK_CUSTOMER_NO || "";
-    const apiUrl = "https://api.uneekclothing.com/productdata/all" + (customerNo ? `?CustomerNo=${encodeURIComponent(customerNo)}` : "");
-    const auth = btoa(`${env.UNEEK_EMAIL}:${env.UNEEK_PASSWORD}`);
-
-    const uneekRes = await fetch(apiUrl, {
-      headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-    });
-    if (!uneekRes.ok) {
-      return json({ error: `Uneek API returned HTTP ${uneekRes.status}` }, 502);
+    // fetchUneekRawText() already unwraps Uneek's double-encoding (see
+    // functions/_lib/uneek.js). This full-catalog parse (thousands of rows)
+    // is exactly what blows Cloudflare's per-request CPU limit on anything
+    // but a paid Workers plan - see uneek-product.js for the CPU-cheap
+    // per-code alternative "Publish to website" uses instead.
+    let text;
+    try {
+      text = await fetchUneekRawText(env);
+    } catch (err) {
+      return json({ error: err.message }, 502);
     }
-
-    // Uneek's API double-encodes its response: the HTTP body is itself a
-    // JSON string literal containing the real JSON array as escaped text
-    // (confirmed via uneek-product.js's ?debug=1 against a live response),
-    // not a bare array. One JSON.parse() unwraps that outer string before
-    // the real array can be parsed. This full-catalog parse (thousands of
-    // rows) is exactly what blows Cloudflare's per-request CPU limit on
-    // anything but a paid Workers plan - see uneek-product.js for the
-    // CPU-cheap per-code alternative used by "Publish to website" instead.
-    const rawText = await uneekRes.text();
     let payload;
     try {
-      const parsedOnce = JSON.parse(rawText);
-      payload = typeof parsedOnce === "string" ? JSON.parse(parsedOnce) : parsedOnce;
+      payload = JSON.parse(text);
     } catch (e) {
       return json({ error: `Could not parse Uneek response: ${e.message}` }, 502);
     }
