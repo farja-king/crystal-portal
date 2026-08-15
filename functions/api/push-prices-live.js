@@ -75,13 +75,16 @@ export async function onRequest(context) {
 
     // 2. Work out which pages actually need a new price, comparing the live
     // page (cheap, unauthenticated fetch) against this catalog's sell_price.
-    const candidates = [];
-    let notInCatalog = 0;
-    let noSellPrice = 0;
-    let upToDate = 0;
     let failed = 0;
-    const notInCatalogCodes = [];
 
+    // Pass 1: read every live page's own sku+price, before touching the DB
+    // at all - this is what catches a sku reused across more than one page
+    // (found in production: products/custom-printed-tshirt.html embeds
+    // "sku":"AT002", the same code as the real products/at002.html). A sku
+    // with more than one page is ambiguous - there's no safe way to know
+    // which page a catalog price change is meant for - so it's excluded
+    // from candidates entirely rather than guessed at.
+    const skuPages = new Map(); // code -> [{ url, livePrice }]
     for (const url of productUrls) {
       try {
         const pageRes = await fetch(url);
@@ -94,34 +97,51 @@ export async function onRequest(context) {
 
         const code = codeMatch[1].toUpperCase();
         const livePrice = Number(priceMatch[1]);
-
-        // (customer_id IS NULL OR '') matters here - without it this can pick
-        // up a customer-specific price-list row (Sloane Helicopters, Karl
-        // Sports, etc - same supplier_code, their own negotiated price)
-        // instead of the shared catalog price that's actually meant to be
-        // on the public site, same filter products.js applies by default
-        // when no customer_id is requested.
-        const row = await db.prepare(
-          "SELECT sell_price FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND sell_price IS NOT NULL LIMIT 1"
-        ).bind(code).first();
-
-        if (!row) { notInCatalog++; notInCatalogCodes.push(code); continue; }
-
-        const dbPrice = Number(row.sell_price);
-        if (!isFinite(dbPrice) || dbPrice < 0) { noSellPrice++; continue; }
-
-        if (Math.abs(dbPrice - livePrice) < 0.005) { upToDate++; continue; }
-
-        candidates.push({
-          sku: code,
-          repo_path: url.slice(STORE_BASE.length + 1), // e.g. "products/at001.html"
-          live_price: livePrice.toFixed(2),
-          new_price: dbPrice.toFixed(2),
-          url,
-        });
+        if (!skuPages.has(code)) skuPages.set(code, []);
+        skuPages.get(code).push({ url, livePrice });
       } catch {
         failed++;
       }
+    }
+
+    const candidates = [];
+    let notInCatalog = 0;
+    let noSellPrice = 0;
+    let upToDate = 0;
+    const notInCatalogCodes = [];
+    const ambiguousSkus = [];
+
+    for (const [code, pages] of skuPages) {
+      if (pages.length > 1) {
+        ambiguousSkus.push({ sku: code, pages: pages.map((p) => p.url) });
+        continue;
+      }
+      const { url, livePrice } = pages[0];
+
+      // (customer_id IS NULL OR '') matters here - without it this can pick
+      // up a customer-specific price-list row (Sloane Helicopters, Karl
+      // Sports, etc - same supplier_code, their own negotiated price)
+      // instead of the shared catalog price that's actually meant to be
+      // on the public site, same filter products.js applies by default
+      // when no customer_id is requested.
+      const row = await db.prepare(
+        "SELECT sell_price FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND sell_price IS NOT NULL LIMIT 1"
+      ).bind(code).first();
+
+      if (!row) { notInCatalog++; notInCatalogCodes.push(code); continue; }
+
+      const dbPrice = Number(row.sell_price);
+      if (!isFinite(dbPrice) || dbPrice < 0) { noSellPrice++; continue; }
+
+      if (Math.abs(dbPrice - livePrice) < 0.005) { upToDate++; continue; }
+
+      candidates.push({
+        sku: code,
+        repo_path: url.slice(STORE_BASE.length + 1), // e.g. "products/at001.html"
+        live_price: livePrice.toFixed(2),
+        new_price: dbPrice.toFixed(2),
+        url,
+      });
     }
 
     if (dryRun) {
@@ -133,6 +153,7 @@ export async function onRequest(context) {
         up_to_date: upToDate,
         codes_not_in_catalog: notInCatalogCodes,
         no_sell_price: noSellPrice,
+        ambiguous_skus: ambiguousSkus,
         failed,
         candidates,
       });
@@ -204,6 +225,7 @@ export async function onRequest(context) {
       up_to_date: upToDate,
       codes_not_in_catalog: notInCatalogCodes,
       no_sell_price: noSellPrice,
+      ambiguous_skus: ambiguousSkus,
     });
   } catch (err) {
     return json({ error: err.message }, 500);

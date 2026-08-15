@@ -6083,9 +6083,14 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
 
+        const ambiguousHtml = (data.ambiguous_skus && data.ambiguous_skus.length)
+          ? '<p class="text-xs text-rose-700 mb-3">⚠️ Skipped - same SKU found on more than one live page, can\'t tell which to update: ' +
+            data.ambiguous_skus.map(function (a) { return a.sku + ' (' + a.pages.length + ' pages)'; }).join(', ') + '</p>'
+          : '';
+
         if (!data.changes_proposed) {
           panel.innerHTML = '<p class="text-sm text-amber-800">✅ Live site already matches the catalog - nothing to push (' +
-            data.up_to_date + ' page(s) checked).</p>';
+            data.up_to_date + ' page(s) checked).</p>' + ambiguousHtml;
         } else {
           const rows = data.candidates.map(function (c) {
             return '<tr><td class="pr-4 py-1 font-mono">' + c.sku + '</td>' +
@@ -6097,6 +6102,7 @@
             (data.codes_not_in_catalog && data.codes_not_in_catalog.length
               ? '<p class="text-xs text-amber-700 mb-3">On the site but not in catalog: ' + data.codes_not_in_catalog.join(', ') + '</p>'
               : '') +
+            ambiguousHtml +
             '<div class="flex items-center gap-2">' +
             '<button onclick="pushPricesToWebsiteConfirm(' + data.changes_proposed + ')" class="bg-amber-700 hover:bg-amber-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Confirm & push ' + data.changes_proposed + ' change(s) live</button>' +
             '<button onclick="document.getElementById(\'cat-push-preview\').classList.add(\'hidden\')" class="text-amber-700 hover:underline text-xs font-medium">Cancel</button>' +
