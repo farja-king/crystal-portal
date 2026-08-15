@@ -95,8 +95,14 @@ export async function onRequest(context) {
         const code = codeMatch[1].toUpperCase();
         const livePrice = Number(priceMatch[1]);
 
+        // (customer_id IS NULL OR '') matters here - without it this can pick
+        // up a customer-specific price-list row (Sloane Helicopters, Karl
+        // Sports, etc - same supplier_code, their own negotiated price)
+        // instead of the shared catalog price that's actually meant to be
+        // on the public site, same filter products.js applies by default
+        // when no customer_id is requested.
         const row = await db.prepare(
-          "SELECT sell_price FROM products WHERE supplier_code = ? AND sell_price IS NOT NULL LIMIT 1"
+          "SELECT sell_price FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND sell_price IS NOT NULL LIMIT 1"
         ).bind(code).first();
 
         if (!row) { notInCatalog++; notInCatalogCodes.push(code); continue; }
