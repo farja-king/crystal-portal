@@ -474,11 +474,16 @@ ${coloursJs}
       return json({ error: `Could not create product page: ${createRes.status} ${await createRes.text()}` }, 502);
     }
 
-    // 6b. Insert the new card into the chosen collection page - before the
-    // LAST "</a>\n  </div>" in the file, which closes the product-grid
-    // container right after its final existing card (see collections/
-    // custom-tshirts.html - every card ends "</a>", and the grid's own
-    // closing </div> is 2-space indented, one level up from card content).
+    // 6b. Insert the new card into the chosen collection page - right after
+    // the LAST card inside <div class="product-grid">, found by scoping the
+    // search to start AFTER that opening tag and taking the FIRST
+    // "</a>\n  </div>" from there (the grid's own closing div, 2-space
+    // indented, one level up from card content). Matching the last
+    // occurrence in the whole document was wrong - it can land inside the
+    // footer instead (its "legal-links" div closes with the same
+    // "</a>\n      </div>" shape as the grid does), which is exactly what
+    // happened on a live test run against headwear-category.html before
+    // this fix - caught and corrected immediately, see admin's own history.
     const collectionApiUrl = `https://api.github.com/repos/${REPO}/contents/${collectionPath}`;
     const collectionGetRes = await fetch(collectionApiUrl, { headers: ghHeaders });
     if (!collectionGetRes.ok) {
@@ -489,12 +494,15 @@ ${coloursJs}
       Uint8Array.from(atob(collectionFile.content.replace(/\n/g, "")), (ch) => ch.charCodeAt(0))
     );
 
-    const gridCloseMatches = [...collectionHtml.matchAll(/<\/a>\r?\n(\s*)<\/div>/g)];
-    if (!gridCloseMatches.length) {
+    const gridOpenIdx = collectionHtml.indexOf('<div class="product-grid">');
+    if (gridOpenIdx === -1) {
+      return json({ error: "Could not find the product grid on the collection page" }, 502);
+    }
+    const closeMatch = collectionHtml.slice(gridOpenIdx).match(/<\/a>\r?\n(\s*)<\/div>/);
+    if (!closeMatch) {
       return json({ error: "Could not find the product grid's closing tag on the collection page" }, 502);
     }
-    const lastMatch = gridCloseMatches[gridCloseMatches.length - 1];
-    const insertAt = lastMatch.index + "</a>".length;
+    const insertAt = gridOpenIdx + closeMatch.index + "</a>".length;
     const updatedCollectionHtml =
       collectionHtml.slice(0, insertAt) + "\n" + cardHtml.trimEnd() + collectionHtml.slice(insertAt);
 
