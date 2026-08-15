@@ -45,21 +45,26 @@ export async function onRequest(context) {
     if (!uneekRes.ok) return json({ error: `Uneek API returned HTTP ${uneekRes.status}` }, 502);
 
     const text = await uneekRes.text();
-    const OBJ_START = '{"Company":';
-    const marker = `"ProductCode":"${code}"`;
+    // Whitespace-tolerant - the API may return pretty-printed JSON (space
+    // after ":", newline+indent after "{"), not minified, so exact
+    // substring matching on '{"Company":' would silently match nothing.
+    const objStarts = [];
+    { const re = /\{\s*"Company"\s*:/g; let m; while ((m = re.exec(text))) objStarts.push(m.index); }
+
+    const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const markerRe = new RegExp(`"ProductCode"\\s*:\\s*"${escaped}"`, "g");
+    const markerPositions = [];
+    { let m; while ((m = markerRe.exec(text))) markerPositions.push(m.index); }
 
     const variants = [];
-    let searchFrom = 0;
-    while (true) {
-      const markerPos = text.indexOf(marker, searchFrom);
-      if (markerPos === -1) break;
-      searchFrom = markerPos + marker.length;
-
-      const objStart = text.lastIndexOf(OBJ_START, markerPos);
+    for (const markerPos of markerPositions) {
+      // Largest object-start position at or before this marker.
+      let objStart = -1;
+      for (const s of objStarts) { if (s <= markerPos) objStart = s; else break; }
       if (objStart === -1) continue;
 
-      const nextObjStart = text.indexOf(OBJ_START, objStart + OBJ_START.length);
-      let objText = nextObjStart === -1 ? text.slice(objStart) : text.slice(objStart, nextObjStart);
+      const nextObjStart = objStarts.find((s) => s > markerPos);
+      let objText = nextObjStart === undefined ? text.slice(objStart) : text.slice(objStart, nextObjStart);
       objText = objText.trim();
       // Trailing separator before the next object (",") or the closing
       // array bracket (for the last object) - strip down to the object's
