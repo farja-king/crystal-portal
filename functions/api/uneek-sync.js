@@ -55,9 +55,22 @@ export async function onRequest(context) {
       return json({ error: `Uneek API returned HTTP ${uneekRes.status}` }, 502);
     }
 
-    const payload = await uneekRes.json();
-    // The API returns a bare array in practice, but fall back to the first
-    // array-valued property in case it's ever wrapped (e.g. { value: [...] }).
+    // Uneek's API double-encodes its response: the HTTP body is itself a
+    // JSON string literal containing the real JSON array as escaped text
+    // (confirmed via uneek-product.js's ?debug=1 against a live response),
+    // not a bare array. One JSON.parse() unwraps that outer string before
+    // the real array can be parsed. This full-catalog parse (thousands of
+    // rows) is exactly what blows Cloudflare's per-request CPU limit on
+    // anything but a paid Workers plan - see uneek-product.js for the
+    // CPU-cheap per-code alternative used by "Publish to website" instead.
+    const rawText = await uneekRes.text();
+    let payload;
+    try {
+      const parsedOnce = JSON.parse(rawText);
+      payload = typeof parsedOnce === "string" ? JSON.parse(parsedOnce) : parsedOnce;
+    } catch (e) {
+      return json({ error: `Could not parse Uneek response: ${e.message}` }, 502);
+    }
     const rawRows = Array.isArray(payload)
       ? payload
       : Object.values(payload || {}).find((v) => Array.isArray(v)) || [];

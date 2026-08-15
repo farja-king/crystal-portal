@@ -3,14 +3,18 @@
 // covers the whole catalog (thousands of SKU rows with full descriptions and
 // several image URLs each), and parsing/looping over all of it in a single
 // Workers invocation blew Cloudflare's CPU-time limit (Error 1102 - "Worker
-// exceeded resource limits"), even though the code itself was correct. Since
-// this only ever needs ONE product code's variant rows (called from "Publish
-// to website" to pull real images/description for a single garment), it does
-// a raw substring scan for that code's objects instead of parsing everything -
-// every object in the response starts with `{"Company":` (confirmed from a
-// real response), so that marks object boundaries without needing a full JSON
-// tokenizer. This keeps CPU cost close to a handful of native String.indexOf
-// calls regardless of how big the overall catalog response is.
+// exceeded resource limits"). Since this only ever needs ONE product code's
+// variant rows (called from "Publish to website" to pull real images/
+// description for a single garment), it does a raw substring scan for that
+// code's objects instead of parsing everything.
+//
+// Uneek's API double-encodes its response: the HTTP body is itself a JSON
+// string literal containing the *real* (already-minified) JSON array as
+// escaped text - e.g. `"[{\"Company\":\"Uneek Clothing\",...}]"` rather than
+// a bare array (confirmed via ?debug=1 against a real response). One
+// JSON.parse() unwraps that outer string, after which every object in the
+// real array starts with `{"Company":` (also confirmed), which marks object
+// boundaries without needing a full JSON tokenizer over the whole thing.
 export async function onRequest(context) {
   const { request, env } = context;
 
@@ -44,46 +48,40 @@ export async function onRequest(context) {
     });
     if (!uneekRes.ok) return json({ error: `Uneek API returned HTTP ${uneekRes.status}` }, 502);
 
-    const text = await uneekRes.text();
+    const rawText = await uneekRes.text();
+    let text = rawText;
+    try {
+      const parsedOnce = JSON.parse(rawText);
+      if (typeof parsedOnce === "string") text = parsedOnce; // unwrap the double-encoding
+    } catch {
+      // rawText wasn't valid JSON on its own - use as-is (already the real array text)
+    }
 
-    // Temporary diagnostic - returns a raw slice of Uneek's actual response
-    // instead of doing any extraction, so we can see its real shape rather
-    // than guess. Remove once the extraction logic is confirmed working.
     if (url.searchParams.get("debug") === "1") {
-      const codeIdx = text.indexOf(code);
+      const codeIdx = text.indexOf(`"ProductCode":"${code}"`);
       return json({
         length: text.length,
         contains_code: codeIdx !== -1,
-        code_index: codeIdx,
-        start: text.slice(0, 1500),
-        around_code: codeIdx === -1 ? null : text.slice(Math.max(0, codeIdx - 500), codeIdx + 500),
+        around_code: codeIdx === -1 ? null : text.slice(Math.max(0, codeIdx - 300), codeIdx + 300),
       });
     }
 
-    // Whitespace-tolerant - the API may return pretty-printed JSON (space
-    // after ":", newline+indent after "{"), not minified, so exact
-    // substring matching on '{"Company":' would silently match nothing.
-    const objStarts = [];
-    { const re = /\{\s*"Company"\s*:/g; let m; while ((m = re.exec(text))) objStarts.push(m.index); }
-
-    const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const markerRe = new RegExp(`"ProductCode"\\s*:\\s*"${escaped}"`, "g");
-    const markerPositions = [];
-    { let m; while ((m = markerRe.exec(text))) markerPositions.push(m.index); }
+    const OBJ_START = '{"Company":';
+    const marker = `"ProductCode":"${code}"`;
 
     const variants = [];
-    for (const markerPos of markerPositions) {
-      // Largest object-start position at or before this marker.
-      let objStart = -1;
-      for (const s of objStarts) { if (s <= markerPos) objStart = s; else break; }
+    let searchFrom = 0;
+    while (true) {
+      const markerPos = text.indexOf(marker, searchFrom);
+      if (markerPos === -1) break;
+      searchFrom = markerPos + marker.length;
+
+      const objStart = text.lastIndexOf(OBJ_START, markerPos);
       if (objStart === -1) continue;
 
-      const nextObjStart = objStarts.find((s) => s > markerPos);
-      let objText = nextObjStart === undefined ? text.slice(objStart) : text.slice(objStart, nextObjStart);
+      const nextObjStart = text.indexOf(OBJ_START, objStart + OBJ_START.length);
+      let objText = nextObjStart === -1 ? text.slice(objStart) : text.slice(objStart, nextObjStart);
       objText = objText.trim();
-      // Trailing separator before the next object (",") or the closing
-      // array bracket (for the last object) - strip down to the object's
-      // own final "}" so it's valid JSON on its own.
       const lastBrace = objText.lastIndexOf("}");
       if (lastBrace === -1) continue;
       objText = objText.slice(0, lastBrace + 1);
@@ -91,8 +89,7 @@ export async function onRequest(context) {
       try {
         variants.push(JSON.parse(objText));
       } catch {
-        // malformed slice (shouldn't happen given the API's consistent
-        // formatting) - skip rather than fail the whole lookup
+        // malformed slice - skip rather than fail the whole lookup
       }
     }
 
