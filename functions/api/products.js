@@ -141,6 +141,42 @@ export async function onRequest(context) {
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_deleted ON products (deleted_at)"),
     ]);
 
+    // Audit trail for sell_price, added after a sync-job bug silently
+    // overwrote several customers' negotiated prices with no way to tell
+    // what they'd been before (see the removed sync-prices.js, and the
+    // customer_id fix in this file's PUT handler and in push-prices-live.js).
+    // Every path that can change sell_price now logs the before/after here
+    // first - restoring from a bad change becomes a query against this
+    // table instead of digging through old invoices and PDFs by hand.
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS product_price_history (
+        id TEXT PRIMARY KEY,
+        product_id TEXT NOT NULL,
+        supplier_code TEXT,
+        customer_id TEXT,
+        old_sell_price REAL,
+        new_sell_price REAL,
+        source TEXT,
+        changed_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_price_history_product ON product_price_history (product_id)").run();
+
+    // source: 'manual_edit' (Garment Catalog inline edit / edit form),
+    // 'bulk_pricing' (the markup/margin/fixed-price sweep), 'import' (a
+    // price filled in on first import - never fires on an overwrite, since
+    // import already refuses to touch a row that already has a price).
+    // old_sell_price of null just means "first price ever set" - still
+    // logged, since that's real provenance even though there's nothing to
+    // restore to. Only a genuine no-op (old === new) is skipped.
+    async function logPriceChange(productId, supplierCode, customerId, oldPrice, newPrice, source) {
+      if (oldPrice === newPrice) return;
+      await db.prepare(`
+        INSERT INTO product_price_history (id, product_id, supplier_code, customer_id, old_sell_price, new_sell_price, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(crypto.randomUUID(), productId, supplierCode || "", customerId || null, oldPrice, newPrice, source).run();
+    }
+
     // ------------------------------------------------------------------ GET --
     if (request.method === "GET") {
       const url = new URL(request.url);
@@ -177,6 +213,16 @@ export async function onRequest(context) {
           categories: categories.results,
           totals: totals.results[0] || { total: 0, unpriced: 0, zero_rated: 0 },
         });
+      }
+
+      // ?price_history=<product_id> - the audit trail for one row, newest
+      // first. See logPriceChange above for what writes to this.
+      const priceHistoryFor = (p.get("price_history") || "").trim();
+      if (priceHistoryFor) {
+        const { results } = await db.prepare(
+          "SELECT * FROM product_price_history WHERE product_id = ? ORDER BY changed_at DESC"
+        ).bind(priceHistoryFor).all();
+        return json({ results });
       }
 
       // ?other_customers_for=<id>&q=... - searches every OTHER customer's
@@ -479,6 +525,15 @@ export async function onRequest(context) {
             : `ROUND(cost_price * ${(1 + pct / 100).toFixed(6)}, 2)`;
         }
 
+        // Captured before the UPDATE runs, so the history log has something
+        // to restore to - this is the tool that actually caused the AT002
+        // incident (a filter broader than intended silently repriced
+        // everything it matched, with no way to tell what the old prices
+        // had been). id IN (...) re-reads afterward rather than re-running
+        // ${clause}, since only_unpriced would otherwise exclude every row
+        // this update just gave a price to.
+        const before = await db.prepare(`SELECT id, supplier_code, customer_id, sell_price FROM products ${clause}`).bind(...binds).all();
+
         const res = await db.prepare(`
           UPDATE products
           SET sell_price = ${expr},
@@ -486,6 +541,35 @@ export async function onRequest(context) {
               updated_at = CURRENT_TIMESTAMP
           ${clause}
         `).bind(...binds).run();
+
+        if (before.results.length) {
+          const ids = before.results.map((r) => r.id);
+          const placeholders = ids.map(() => "?").join(",");
+          const after = await db.prepare(`SELECT id, sell_price FROM products WHERE id IN (${placeholders})`).bind(...ids).all();
+          const afterById = new Map(after.results.map((r) => [r.id, r.sell_price]));
+
+          const historyRows = before.results
+            .filter((r) => r.sell_price !== afterById.get(r.id))
+            .map((r) => ({
+              id: crypto.randomUUID(),
+              product_id: r.id,
+              supplier_code: r.supplier_code || "",
+              customer_id: r.customer_id || null,
+              old_sell_price: r.sell_price,
+              new_sell_price: afterById.get(r.id),
+            }));
+
+          const HIST_CHUNK = 50;
+          const stmt = db.prepare(`
+            INSERT INTO product_price_history (id, product_id, supplier_code, customer_id, old_sell_price, new_sell_price, source)
+            VALUES (?, ?, ?, ?, ?, ?, 'bulk_pricing')
+          `);
+          for (let i = 0; i < historyRows.length; i += HIST_CHUNK) {
+            await db.batch(historyRows.slice(i, i + HIST_CHUNK).map((h) =>
+              stmt.bind(h.id, h.product_id, h.supplier_code, h.customer_id, h.old_sell_price, h.new_sell_price)
+            ));
+          }
+        }
 
         return json({ success: true, updated: res.meta ? res.meta.changes : null });
       }
@@ -521,6 +605,9 @@ export async function onRequest(context) {
         data.on_website ?? existing.on_website,
         data.id
       ).run();
+
+      const newSell = sell === "" ? null : (sell === null || sell === undefined ? null : Number(sell));
+      await logPriceChange(data.id, existing.supplier_code, existing.customer_id, existing.sell_price, newSell, "manual_edit");
 
       return json({ success: true });
     }

@@ -1568,6 +1568,20 @@
     </div>
   </div>
 
+  <!-- Price history viewer - see showPriceHistory() - the audit trail for
+       one product's sell_price, added after the sync-job bug that
+       overwrote several customers' negotiated prices with no way to tell
+       what they'd been before. -->
+  <div id="price-history-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-5">
+      <div class="flex justify-between items-start mb-3">
+        <h3 class="text-sm font-semibold text-slate-800">Price history <span id="price-history-label" class="font-normal text-slate-400"></span></h3>
+        <button type="button" onclick="document.getElementById('price-history-modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+      </div>
+      <div id="price-history-body" class="text-sm text-slate-700 max-h-96 overflow-y-auto"></div>
+    </div>
+  </div>
+
   <!-- Send-a-quote/invoice compose dialog - see emailComposeModal() - the
        address field plus an optional personalized note that's inserted at
        the top of the email, above the standard quote/invoice content. A
@@ -6431,7 +6445,8 @@
               '<td class="p-3 text-right">' +
                 '<input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" ' +
                 'data-sell-id="' + escapeAttr(p.id) + '" placeholder="-" ' +
-                'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
+                'class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /> ' +
+                '<button type="button" title="Price history" onclick="showPriceHistory(\'' + escapeAttr(p.id) + '\', \'' + escapeAttr(p.supplier_code) + '\')" class="text-slate-400 hover:text-slate-600 text-xs align-middle">🕘</button></td>' +
               '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '-' : money(profit)) + '</td>' +
               '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
               '<td class="p-3 text-center"><input type="checkbox" ' + (p.on_website ? 'checked' : '') + ' onchange="toggleOnWebsite(\'' + escapeAttr(p.id) + '\', this.checked)" class="rounded border-slate-300" /></td>' +
@@ -6529,6 +6544,36 @@
       } catch (e) {
         showActionToast('⚠', 'Could not update On Website: ' + e.message);
         renderCatalogGroups(lastCatalogGroups);
+      }
+    }
+
+    async function showPriceHistory(id, label) {
+      const modal = document.getElementById('price-history-modal');
+      const body = document.getElementById('price-history-body');
+      document.getElementById('price-history-label').textContent = label ? '- ' + label : '';
+      body.innerHTML = '<p class="text-slate-400">Loading…</p>';
+      modal.classList.remove('hidden');
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL + '?price_history=' + encodeURIComponent(id));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+
+        if (!data.results.length) {
+          body.innerHTML = '<p class="text-slate-400">No price changes recorded yet for this item.</p>';
+          return;
+        }
+
+        const sourceLabel = { manual_edit: 'Manual edit', bulk_pricing: 'Bulk pricing', import: 'Import' };
+        body.innerHTML = '<table class="w-full text-xs"><tbody>' + data.results.map(function (r) {
+          const oldP = r.old_sell_price === null ? '(none)' : '£' + Number(r.old_sell_price).toFixed(2);
+          const newP = r.new_sell_price === null ? '(none)' : '£' + Number(r.new_sell_price).toFixed(2);
+          return '<tr class="border-b border-slate-100"><td class="py-2 pr-3 text-slate-400 whitespace-nowrap">' + escapeHtml(r.changed_at) + '</td>' +
+            '<td class="py-2 pr-3">' + oldP + ' → <span class="font-semibold text-slate-800">' + newP + '</span></td>' +
+            '<td class="py-2 text-slate-400">' + escapeHtml(sourceLabel[r.source] || r.source || '') + '</td></tr>';
+        }).join('') + '</tbody></table>';
+      } catch (e) {
+        body.innerHTML = '<p class="text-rose-600">Could not load history: ' + escapeHtml(e.message) + '</p>';
       }
     }
 
