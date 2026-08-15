@@ -6625,10 +6625,11 @@
 
     // Publish-to-website: creates a brand-new product page + collection card
     // + sitemap entry on the live site, via functions/api/add-product-live.js.
-    // Colours/sizes/images come from PenCarrie, not typed in here - this form
+    // Colours/sizes/images come from the product's own supplier (PenCarrie
+    // or Uneek - see add-product-live.js), not typed in here - this form
     // only collects the two things that are genuinely Martin's call: which
     // collection it belongs on, and any construction-detail bullet points
-    // (PenCarrie's API doesn't have those, so nothing is invented for them).
+    // (neither supplier's API has those, so nothing is invented for them).
     let addProductCollections = null;
 
     async function openAddProductModal(code) {
@@ -6666,7 +6667,7 @@
 
     async function addProductPreview(code) {
       const area = document.getElementById('add-product-preview-area');
-      area.innerHTML = '<p class="text-slate-400">Checking PenCarrie for colours/sizes/images…</p>';
+      area.innerHTML = '<p class="text-slate-400">Checking supplier for colours/sizes/images…</p>';
 
       const collection = document.getElementById('add-product-collection').value;
       const specs = document.getElementById('add-product-specs').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
