@@ -498,6 +498,11 @@ export async function onRequest(context) {
         // filter for that safety gate.
         where.push("(customer_id IS NULL OR customer_id = '')");
         const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+        // Snapshot before "fixed" mode appends its own price placeholder onto
+        // binds below - clause only ever references the filter placeholders,
+        // so the price-history SELECT further down must bind against this,
+        // not the full array (which later has the price value tacked on).
+        const whereBinds = [...binds];
 
         let expr;
         if (a.mode === "fixed") {
@@ -532,7 +537,7 @@ export async function onRequest(context) {
         // had been). id IN (...) re-reads afterward rather than re-running
         // ${clause}, since only_unpriced would otherwise exclude every row
         // this update just gave a price to.
-        const before = await db.prepare(`SELECT id, supplier_code, customer_id, sell_price FROM products ${clause}`).bind(...binds).all();
+        const before = await db.prepare(`SELECT id, supplier_code, customer_id, sell_price FROM products ${clause}`).bind(...whereBinds).all();
 
         const res = await db.prepare(`
           UPDATE products
