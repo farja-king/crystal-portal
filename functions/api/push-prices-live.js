@@ -169,6 +169,7 @@ export async function onRequest(context) {
 
     let updated = 0;
     const commitFailed = [];
+    const updatedCandidates = [];
 
     for (const c of candidates) {
       try {
@@ -212,8 +213,62 @@ export async function onRequest(context) {
 
         if (!putRes.ok) { commitFailed.push({ sku: c.sku, error: `PUT ${putRes.status}` }); continue; }
         updated++;
+        updatedCandidates.push(c);
       } catch (err) {
         commitFailed.push({ sku: c.sku, error: err.message });
+      }
+    }
+
+    // 4. Each product also appears as its own card on one or more collection/
+    // category pages (e.g. products/rx350.html AND collections/hoodies-
+    // sweatshirts-category.html both show RX350's price independently) -
+    // found in production: the product page updated correctly but the
+    // Hoodies category page kept showing the old price, since it has its
+    // own hardcoded "<div class=\"price\">" per card, unrelated to the
+    // product page's JSON-LD. Every collection page is checked for every
+    // updated sku, patching just that card's price line; one commit per
+    // collection page (covering however many of its cards changed) rather
+    // than one per product, to avoid redundant commits.
+    let collectionPagesUpdated = 0;
+    if (updatedCandidates.length) {
+      for (const collectionUrl of collectionUrls) {
+        try {
+          const repoPath = collectionUrl.slice(STORE_BASE.length + 1);
+          const apiUrl = `https://api.github.com/repos/${REPO}/contents/${repoPath}`;
+          const getRes = await fetch(apiUrl, { headers: ghHeaders });
+          if (!getRes.ok) continue;
+          const file = await getRes.json();
+
+          let html = new TextDecoder().decode(
+            Uint8Array.from(atob(file.content.replace(/\n/g, "")), (ch) => ch.charCodeAt(0))
+          );
+          const original = html;
+
+          for (const c of updatedCandidates) {
+            const codeEscaped = c.sku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const cardPricePattern = new RegExp(
+              `(\\(${codeEscaped}\\)</div>\\s*<div class="price">)£[\\d.]+`
+            );
+            html = html.replace(cardPricePattern, `$1£${c.new_price}`);
+          }
+
+          if (html === original) continue;
+
+          const newContentB64 = btoa(String.fromCharCode(...new TextEncoder().encode(html)));
+          const putRes = await fetch(apiUrl, {
+            method: "PUT",
+            headers: { ...ghHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: `Update collection card price(s): ${updatedCandidates.map((c) => c.sku).join(", ")} (via Crystal Portal)`,
+              content: newContentB64,
+              sha: file.sha,
+            }),
+          });
+          if (putRes.ok) collectionPagesUpdated++;
+        } catch {
+          // one bad collection page shouldn't abort the whole run - the
+          // product's own page is already correct regardless
+        }
       }
     }
 
@@ -221,6 +276,7 @@ export async function onRequest(context) {
       success: true,
       dryRun: false,
       updated,
+      collection_pages_updated: collectionPagesUpdated,
       failed_commits: commitFailed,
       up_to_date: upToDate,
       codes_not_in_catalog: notInCatalogCodes,

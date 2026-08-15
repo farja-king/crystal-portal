@@ -6131,7 +6131,9 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
 
-        let msg = '✅ Pushed ' + data.updated + ' price(s) live.';
+        let msg = '✅ Pushed ' + data.updated + ' price(s) live';
+        if (data.collection_pages_updated) msg += ' (and updated ' + data.collection_pages_updated + ' category page card(s) that listed them)';
+        msg += '.';
         if (data.failed_commits && data.failed_commits.length) {
           msg += ' Failed: ' + data.failed_commits.map(function (f) { return f.sku + ' (' + f.error + ')'; }).join(', ') + '.';
         }
