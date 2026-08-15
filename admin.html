@@ -1582,6 +1582,20 @@
     </div>
   </div>
 
+  <!-- Publish-to-website flow - see openAddProductModal()/addProductPreview()/
+       addProductConfirm(). Always previews first (colours, sizes, resolved
+       images, price) before anything commits to the live site - same
+       dry-run/confirm pattern as the price push. -->
+  <div id="add-product-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-5 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-start mb-3">
+        <h3 class="text-sm font-semibold text-slate-800">Publish to website <span id="add-product-code" class="font-normal text-slate-400"></span></h3>
+        <button type="button" onclick="document.getElementById('add-product-modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+      </div>
+      <div id="add-product-body" class="text-sm text-slate-700"></div>
+    </div>
+  </div>
+
   <!-- Send-a-quote/invoice compose dialog - see emailComposeModal() - the
        address field plus an optional personalized note that's inserted at
        the top of the email, above the standard quote/invoice content. A
@@ -6460,6 +6474,9 @@
               '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
               '<td class="p-3 text-center"><input type="checkbox" ' + (p.on_website ? 'checked' : '') + ' onchange="toggleOnWebsite(\'' + escapeAttr(p.id) + '\', this.checked)" class="rounded border-slate-300" /></td>' +
               '<td class="p-3 text-right whitespace-nowrap">' +
+                (!p.on_website && p.supplier_code && sell !== null
+                  ? '<button type="button" title="Publish this product to embroidery.click" onclick="openAddProductModal(\'' + escapeAttr(p.supplier_code) + '\')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold mr-2">Publish</button>'
+                  : '') +
                 '<button type="button" onclick="startCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">Edit</button>' +
                 '<button type="button" onclick="deleteCatalogProduct(\'' + escapeAttr(p.id) + '\')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>' +
               '</td>' +
@@ -6553,6 +6570,116 @@
       } catch (e) {
         showActionToast('⚠', 'Could not update On Website: ' + e.message);
         renderCatalogGroups(lastCatalogGroups);
+      }
+    }
+
+    // Publish-to-website: creates a brand-new product page + collection card
+    // + sitemap entry on the live site, via functions/api/add-product-live.js.
+    // Colours/sizes/images come from PenCarrie, not typed in here - this form
+    // only collects the two things that are genuinely Martin's call: which
+    // collection it belongs on, and any construction-detail bullet points
+    // (PenCarrie's API doesn't have those, so nothing is invented for them).
+    let addProductCollections = null;
+
+    async function openAddProductModal(code) {
+      const modal = document.getElementById('add-product-modal');
+      const body = document.getElementById('add-product-body');
+      document.getElementById('add-product-code').textContent = '- ' + code;
+      body.innerHTML = '<p class="text-slate-400">Loading…</p>';
+      modal.classList.remove('hidden');
+
+      try {
+        if (!addProductCollections) {
+          const res = await fetch('/api/add-product-live');
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+          addProductCollections = data.collections;
+        }
+
+        const options = Object.entries(addProductCollections)
+          .map(function (e) { return '<option value="' + e[0] + '">' + e[1] + '</option>'; })
+          .join('');
+
+        body.innerHTML =
+          '<label class="block text-xs font-semibold text-slate-600 mb-1">Collection page</label>' +
+          '<select id="add-product-collection" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3">' + options + '</select>' +
+          '<label class="block text-xs font-semibold text-slate-600 mb-1">Construction details (optional, one per line)</label>' +
+          '<textarea id="add-product-specs" rows="3" placeholder="e.g. Ribbed collar&#10;Twin needle stitching&#10;60°C wash" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3"></textarea>' +
+          '<label class="block text-xs font-semibold text-slate-600 mb-1">Description (optional - leave blank for the standard wording)</label>' +
+          '<textarea id="add-product-description" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mb-3"></textarea>' +
+          '<button type="button" onclick="addProductPreview(\'' + escapeAttr(code) + '\')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Preview</button>' +
+          '<div id="add-product-preview-area" class="mt-4"></div>';
+      } catch (e) {
+        body.innerHTML = '<p class="text-rose-600">Could not load collections: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    async function addProductPreview(code) {
+      const area = document.getElementById('add-product-preview-area');
+      area.innerHTML = '<p class="text-slate-400">Checking PenCarrie for colours/sizes/images…</p>';
+
+      const collection = document.getElementById('add-product-collection').value;
+      const specs = document.getElementById('add-product-specs').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+      const description = document.getElementById('add-product-description').value.trim();
+
+      try {
+        const res = await fetch('/api/add-product-live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dryRun: true, supplier_code: code, collection: collection, specs: specs, description: description }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+
+        const swatches = data.colours.map(function (c) {
+          return '<span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1 ' +
+            (c.resolved ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-700') + '" title="' +
+            (c.resolved ? 'Image found' : 'No image found - will show a placeholder') + '">' + escapeHtml(c.name) + '</span>';
+        }).join('');
+
+        area.innerHTML =
+          '<div class="border border-slate-200 rounded-lg p-3 mb-3">' +
+          '<img src="' + data.main_image_url + '" class="w-32 h-32 object-cover rounded mb-2" />' +
+          '<p class="font-semibold text-slate-800">' + escapeHtml(data.name) + ' (' + data.code + ') — £' + data.price + '</p>' +
+          '<p class="text-xs text-slate-500 mb-2">' + escapeHtml(data.description) + '</p>' +
+          (data.material || data.weight ? '<p class="text-xs text-slate-600 mb-2">' + [data.material, data.weight].filter(Boolean).map(escapeHtml).join(' · ') + '</p>' : '') +
+          '<p class="text-xs text-slate-600 mb-1">Sizes: ' + (data.sizes.length ? data.sizes.map(escapeHtml).join(', ') : 'One size') + '</p>' +
+          '<p class="text-xs text-slate-600 mb-1">Colours (' + data.colours.length + '):</p>' +
+          '<div>' + swatches + '</div>' +
+          (data.unresolved_colours.length
+            ? '<p class="text-xs text-rose-600 mt-2">⚠️ No working image found for: ' + data.unresolved_colours.map(escapeHtml).join(', ') + ' - these will be skipped.</p>'
+            : '') +
+          '<p class="text-xs text-slate-500 mt-2">Will publish to: ' + escapeHtml(data.collection_label) + '</p>' +
+          '</div>' +
+          '<button type="button" onclick="addProductConfirm(\'' + escapeAttr(code) + '\')" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold mr-2">Confirm & publish live</button>' +
+          '<button type="button" onclick="document.getElementById(\'add-product-modal\').classList.add(\'hidden\')" class="text-slate-500 hover:underline text-xs font-medium">Cancel</button>';
+      } catch (e) {
+        area.innerHTML = '<p class="text-rose-600">Preview failed: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    async function addProductConfirm(code) {
+      const area = document.getElementById('add-product-preview-area');
+      area.innerHTML = '<p class="text-slate-400">Publishing…</p>';
+
+      const collection = document.getElementById('add-product-collection').value;
+      const specs = document.getElementById('add-product-specs').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+      const description = document.getElementById('add-product-description').value.trim();
+
+      try {
+        const res = await fetch('/api/add-product-live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dryRun: false, supplier_code: code, collection: collection, specs: specs, description: description }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+
+        area.innerHTML = '<p class="text-emerald-700 font-semibold">✅ Published! <a href="' + data.product_url + '" target="_blank" class="underline">' + data.product_url + '</a></p>' +
+          '<p class="text-xs text-slate-500 mt-1">' + data.colours_published + ' colour(s) published' + (data.colours_unresolved ? ', ' + data.colours_unresolved + ' skipped (no image found)' : '') + '.</p>';
+        loadCatalog(catalogOffset);
+      } catch (e) {
+        area.innerHTML = '<p class="text-rose-600">Publish failed: ' + escapeHtml(e.message) + '</p>';
       }
     }
 
