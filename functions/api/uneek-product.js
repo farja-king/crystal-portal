@@ -45,6 +45,21 @@ export async function onRequest(context) {
     if (!uneekRes.ok) return json({ error: `Uneek API returned HTTP ${uneekRes.status}` }, 502);
 
     const text = await uneekRes.text();
+
+    // Temporary diagnostic - returns a raw slice of Uneek's actual response
+    // instead of doing any extraction, so we can see its real shape rather
+    // than guess. Remove once the extraction logic is confirmed working.
+    if (url.searchParams.get("debug") === "1") {
+      const codeIdx = text.indexOf(code);
+      return json({
+        length: text.length,
+        contains_code: codeIdx !== -1,
+        code_index: codeIdx,
+        start: text.slice(0, 1500),
+        around_code: codeIdx === -1 ? null : text.slice(Math.max(0, codeIdx - 500), codeIdx + 500),
+      });
+    }
+
     // Whitespace-tolerant - the API may return pretty-printed JSON (space
     // after ":", newline+indent after "{"), not minified, so exact
     // substring matching on '{"Company":' would silently match nothing.
