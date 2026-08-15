@@ -89,8 +89,15 @@ export async function onRequest(context) {
         const price = Number(priceMatch[1]);
         if (!isFinite(price) || price < 0) { failed++; continue; }
 
+        // (customer_id IS NULL OR '') matters here - without it this also
+        // overwrites a customer's own negotiated price-list row (Sloane
+        // Helicopters, Karl Sports, etc) whenever it happens to share a
+        // supplier_code with something live on the public site. The shared
+        // catalog is the only thing embroidery.click prices actually belong
+        // to - a customer's price is set from their own record instead, see
+        // products.js's GET handler for the same filter.
         const { results } = await db.prepare(
-          "SELECT id, cost_price, vat_rate FROM products WHERE supplier_code = ?"
+          "SELECT id, cost_price, vat_rate FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL"
         ).bind(code).all();
 
         if (!results.length) { notFound++; notFoundCodes.push(code); continue; }
