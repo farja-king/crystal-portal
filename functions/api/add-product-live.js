@@ -263,11 +263,14 @@ export async function onRequest(context) {
 
     // 1. Pull this code's shared-catalog price/title - same customer_id
     // filter as push-prices-live.js, for the same reason (never publish a
-    // customer's own negotiated price onto the public site).
+    // customer's own negotiated price onto the public site). A code can
+    // have duplicate rows across suppliers/imports over time - ordering by
+    // most-recently-synced first means the freshest data wins instead of
+    // whichever row SQLite happens to return first.
     const row = await db.prepare(
-      "SELECT title, brand, supplier, sell_price FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND item_type = 'garment' LIMIT 1"
+      "SELECT title, brand, supplier, sell_price FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND item_type = 'garment' ORDER BY updated_at DESC LIMIT 1"
     ).bind(code).first();
-    const isUneek = row && row.supplier === "UNEEK";
+    const isUneek = row && String(row.supplier || "").toUpperCase() === "UNEEK";
 
     if (!row) return json({ error: `${code} not found in the shared catalog` }, 404);
     if (row.sell_price === null || row.sell_price === undefined) {
