@@ -1596,6 +1596,20 @@
     </div>
   </div>
 
+  <!-- Unpublish flow - see openUnpublishModal()/unpublishPreview()/
+       unpublishConfirm(). Same preview-before-commit pattern as Publish -
+       removing a live page is destructive, so nothing is deleted until
+       the dry-run preview has been shown and confirmed. -->
+  <div id="unpublish-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-5">
+      <div class="flex justify-between items-start mb-3">
+        <h3 class="text-sm font-semibold text-slate-800">Unpublish <span id="unpublish-code" class="font-normal text-slate-400"></span></h3>
+        <button type="button" onclick="document.getElementById('unpublish-modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+      </div>
+      <div id="unpublish-body" class="text-sm text-slate-700"></div>
+    </div>
+  </div>
+
   <!-- Send-a-quote/invoice compose dialog - see emailComposeModal() - the
        address field plus an optional personalized note that's inserted at
        the top of the email, above the standard quote/invoice content. A
@@ -6477,6 +6491,9 @@
                 (!p.on_website && p.supplier_code && sell !== null
                   ? '<button type="button" title="Publish this product to embroidery.click" onclick="openAddProductModal(\'' + escapeAttr(p.supplier_code) + '\')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold mr-2">Publish</button>'
                   : '') +
+                (p.on_website && p.supplier_code
+                  ? '<button type="button" title="Remove this product from embroidery.click" onclick="openUnpublishModal(\'' + escapeAttr(p.supplier_code) + '\')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold mr-2">Unpublish</button>'
+                  : '') +
                 '<button type="button" onclick="startCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">Edit</button>' +
                 '<button type="button" onclick="deleteCatalogProduct(\'' + escapeAttr(p.id) + '\')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>' +
               '</td>' +
@@ -6680,6 +6697,64 @@
         loadCatalog(catalogOffset);
       } catch (e) {
         area.innerHTML = '<p class="text-rose-600">Publish failed: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    async function openUnpublishModal(code) {
+      const modal = document.getElementById('unpublish-modal');
+      const body = document.getElementById('unpublish-body');
+      document.getElementById('unpublish-code').textContent = '- ' + code;
+      body.innerHTML = '<p class="text-slate-400">Checking what\'s live for ' + escapeHtml(code) + '…</p>';
+      modal.classList.remove('hidden');
+
+      try {
+        const res = await fetch('/api/add-product-live', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dryRun: true, supplier_code: code }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+
+        body.innerHTML =
+          '<p class="text-sm text-amber-900 mb-2">This will permanently remove:</p>' +
+          '<ul class="text-xs text-slate-700 list-disc list-inside mb-3">' +
+          '<li>The product page: <span class="font-mono">' + escapeHtml(data.product_repo_path) + '</span></li>' +
+          (data.found_on_collections.length
+            ? data.found_on_collections.map(function (c) { return '<li>Its card on <strong>' + escapeHtml(c.label) + '</strong></li>'; }).join('')
+            : '<li class="text-rose-600">Not found on any collection page - only the page itself will be removed</li>') +
+          (data.sitemap_entry_found ? '<li>Its sitemap.xml entry</li>' : '') +
+          '</ul>' +
+          '<p class="text-xs text-rose-600 mb-3">This cannot be undone from the portal - you\'d need to Publish it again from scratch.</p>' +
+          '<button type="button" onclick="unpublishConfirm(\'' + escapeAttr(code) + '\')" class="bg-amber-700 hover:bg-amber-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold mr-2">Confirm & remove from website</button>' +
+          '<button type="button" onclick="document.getElementById(\'unpublish-modal\').classList.add(\'hidden\')" class="text-slate-500 hover:underline text-xs font-medium">Cancel</button>';
+      } catch (e) {
+        body.innerHTML = '<p class="text-rose-600">' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    async function unpublishConfirm(code) {
+      const body = document.getElementById('unpublish-body');
+      body.innerHTML = '<p class="text-slate-400">Removing from the live site…</p>';
+
+      try {
+        const res = await fetch('/api/add-product-live', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dryRun: false, supplier_code: code }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+
+        let msg = data.product_page_deleted ? '✅ Removed from the website.' : '⚠️ Cards/sitemap updated, but the product page itself could not be deleted.';
+        msg += ' (' + data.collections_updated.length + ' collection page(s) updated' + (data.sitemap_updated ? ', sitemap updated' : '') + ')';
+        if (data.collection_failures.length) {
+          msg += ' Failed: ' + data.collection_failures.map(function (f) { return f.path + ' (' + f.error + ')'; }).join(', ');
+        }
+        body.innerHTML = '<p class="text-sm ' + (data.product_page_deleted ? 'text-emerald-700' : 'text-amber-700') + ' font-semibold">' + msg + '</p>';
+        loadCatalog(catalogOffset);
+      } catch (e) {
+        body.innerHTML = '<p class="text-rose-600">Unpublish failed: ' + escapeHtml(e.message) + '</p>';
       }
     }
 

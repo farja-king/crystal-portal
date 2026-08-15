@@ -20,7 +20,7 @@ export async function onRequest(context) {
 
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Content-Type": "application/json",
   };
@@ -49,6 +49,174 @@ export async function onRequest(context) {
 
   if (request.method === "GET") {
     return json({ collections: COLLECTIONS });
+  }
+
+  // -------------------------------------------------------------- DELETE --
+  // Unpublish: removes the product page, its card from every collection
+  // page it's found on (normally one, but checks all seven since a page
+  // could have been added by hand outside this tool), and its sitemap
+  // entry - then clears on_website in the catalog. Same dry-run/confirm
+  // pattern as publishing: dryRun (default true) just reports what would
+  // be removed.
+  if (request.method === "DELETE") {
+    try {
+      const body = await request.json().catch(() => ({}));
+      const dryRun = body.dryRun !== false;
+      const code = (body.supplier_code || "").trim().toUpperCase();
+      if (!code) return json({ error: "supplier_code is required" }, 400);
+
+      if (!dryRun && !env.GITHUB_LIVE_REPO_TOKEN) {
+        return json({ error: "GITHUB_LIVE_REPO_TOKEN not configured - cannot write to the live site yet" }, 500);
+      }
+
+      const productRepoPath = `products/${code.toLowerCase()}.html`;
+      const productLiveUrl = `${STORE_BASE}/${productRepoPath}`;
+
+      const existsRes = await fetch(productLiveUrl);
+      if (!existsRes.ok) {
+        return json({ error: `${code} has no live product page at ${productRepoPath}` }, 404);
+      }
+
+      // Check every collection for a card referencing this product - a page
+      // added by hand (not through Publish) could be linked from more than
+      // one, or from a collection this tool didn't put it on.
+      const foundOn = [];
+      for (const [path, label] of Object.entries(COLLECTIONS)) {
+        const res = await fetch(`${STORE_BASE}/${path}`);
+        if (!res.ok) continue;
+        const html = await res.text();
+        if (html.includes(`../${productRepoPath}`)) foundOn.push({ path, label });
+      }
+
+      const sitemapRes = await fetch(`${STORE_BASE}/sitemap.xml`);
+      const sitemapHasEntry = sitemapRes.ok && (await sitemapRes.text()).includes(productLiveUrl);
+
+      if (dryRun) {
+        return json({
+          success: true,
+          dryRun: true,
+          code,
+          product_repo_path: productRepoPath,
+          found_on_collections: foundOn,
+          sitemap_entry_found: sitemapHasEntry,
+        });
+      }
+
+      const ghHeaders = {
+        Authorization: `Bearer ${env.GITHUB_LIVE_REPO_TOKEN}`,
+        "User-Agent": "crystal-portal-unpublish-product",
+        Accept: "application/vnd.github+json",
+      };
+      const b64 = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str)));
+
+      // Remove the card from every collection page it's found on.
+      const collectionsUpdated = [];
+      const collectionFailures = [];
+      for (const { path, label } of foundOn) {
+        try {
+          const apiUrl = `https://api.github.com/repos/${REPO}/contents/${path}`;
+          const getRes = await fetch(apiUrl, { headers: ghHeaders });
+          if (!getRes.ok) { collectionFailures.push({ path, error: `GET ${getRes.status}` }); continue; }
+          const file = await getRes.json();
+          const html = new TextDecoder().decode(
+            Uint8Array.from(atob(file.content.replace(/\n/g, "")), (ch) => ch.charCodeAt(0))
+          );
+
+          // Remove the whole <a class="product-card" ... > ... </a> block
+          // that links to this product - matched non-greedily so a page
+          // with several cards only loses the one that's actually ours.
+          const codeEscaped = productRepoPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const cardPattern = new RegExp(
+            `\\s*<a class="product-card"[\\s\\S]*?href="\\.\\./${codeEscaped}"[\\s\\S]*?<\\/a>`
+          );
+          const updatedHtml = html.replace(cardPattern, "");
+          if (updatedHtml === html) { collectionFailures.push({ path, error: "Card not found on re-read" }); continue; }
+
+          const putRes = await fetch(apiUrl, {
+            method: "PUT",
+            headers: { ...ghHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: `Remove ${code} card from ${label} (via Crystal Portal)`,
+              content: b64(updatedHtml),
+              sha: file.sha,
+            }),
+          });
+          if (!putRes.ok) { collectionFailures.push({ path, error: `PUT ${putRes.status}` }); continue; }
+          collectionsUpdated.push(path);
+        } catch (err) {
+          collectionFailures.push({ path, error: err.message });
+        }
+      }
+
+      // Remove the sitemap entry.
+      let sitemapUpdated = false;
+      try {
+        const sitemapApiUrl = `https://api.github.com/repos/${REPO}/contents/sitemap.xml`;
+        const getRes = await fetch(sitemapApiUrl, { headers: ghHeaders });
+        if (getRes.ok) {
+          const file = await getRes.json();
+          const xml = new TextDecoder().decode(
+            Uint8Array.from(atob(file.content.replace(/\n/g, "")), (ch) => ch.charCodeAt(0))
+          );
+          const entryPattern = new RegExp(
+            `\\s*<url>\\s*<loc>${productLiveUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</loc>[\\s\\S]*?<\\/url>`
+          );
+          const updatedXml = xml.replace(entryPattern, "");
+          if (updatedXml !== xml) {
+            const putRes = await fetch(sitemapApiUrl, {
+              method: "PUT",
+              headers: { ...ghHeaders, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: `Remove ${productRepoPath} from sitemap (via Crystal Portal)`,
+                content: b64(updatedXml),
+                sha: file.sha,
+              }),
+            });
+            sitemapUpdated = putRes.ok;
+          }
+        }
+      } catch {
+        // sitemap failure isn't fatal - a stale sitemap entry pointing at a
+        // 404 only affects search indexing, not the live site itself
+      }
+
+      // Delete the product page file itself.
+      let productPageDeleted = false;
+      try {
+        const apiUrl = `https://api.github.com/repos/${REPO}/contents/${productRepoPath}`;
+        const getRes = await fetch(apiUrl, { headers: ghHeaders });
+        if (getRes.ok) {
+          const file = await getRes.json();
+          const delRes = await fetch(apiUrl, {
+            method: "DELETE",
+            headers: { ...ghHeaders, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: `Remove ${code} product page (via Crystal Portal)`,
+              sha: file.sha,
+            }),
+          });
+          productPageDeleted = delRes.ok;
+        }
+      } catch {
+        // handled by productPageDeleted staying false
+      }
+
+      await db.prepare(
+        "UPDATE products SET on_website = 0 WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL"
+      ).bind(code).run();
+
+      return json({
+        success: true,
+        dryRun: false,
+        code,
+        product_page_deleted: productPageDeleted,
+        collections_updated: collectionsUpdated,
+        collection_failures: collectionFailures,
+        sitemap_updated: sitemapUpdated,
+      });
+    } catch (err) {
+      return json({ error: err.message }, 500);
+    }
   }
 
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
