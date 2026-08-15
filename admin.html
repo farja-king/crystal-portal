@@ -595,6 +595,13 @@
             Import
           </button>
           <p id="cat-uneek-status" class="text-xs mt-2 hidden"></p>
+          <!-- Live alternative - see uneekSyncLive()/functions/api/uneek-sync.js.
+               Pulls the same data straight from Uneek's own API (one call, no
+               file to download/upload) - needs UNEEK_EMAIL/UNEEK_PASSWORD set
+               as Cloudflare Pages secrets first, or it just errors below. -->
+          <button id="cat-uneek-live-btn" onclick="uneekSyncLive()" class="w-full mt-2 bg-white border border-indigo-300 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-sm font-semibold">
+            Sync live from Uneek API
+          </button>
         </div>
 
         <!-- Bulk pricing -->
@@ -6399,6 +6406,32 @@
         loadFacets();
       } catch (e) {
         status.textContent = 'Import failed: ' + e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // Live alternative to importUneekCsv() - see functions/api/uneek-sync.js.
+    // Same upsert shape/id scheme, just sourced from a single API call
+    // instead of a hand-downloaded CSV. Needs UNEEK_EMAIL/UNEEK_PASSWORD
+    // (and optionally UNEEK_CUSTOMER_NO) set as Cloudflare Pages secrets.
+    async function uneekSyncLive() {
+      const status = document.getElementById('cat-uneek-status');
+      const btn = document.getElementById('cat-uneek-live-btn');
+      btn.disabled = true;
+      status.classList.remove('hidden');
+      status.textContent = 'Syncing from Uneek API…';
+
+      try {
+        const res = await fetch('/api/uneek-sync', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+
+        status.textContent = 'Done: ' + data.imported + ' SKU(s) synced across ' + data.codes + ' code(s).';
+        loadCatalog(catalogOffset);
+        loadFacets();
+      } catch (e) {
+        status.textContent = 'Live sync failed: ' + e.message;
       } finally {
         btn.disabled = false;
       }
