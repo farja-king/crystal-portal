@@ -521,12 +521,16 @@
           <button id="cat-sync-btn" onclick="syncPricesFromWebsite()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🌐 Sync Prices from Website
           </button>
+          <button id="cat-push-btn" onclick="pushPricesToWebsitePreview()" class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+            ⬆️ Push Prices to Website
+          </button>
           <button onclick="loadCatalog(0)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🔄 Refresh Catalog
           </button>
         </div>
       </div>
       <p id="cat-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
+      <div id="cat-push-preview" class="hidden mb-4 bg-amber-50 border border-amber-200 rounded-lg p-4"></div>
 
       <!-- Manual one-off product/service - everything else in this tab is a
            bulk supplier import; this is for "I need to add just this one
@@ -6055,6 +6059,78 @@
         '🌐 Sync Prices from Website'
       );
       loadCatalog(catalogOffset);
+    }
+
+    // Write-back direction: this catalog's sell_price -> the live embroidery.click
+    // product pages, committed via GitHub. Always previews first (dryRun) so
+    // Martin sees exactly what will change before anything touches the live
+    // site; pushPricesToWebsiteConfirm() below is the only path that actually
+    // commits, and only fires from the button inside the preview panel.
+    async function pushPricesToWebsitePreview() {
+      const btn = document.getElementById('cat-push-btn');
+      const panel = document.getElementById('cat-push-preview');
+      btn.disabled = true;
+      btn.textContent = '⬆️ Checking…';
+      panel.classList.remove('hidden');
+      panel.innerHTML = '<p class="text-sm text-amber-800">Comparing catalog prices against the live site…</p>';
+
+      try {
+        const res = await fetch('/api/push-prices-live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dryRun: true }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+
+        if (!data.changes_proposed) {
+          panel.innerHTML = '<p class="text-sm text-amber-800">✅ Live site already matches the catalog - nothing to push (' +
+            data.up_to_date + ' page(s) checked).</p>';
+        } else {
+          const rows = data.candidates.map(function (c) {
+            return '<tr><td class="pr-4 py-1 font-mono">' + c.sku + '</td>' +
+              '<td class="pr-4 py-1">£' + c.live_price + ' → £' + c.new_price + '</td></tr>';
+          }).join('');
+          panel.innerHTML =
+            '<p class="text-sm text-amber-900 font-semibold mb-2">' + data.changes_proposed + ' price(s) will change on the live site:</p>' +
+            '<table class="text-sm text-amber-900 mb-3">' + rows + '</table>' +
+            (data.codes_not_in_catalog && data.codes_not_in_catalog.length
+              ? '<p class="text-xs text-amber-700 mb-3">On the site but not in catalog: ' + data.codes_not_in_catalog.join(', ') + '</p>'
+              : '') +
+            '<div class="flex items-center gap-2">' +
+            '<button onclick="pushPricesToWebsiteConfirm(' + data.changes_proposed + ')" class="bg-amber-700 hover:bg-amber-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Confirm & push ' + data.changes_proposed + ' change(s) live</button>' +
+            '<button onclick="document.getElementById(\'cat-push-preview\').classList.add(\'hidden\')" class="text-amber-700 hover:underline text-xs font-medium">Cancel</button>' +
+            '</div>';
+        }
+      } catch (e) {
+        panel.innerHTML = '<p class="text-sm text-rose-700">Preview failed: ' + e.message + '</p>';
+      }
+
+      btn.disabled = false;
+      btn.textContent = '⬆️ Push Prices to Website';
+    }
+
+    async function pushPricesToWebsiteConfirm(count) {
+      const panel = document.getElementById('cat-push-preview');
+      panel.innerHTML = '<p class="text-sm text-amber-800">Pushing ' + count + ' price(s) to the live site…</p>';
+
+      try {
+        const res = await fetch('/api/push-prices-live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dryRun: false }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+
+        let msg = '✅ Pushed ' + data.updated + ' price(s) live.';
+        if (data.failed_commits && data.failed_commits.length) {
+          msg += ' Failed: ' + data.failed_commits.map(function (f) { return f.sku + ' (' + f.error + ')'; }).join(', ') + '.';
+        }
+        panel.innerHTML = '<p class="text-sm text-amber-900">' + msg + '</p>';
+      } catch (e) {
+        panel.innerHTML = '<p class="text-sm text-rose-700">Push failed: ' + e.message + '</p>';
+      }
     }
 
     // Minimal RFC4180 CSV parser - handles quoted fields, "" as an escaped
