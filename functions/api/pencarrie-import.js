@@ -74,6 +74,27 @@ export async function onRequest(context) {
 
     const body = await request.json().catch(() => ({}));
 
+    // ------------------------------------------------- backfillOnWebsite --
+    // One-off repair: the migration's carry-forward only carried sell_price,
+    // not on_website, so every PenCarrie product already live on the site
+    // lost that flag when its old (now-trashed) row was retired - the new
+    // exact colour/size rows all defaulted to on_website=0. This restores
+    // it: any code with an on_website=1 row sitting in Trash (the old
+    // format, id NOT LIKE 'pencarrie-%') gets on_website=1 applied to all of
+    // its live new-format rows.
+    if (body.backfillOnWebsite) {
+      const result = await db.prepare(`
+        UPDATE products
+        SET on_website = 1
+        WHERE id LIKE 'pencarrie-%' AND deleted_at IS NULL
+          AND UPPER(supplier_code) IN (
+            SELECT UPPER(supplier_code) FROM products
+            WHERE deleted_at IS NOT NULL AND on_website = 1 AND id NOT LIKE 'pencarrie-%'
+          )
+      `).run();
+      return json({ success: true, backfillOnWebsite: true, rows_updated: result.meta ? result.meta.changes : 0 });
+    }
+
     // -------------------------------------------------------- finalize --
     if (body.finalize) {
       const codes = Array.isArray(body.codes) ? [...new Set(body.codes.map((c) => String(c).trim().toUpperCase()).filter(Boolean))] : [];
