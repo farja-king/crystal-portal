@@ -6302,31 +6302,32 @@
       return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     }
 
-    // Full PenCarrie catalog import - genuine new-item + cost-price import,
-    // not just the colour/size backfill importColoursSizesFromCsv() does.
-    // Source is PenCarrie's own trade-pricing export (products-GBP.zip's
-    // products.csv) - one row per real SKU with Single/Pack/Carton List
-    // Price tiers, a VAT Rate, and a direct per-colour image URL. Carton
-    // List Price is used as cost_price (confirmed against a real invoice -
-    // Martin's account pays the Carton tier).
+    // Full PenCarrie catalog migration - switches from the old coarse
+    // size-tier/"Colours"-bucket rows to one row per exact colour + exact
+    // size (matching what PenCarrie actually charges - confirmed different
+    // colours have different Carton List Prices), same approach already
+    // used for Uneek. sell_price is carried forward from the old row whose
+    // tier covers each new row's size (colour match preferred, "Colours"
+    // bucket as fallback) - see functions/api/pencarrie-import.js for the
+    // full reasoning. Old rows are soft-deleted (recoverable from Trash),
+    // never hard-deleted.
     //
-    // Runs a full dry-run pass first (see functions/api/pencarrie-import.js)
-    // and asks for confirmation before committing anything - same
-    // dry-run-then-confirm convention as push-prices-live.js/
-    // add-product-live.js, given this touches cost pricing across the whole
-    // catalog and the account has a real history of a sync job silently
-    // corrupting prices. Re-reads the file(s) for the real pass rather than
-    // holding every parsed row in memory across both passes - slower, but
-    // avoids risking a browser OOM crash on a 200MB+ file.
+    // Runs a full dry-run pass first and requires confirmation before
+    // committing - same convention as push-prices-live.js/add-product-live.js,
+    // given this touches cost pricing across the whole catalog and the
+    // account has a real history of a sync job silently corrupting prices.
+    // Pass autoConfirm=true to skip the confirm() dialog (used for a
+    // supervised unattended run) - the dry-run summary still gets logged to
+    // both the status line and the console either way.
     async function runPenCarriePass(files, dryRun, statusPrefix) {
       const status = document.getElementById('cat-pc-catalog-status');
       const CHUNK_SIZE = 1000;
       let totalRows = 0;
       let newItems = 0;
-      let updatedItems = 0;
-      let unchangedItems = 0;
+      let carriedPrices = 0;
       let pending = [];
       const priceChanges = [];
+      const allCodes = new Set();
 
       async function flush() {
         if (!pending.length) return;
@@ -6339,9 +6340,9 @@
         if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
         totalRows += data.processed;
         newItems += data.new_items;
-        updatedItems += data.updated_items;
-        unchangedItems += data.unchanged_items;
+        carriedPrices += data.carried_prices;
         priceChanges.push(...data.sample_price_changes);
+        (data.codes || []).forEach((c) => allCodes.add(c));
         pending = [];
       }
 
@@ -6385,18 +6386,17 @@
           });
 
           if (pending.length >= CHUNK_SIZE) {
-            status.textContent = statusPrefix + totalRows + ' row(s) so far (' + newItems + ' new, ' + updatedItems + ' changed, ' + unchangedItems + ' unchanged)';
+            status.textContent = statusPrefix + totalRows + ' row(s) so far (' + newItems + ' new, ' + carriedPrices + ' price(s) carried)';
             await flush();
           }
         }
       }
       await flush();
 
-      priceChanges.sort((a, b) => Math.abs(b.new_cost - b.old_cost) - Math.abs(a.new_cost - a.old_cost));
-      return { totalRows, newItems, updatedItems, unchangedItems, priceChanges: priceChanges.slice(0, 10) };
+      return { totalRows, newItems, carriedPrices, priceChanges: priceChanges.slice(0, 10), allCodes: [...allCodes] };
     }
 
-    async function importPenCarrieCatalog() {
+    async function importPenCarrieCatalog(autoConfirm) {
       const input = document.getElementById('cat-pc-catalog-input');
       const status = document.getElementById('cat-pc-catalog-status');
       const btn = document.getElementById('cat-pc-catalog-btn');
@@ -6411,16 +6411,18 @@
         const preview = await runPenCarriePass(files, true, 'Checking… ');
         if (!preview.totalRows) throw new Error('No usable rows found - check these are the PenCarrie catalog CSV files.');
 
-        let summary = preview.totalRows + ' row(s) found: ' + preview.newItems + ' new item(s), ' +
-          preview.updatedItems + ' price change(s), ' + preview.unchangedItems + ' unchanged.';
+        let summary = preview.totalRows + ' row(s) found across ' + preview.allCodes.length + ' code(s): ' +
+          preview.newItems + ' new exact colour/size row(s), ' + preview.carriedPrices + ' sell price(s) carried forward from old rows.';
         if (preview.priceChanges.length) {
-          summary += '\n\nBiggest price changes:\n' + preview.priceChanges.map((c) =>
-            c.code + ' ' + c.colour + ' ' + c.size + ': £' + Number(c.old_cost).toFixed(2) + ' -> £' + Number(c.new_cost).toFixed(2)
+          summary += '\n\nSample:\n' + preview.priceChanges.map((c) =>
+            c.code + ' ' + c.colour + ' ' + c.size + ': cost £' + Number(c.cost).toFixed(2) +
+            (c.carried_sell_price !== null ? ', sell £' + Number(c.carried_sell_price).toFixed(2) + ' (carried)' : ', no sell price carried')
           ).join('\n');
         }
-        summary += '\n\nImport this now?';
+        summary += '\n\nImport this now? Old rows for these codes will be moved to Trash (not deleted) once the new rows are in.';
+        console.log('[pencarrie-import dry run]\n' + summary);
 
-        if (!confirm(summary)) {
+        if (!autoConfirm && !confirm(summary)) {
           status.textContent = 'Cancelled - nothing was changed. (' + preview.totalRows + ' row(s) checked.)';
           return;
         }
@@ -6428,11 +6430,30 @@
         status.textContent = 'Importing…';
         const result = await runPenCarriePass(files, false, 'Importing… ');
 
-        status.textContent = 'Done: ' + result.totalRows + ' row(s) processed - ' + result.newItems + ' new item(s), ' + result.updatedItems + ' updated.';
+        status.textContent = 'Retiring old rows for ' + result.allCodes.length + ' code(s)…';
+        let retired = 0;
+        const FIN_CHUNK = 200;
+        for (let i = 0; i < result.allCodes.length; i += FIN_CHUNK) {
+          const chunk = result.allCodes.slice(i, i + FIN_CHUNK);
+          const res = await fetch('/api/pencarrie-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ finalize: true, codes: chunk }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error('Finalize failed: ' + (data.error || ('HTTP ' + res.status)));
+          retired += data.retired_old_rows;
+          status.textContent = 'Retiring old rows… ' + Math.min(i + FIN_CHUNK, result.allCodes.length) + '/' + result.allCodes.length + ' code(s), ' + retired + ' old row(s) retired so far';
+        }
+
+        status.textContent = 'Done: ' + result.totalRows + ' row(s) processed - ' + result.newItems + ' new item(s), ' +
+          result.carriedPrices + ' price(s) carried forward, ' + retired + ' old row(s) moved to Trash.';
+        console.log('[pencarrie-import complete] ' + status.textContent);
         loadCatalog(catalogOffset);
         loadFacets();
       } catch (e) {
         status.textContent = 'Import failed: ' + e.message;
+        console.error('[pencarrie-import failed]', e);
       } finally {
         btn.disabled = false;
       }
