@@ -101,6 +101,22 @@ export async function onRequest(context) {
 
     const codes = [...new Set(rows.map((r) => String(r.code || "").trim().toUpperCase()).filter(Boolean))];
 
+    // Real colourway names PenCarrie actually uses for each code, from this
+    // chunk's own rows - lets the fallback-bucket check below be "is this
+    // old row's colour NOT a real colourway for this code" instead of
+    // guessing every placeholder label the original (unknown, pre-this-app)
+    // import might have used. Confirmed in practice: AT001's bucket row is
+    // literally "Colours", 001M's is "All Colours" - no single fixed string
+    // covers both, but neither is ever a genuine PenCarrie colourway name.
+    const newColoursByCode = new Map(); // code -> Set of uppercase colour names
+    for (const r of rows) {
+      const code = String(r.code || "").trim().toUpperCase();
+      const colour = String(r.colour || "").trim().toUpperCase();
+      if (!code || !colour) continue;
+      if (!newColoursByCode.has(code)) newColoursByCode.set(code, new Set());
+      newColoursByCode.get(code).add(colour);
+    }
+
     // Old (pre-migration) coarse rows for these codes - used to carry
     // sell_price forward. New-format rows (id LIKE 'pencarrie-%') are
     // excluded here on purpose: they're not a pricing source, they're what
@@ -183,17 +199,22 @@ export async function onRequest(context) {
       const existingId = existingNewMap.get(key);
 
       // Carry sell_price forward from whichever old row's size range covers
-      // this exact size - exact colour name match preferred, generic
-      // "Colours" bucket as fallback.
+      // this exact size - exact colour name match preferred, falling back
+      // to an old row whose colour ISN'T a real colourway PenCarrie uses for
+      // this code (i.e. it's some kind of placeholder/bucket label,
+      // whatever the original import happened to call it).
       let carriedSellPrice = null;
       const oldRows = oldRowsByCode.get(code) || [];
+      const realColoursForCode = newColoursByCode.get(code);
+      const sizeUpper = size.toUpperCase();
       let bestMatch = null;
       for (const old of oldRows) {
-        const sizeSet = expandSizeRange(old.size);
-        if (!sizeSet.includes(size.toUpperCase())) continue;
+        const oldSizeUpper = String(old.size || "").trim().toUpperCase();
+        const sizeMatches = oldSizeUpper === "ALL" || expandSizeRange(old.size).includes(sizeUpper);
+        if (!sizeMatches) continue;
         const oldColourUpper = String(old.colour || "").trim().toUpperCase();
         if (oldColourUpper === colour.toUpperCase()) { bestMatch = old; break; } // exact colour wins outright
-        if (oldColourUpper === "COLOURS" && !bestMatch) bestMatch = old; // generic bucket fallback
+        if (!bestMatch && realColoursForCode && !realColoursForCode.has(oldColourUpper)) bestMatch = old; // not a real colourway -> it's a bucket row
       }
       if (bestMatch && bestMatch.sell_price !== null && bestMatch.sell_price !== undefined) {
         carriedSellPrice = Number(bestMatch.sell_price);
