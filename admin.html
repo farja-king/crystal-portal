@@ -6308,9 +6308,94 @@
     // products.csv) - one row per real SKU with Single/Pack/Carton List
     // Price tiers, a VAT Rate, and a direct per-colour image URL. Carton
     // List Price is used as cost_price (confirmed against a real invoice -
-    // Martin's account pays the Carton tier). Posted to the server in
-    // chunks (not all rows in one request) since this file can be 200MB+
-    // and hundreds of thousands of rows once parsed.
+    // Martin's account pays the Carton tier).
+    //
+    // Runs a full dry-run pass first (see functions/api/pencarrie-import.js)
+    // and asks for confirmation before committing anything - same
+    // dry-run-then-confirm convention as push-prices-live.js/
+    // add-product-live.js, given this touches cost pricing across the whole
+    // catalog and the account has a real history of a sync job silently
+    // corrupting prices. Re-reads the file(s) for the real pass rather than
+    // holding every parsed row in memory across both passes - slower, but
+    // avoids risking a browser OOM crash on a 200MB+ file.
+    async function runPenCarriePass(files, dryRun, statusPrefix) {
+      const status = document.getElementById('cat-pc-catalog-status');
+      const CHUNK_SIZE = 1000;
+      let totalRows = 0;
+      let newItems = 0;
+      let updatedItems = 0;
+      let unchangedItems = 0;
+      let pending = [];
+      const priceChanges = [];
+
+      async function flush() {
+        if (!pending.length) return;
+        const res = await fetch('/api/pencarrie-import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dryRun, rows: pending }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+        totalRows += data.processed;
+        newItems += data.new_items;
+        updatedItems += data.updated_items;
+        unchangedItems += data.unchanged_items;
+        priceChanges.push(...data.sample_price_changes);
+        pending = [];
+      }
+
+      for (let f = 0; f < files.length; f++) {
+        status.textContent = statusPrefix + 'reading ' + files[f].name + ' (' + (f + 1) + '/' + files.length + ')…';
+        const text = await files[f].text();
+        const rows = parseCsv(text);
+        if (!rows.length) continue;
+
+        const header = rows[0];
+        const col = (name) => header.indexOf(name);
+        const codeIdx = col('Style Code');
+        const titleIdx = col('Title');
+        const brandIdx = col('Brand');
+        const typeIdx = col('Type');
+        const colourIdx = col('Colourway Name');
+        const colourCodeIdx = col('Colourway Code');
+        const sizeIdx = col('Size');
+        const priceIdx = col('Carton List Price');
+        const vatIdx = col('VAT Rate');
+        const imageIdx = col('Front Image');
+        if (codeIdx === -1 || priceIdx === -1) throw new Error('Missing expected columns in ' + files[f].name + ' - is this the PenCarrie catalog CSV?');
+
+        for (let r = 1; r < rows.length; r++) {
+          const cols = rows[r];
+          const code = (cols[codeIdx] || '').trim();
+          const price = Number(cols[priceIdx]);
+          if (!code || !isFinite(price)) continue;
+
+          pending.push({
+            code,
+            title: (cols[titleIdx] || '').trim(),
+            brand: (cols[brandIdx] || '').trim(),
+            category: (cols[typeIdx] || '').trim(),
+            colour: (cols[colourIdx] || '').trim(),
+            colour_code: (cols[colourCodeIdx] || '').trim(),
+            size: (cols[sizeIdx] || '').trim(),
+            cost_price: price,
+            vat_rate: vatIdx !== -1 && cols[vatIdx] !== '' ? Number(cols[vatIdx]) / 100 : 0.2,
+            image_url: (cols[imageIdx] || '').trim(),
+          });
+
+          if (pending.length >= CHUNK_SIZE) {
+            status.textContent = statusPrefix + totalRows + ' row(s) so far (' + newItems + ' new, ' + updatedItems + ' changed, ' + unchangedItems + ' unchanged)';
+            await flush();
+          }
+        }
+      }
+      await flush();
+
+      priceChanges.sort((a, b) => Math.abs(b.new_cost - b.old_cost) - Math.abs(a.new_cost - a.old_cost));
+      return { totalRows, newItems, updatedItems, unchangedItems, priceChanges: priceChanges.slice(0, 10) };
+    }
+
     async function importPenCarrieCatalog() {
       const input = document.getElementById('cat-pc-catalog-input');
       const status = document.getElementById('cat-pc-catalog-status');
@@ -6321,83 +6406,33 @@
       btn.disabled = true;
       status.classList.remove('hidden');
 
-      const CHUNK_SIZE = 1000;
-      let totalRows = 0;
-      let newItems = 0;
-      let updatedItems = 0;
-      let pending = [];
-
-      async function flush() {
-        if (!pending.length) return;
-        const res = await fetch('/api/pencarrie-import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rows: pending }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
-        totalRows += data.processed;
-        newItems += data.new_items;
-        updatedItems += data.updated_items;
-        pending = [];
-      }
-
       try {
-        for (let f = 0; f < files.length; f++) {
-          status.textContent = 'Reading ' + files[f].name + ' (' + (f + 1) + '/' + files.length + ')…';
-          const text = await files[f].text();
-          const rows = parseCsv(text);
-          if (!rows.length) continue;
+        status.textContent = 'Checking (dry run)…';
+        const preview = await runPenCarriePass(files, true, 'Checking… ');
+        if (!preview.totalRows) throw new Error('No usable rows found - check these are the PenCarrie catalog CSV files.');
 
-          const header = rows[0];
-          const col = (name) => header.indexOf(name);
-          const codeIdx = col('Style Code');
-          const titleIdx = col('Title');
-          const brandIdx = col('Brand');
-          const typeIdx = col('Type');
-          const colourIdx = col('Colourway Name');
-          const colourCodeIdx = col('Colourway Code');
-          const sizeIdx = col('Size');
-          const priceIdx = col('Carton List Price');
-          const vatIdx = col('VAT Rate');
-          const imageIdx = col('Front Image');
-          if (codeIdx === -1 || priceIdx === -1) throw new Error('Missing expected columns in ' + files[f].name + ' - is this the PenCarrie catalog CSV?');
-
-          for (let r = 1; r < rows.length; r++) {
-            const cols = rows[r];
-            const code = (cols[codeIdx] || '').trim();
-            const price = Number(cols[priceIdx]);
-            if (!code || !isFinite(price)) continue;
-
-            pending.push({
-              code,
-              title: (cols[titleIdx] || '').trim(),
-              brand: (cols[brandIdx] || '').trim(),
-              category: (cols[typeIdx] || '').trim(),
-              colour: (cols[colourIdx] || '').trim(),
-              colour_code: (cols[colourCodeIdx] || '').trim(),
-              size: (cols[sizeIdx] || '').trim(),
-              cost_price: price,
-              vat_rate: vatIdx !== -1 && cols[vatIdx] !== '' ? Number(cols[vatIdx]) / 100 : 0.2,
-              image_url: (cols[imageIdx] || '').trim(),
-            });
-
-            if (pending.length >= CHUNK_SIZE) {
-              status.textContent = 'Uploading… ' + totalRows + ' row(s) so far (' + newItems + ' new, ' + updatedItems + ' updated)';
-              await flush();
-            }
-          }
+        let summary = preview.totalRows + ' row(s) found: ' + preview.newItems + ' new item(s), ' +
+          preview.updatedItems + ' price change(s), ' + preview.unchangedItems + ' unchanged.';
+        if (preview.priceChanges.length) {
+          summary += '\n\nBiggest price changes:\n' + preview.priceChanges.map((c) =>
+            c.code + ' ' + c.colour + ' ' + c.size + ': £' + Number(c.old_cost).toFixed(2) + ' -> £' + Number(c.new_cost).toFixed(2)
+          ).join('\n');
         }
-        status.textContent = 'Uploading final batch…';
-        await flush();
+        summary += '\n\nImport this now?';
 
-        if (!totalRows) throw new Error('No usable rows found - check these are the PenCarrie catalog CSV files.');
+        if (!confirm(summary)) {
+          status.textContent = 'Cancelled - nothing was changed. (' + preview.totalRows + ' row(s) checked.)';
+          return;
+        }
 
-        status.textContent = 'Done: ' + totalRows + ' row(s) processed - ' + newItems + ' new item(s), ' + updatedItems + ' updated.';
+        status.textContent = 'Importing…';
+        const result = await runPenCarriePass(files, false, 'Importing… ');
+
+        status.textContent = 'Done: ' + result.totalRows + ' row(s) processed - ' + result.newItems + ' new item(s), ' + result.updatedItems + ' updated.';
         loadCatalog(catalogOffset);
         loadFacets();
       } catch (e) {
-        status.textContent = 'Import failed: ' + e.message + (totalRows ? ' (' + totalRows + ' row(s) already saved before the error)' : '');
+        status.textContent = 'Import failed: ' + e.message;
       } finally {
         btn.disabled = false;
       }
