@@ -74,6 +74,72 @@ export async function onRequest(context) {
 
     const body = await request.json().catch(() => ({}));
 
+    // --------------------------------------------- repairMigrationFields --
+    // Follow-up audit after the on_website bug: the migration's INSERT
+    // hardcodes supplier_ref='' and active=1 on every new row, never reading
+    // them from the old row it's superseding - same class of bug as
+    // on_website, just for fields that (unlike on_website) vary rarely
+    // enough that a spot-check hadn't caught them yet. Confirmed via a
+    // sample of Trash: ~18% of old rows have a real supplier_ref (e.g.
+    // "TFC100") that every new row for that code was silently dropping.
+    // These are code-level attributes (same for every colour/size of a
+    // code), so one old row's value is applied to all of that code's new
+    // rows - order among multiple old rows for the same code doesn't matter
+    // here since they'd already agree.
+    if (body.repairMigrationFields) {
+      const refResult = await db.prepare(`
+        UPDATE products
+        SET supplier_ref = (
+          SELECT p2.supplier_ref FROM products p2
+          WHERE p2.deleted_at IS NOT NULL AND p2.id NOT LIKE 'pencarrie-%'
+            AND UPPER(p2.supplier_code) = UPPER(products.supplier_code)
+            AND p2.supplier_ref IS NOT NULL AND p2.supplier_ref <> ''
+          LIMIT 1
+        )
+        WHERE id LIKE 'pencarrie-%' AND deleted_at IS NULL
+          AND (supplier_ref IS NULL OR supplier_ref = '')
+          AND UPPER(supplier_code) IN (
+            SELECT UPPER(supplier_code) FROM products
+            WHERE deleted_at IS NOT NULL AND id NOT LIKE 'pencarrie-%' AND supplier_ref IS NOT NULL AND supplier_ref <> ''
+          )
+      `).run();
+
+      const inactiveResult = await db.prepare(`
+        UPDATE products
+        SET active = 0
+        WHERE id LIKE 'pencarrie-%' AND deleted_at IS NULL AND active = 1
+          AND UPPER(supplier_code) IN (
+            SELECT UPPER(supplier_code) FROM products
+            WHERE deleted_at IS NOT NULL AND id NOT LIKE 'pencarrie-%' AND active = 0
+          )
+      `).run();
+
+      const surchargeResult = await db.prepare(`
+        UPDATE products
+        SET surcharge_category = (
+          SELECT p2.surcharge_category FROM products p2
+          WHERE p2.deleted_at IS NOT NULL AND p2.id NOT LIKE 'pencarrie-%'
+            AND UPPER(p2.supplier_code) = UPPER(products.supplier_code)
+            AND p2.surcharge_category IS NOT NULL AND p2.surcharge_category <> ''
+          LIMIT 1
+        )
+        WHERE id LIKE 'pencarrie-%' AND deleted_at IS NULL
+          AND (surcharge_category IS NULL OR surcharge_category = '')
+          AND UPPER(supplier_code) IN (
+            SELECT UPPER(supplier_code) FROM products
+            WHERE deleted_at IS NOT NULL AND id NOT LIKE 'pencarrie-%' AND surcharge_category IS NOT NULL AND surcharge_category <> ''
+          )
+      `).run();
+
+      return json({
+        success: true,
+        repairMigrationFields: true,
+        supplier_ref_rows_updated: refResult.meta ? refResult.meta.changes : 0,
+        deactivated_rows: inactiveResult.meta ? inactiveResult.meta.changes : 0,
+        surcharge_category_rows_updated: surchargeResult.meta ? surchargeResult.meta.changes : 0,
+      });
+    }
+
     // ------------------------------------------------- backfillOnWebsite --
     // One-off repair: the migration's carry-forward only carried sell_price,
     // not on_website, so every PenCarrie product already live on the site
@@ -183,7 +249,6 @@ export async function onRequest(context) {
         category = excluded.category,
         cost_price = excluded.cost_price,
         vat_rate = excluded.vat_rate,
-        active = excluded.active,
         image_url = excluded.image_url,
         colour_code = excluded.colour_code,
         sell_price = CASE WHEN products.sell_price IS NULL THEN excluded.sell_price ELSE products.sell_price END,
