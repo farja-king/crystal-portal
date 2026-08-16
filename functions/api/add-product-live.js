@@ -350,36 +350,52 @@ export async function onRequest(context) {
       material = firstColour.material || "";
       weight = firstColour.weight || "";
 
-      IMG_BASE = `https://www.fullcollection.com/storage/phoenix/2026/Phoenix%20All%20Images/${encodeURIComponent(brand)}/Product%20Images/${code}/ProductCarouselMain/`;
+      // Prefer image URLs already stored from the full PenCarrie catalog
+      // import (functions/api/pencarrie-import.js) - those come directly
+      // from PenCarrie's own trade export, already resolved, no guessing.
+      // Only fall back to the old CDN-filename-guessing/HEAD-check dance
+      // for catalog rows that predate that import (or a code the import
+      // hasn't covered yet).
+      const dbColourRows = await db.prepare(
+        "SELECT DISTINCT colour, colour_code, image_url FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND image_url IS NOT NULL AND image_url <> ''"
+      ).bind(code).all();
 
-      // Resolve each colour's real image filename - HEAD-checked against
-      // the actual CDN rather than assumed, since the suffix isn't always
-      // "FRONT.jpg" (some are "FRONT 1.jpg" - see RX151's own template).
-      colours = [];
-      for (const bc of brandColours) {
-        const colourName = bc.name;
-        const colourCode = bc.code;
-        if (!colourName || !colourCode) continue;
+      if (dbColourRows.results && dbColourRows.results.length) {
+        IMG_BASE = "";
+        colours = dbColourRows.results.map((r) => ({ name: r.colour, code: r.colour_code || "", file: r.image_url, resolved: true }));
+        resolvedColours = colours;
+      } else {
+        IMG_BASE = `https://www.fullcollection.com/storage/phoenix/2026/Phoenix%20All%20Images/${encodeURIComponent(brand)}/Product%20Images/${code}/ProductCarouselMain/`;
 
-        const candidates = [
-          `${code}%20${colourCode}%20FRONT.jpg`,
-          `${code}%20${colourCode}%20FRONT%201.jpg`,
-        ];
-        let resolvedFile = null;
-        for (const candidate of candidates) {
-          try {
-            const headRes = await fetch(IMG_BASE + candidate, { method: "HEAD" });
-            if (headRes.ok) { resolvedFile = candidate; break; }
-          } catch {
-            // try the next candidate
+        // Resolve each colour's real image filename - HEAD-checked against
+        // the actual CDN rather than assumed, since the suffix isn't always
+        // "FRONT.jpg" (some are "FRONT 1.jpg" - see RX151's own template).
+        colours = [];
+        for (const bc of brandColours) {
+          const colourName = bc.name;
+          const colourCode = bc.code;
+          if (!colourName || !colourCode) continue;
+
+          const candidates = [
+            `${code}%20${colourCode}%20FRONT.jpg`,
+            `${code}%20${colourCode}%20FRONT%201.jpg`,
+          ];
+          let resolvedFile = null;
+          for (const candidate of candidates) {
+            try {
+              const headRes = await fetch(IMG_BASE + candidate, { method: "HEAD" });
+              if (headRes.ok) { resolvedFile = candidate; break; }
+            } catch {
+              // try the next candidate
+            }
           }
+          colours.push({ name: colourName, code: colourCode, file: resolvedFile, resolved: !!resolvedFile });
         }
-        colours.push({ name: colourName, code: colourCode, file: resolvedFile, resolved: !!resolvedFile });
-      }
 
-      resolvedColours = colours.filter((c) => c.resolved);
-      if (!resolvedColours.length) {
-        return json({ error: `Could not resolve a working image for any colour of ${code} - PenCarrie's CDN layout may not match the expected pattern` }, 502);
+        resolvedColours = colours.filter((c) => c.resolved);
+        if (!resolvedColours.length) {
+          return json({ error: `Could not resolve a working image for any colour of ${code} - PenCarrie's CDN layout may not match the expected pattern` }, 502);
+        }
       }
       mainColour = resolvedColours[0];
       mainImageUrl = IMG_BASE + mainColour.file;

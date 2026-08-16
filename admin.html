@@ -566,9 +566,10 @@
         <p id="cat-add-msg" class="text-xs text-red-600 md:col-span-4"></p>
       </div>
 
-      <!-- Three compact action boxes: import colours/sizes (PenCarrie CSV),
-           import UNEEK (stub - not built yet), bulk pricing. -->
-      <div class="grid gap-4 md:grid-cols-3 mb-6">
+      <!-- Four compact action boxes: import colours/sizes (PenCarrie CSV),
+           import full PenCarrie catalog (new items + pricing), import UNEEK,
+           bulk pricing. -->
+      <div class="grid gap-4 md:grid-cols-4 mb-6">
         <!-- Colour/size import from PenCarrie's own CSV price-list export -
              see importColoursSizesFromCsv(). Not rate-limited like the live
              PenCarrie sync, since it's a pure DB write once parsed. -->
@@ -580,6 +581,23 @@
             Import
           </button>
           <p id="cat-csv-status" class="text-xs mt-2 hidden"></p>
+        </div>
+
+        <!-- Full PenCarrie catalog import (new items + Carton List Price) -
+             see importPenCarrieCatalog()/functions/api/pencarrie-import.js.
+             A completely different, richer export than the colours/sizes
+             file above (products-GBP.zip's products.csv) - genuine trade
+             pricing at three quantity tiers plus resolved per-colour image
+             URLs, one row per real SKU. Accepts multiple files since the
+             export can be 200MB+ as a single file. -->
+        <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4">
+          <h3 class="font-bold text-slate-900 mb-1 text-sm">Import PenCarrie catalog</h3>
+          <p class="text-xs text-slate-600 mb-2">Full trade price list - new items + Carton List Price as cost.</p>
+          <input id="cat-pc-catalog-input" type="file" accept=".csv" multiple class="text-xs w-full mb-2" />
+          <button id="cat-pc-catalog-btn" onclick="importPenCarrieCatalog()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm">
+            Import
+          </button>
+          <p id="cat-pc-catalog-status" class="text-xs mt-2 hidden"></p>
         </div>
 
         <!-- UNEEK import - see importUneekCsv(). Their account-specific
@@ -6282,6 +6300,107 @@
 
     function slugify(s) {
       return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    }
+
+    // Full PenCarrie catalog import - genuine new-item + cost-price import,
+    // not just the colour/size backfill importColoursSizesFromCsv() does.
+    // Source is PenCarrie's own trade-pricing export (products-GBP.zip's
+    // products.csv) - one row per real SKU with Single/Pack/Carton List
+    // Price tiers, a VAT Rate, and a direct per-colour image URL. Carton
+    // List Price is used as cost_price (confirmed against a real invoice -
+    // Martin's account pays the Carton tier). Posted to the server in
+    // chunks (not all rows in one request) since this file can be 200MB+
+    // and hundreds of thousands of rows once parsed.
+    async function importPenCarrieCatalog() {
+      const input = document.getElementById('cat-pc-catalog-input');
+      const status = document.getElementById('cat-pc-catalog-status');
+      const btn = document.getElementById('cat-pc-catalog-btn');
+      const files = input.files;
+      if (!files || !files.length) { status.classList.remove('hidden'); status.textContent = 'Choose the PenCarrie catalog CSV file(s) first.'; return; }
+
+      btn.disabled = true;
+      status.classList.remove('hidden');
+
+      const CHUNK_SIZE = 1000;
+      let totalRows = 0;
+      let newItems = 0;
+      let updatedItems = 0;
+      let pending = [];
+
+      async function flush() {
+        if (!pending.length) return;
+        const res = await fetch('/api/pencarrie-import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: pending }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+        totalRows += data.processed;
+        newItems += data.new_items;
+        updatedItems += data.updated_items;
+        pending = [];
+      }
+
+      try {
+        for (let f = 0; f < files.length; f++) {
+          status.textContent = 'Reading ' + files[f].name + ' (' + (f + 1) + '/' + files.length + ')…';
+          const text = await files[f].text();
+          const rows = parseCsv(text);
+          if (!rows.length) continue;
+
+          const header = rows[0];
+          const col = (name) => header.indexOf(name);
+          const codeIdx = col('Style Code');
+          const titleIdx = col('Title');
+          const brandIdx = col('Brand');
+          const typeIdx = col('Type');
+          const colourIdx = col('Colourway Name');
+          const colourCodeIdx = col('Colourway Code');
+          const sizeIdx = col('Size');
+          const priceIdx = col('Carton List Price');
+          const vatIdx = col('VAT Rate');
+          const imageIdx = col('Front Image');
+          if (codeIdx === -1 || priceIdx === -1) throw new Error('Missing expected columns in ' + files[f].name + ' - is this the PenCarrie catalog CSV?');
+
+          for (let r = 1; r < rows.length; r++) {
+            const cols = rows[r];
+            const code = (cols[codeIdx] || '').trim();
+            const price = Number(cols[priceIdx]);
+            if (!code || !isFinite(price)) continue;
+
+            pending.push({
+              code,
+              title: (cols[titleIdx] || '').trim(),
+              brand: (cols[brandIdx] || '').trim(),
+              category: (cols[typeIdx] || '').trim(),
+              colour: (cols[colourIdx] || '').trim(),
+              colour_code: (cols[colourCodeIdx] || '').trim(),
+              size: (cols[sizeIdx] || '').trim(),
+              cost_price: price,
+              vat_rate: vatIdx !== -1 && cols[vatIdx] !== '' ? Number(cols[vatIdx]) / 100 : 0.2,
+              image_url: (cols[imageIdx] || '').trim(),
+            });
+
+            if (pending.length >= CHUNK_SIZE) {
+              status.textContent = 'Uploading… ' + totalRows + ' row(s) so far (' + newItems + ' new, ' + updatedItems + ' updated)';
+              await flush();
+            }
+          }
+        }
+        status.textContent = 'Uploading final batch…';
+        await flush();
+
+        if (!totalRows) throw new Error('No usable rows found - check these are the PenCarrie catalog CSV files.');
+
+        status.textContent = 'Done: ' + totalRows + ' row(s) processed - ' + newItems + ' new item(s), ' + updatedItems + ' updated.';
+        loadCatalog(catalogOffset);
+        loadFacets();
+      } catch (e) {
+        status.textContent = 'Import failed: ' + e.message + (totalRows ? ' (' + totalRows + ' row(s) already saved before the error)' : '');
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     // UNEEK's account-specific product data export is one row per actual
