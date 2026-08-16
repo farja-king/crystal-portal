@@ -1818,7 +1818,21 @@
         <input id="ord-nc-company" placeholder="Company" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         <input id="ord-nc-email" placeholder="Email" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
         <input id="ord-nc-phone" placeholder="Phone" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
-        <div class="flex gap-2">
+        <select id="ord-nc-type" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm">
+          <option value="Retail">Retail</option>
+          <option value="Trade">Trade</option>
+        </select>
+        <!-- Same address fields as the full Customers tab's edit/add form
+             (edit-address1 etc, admin.html ~357-373) - this panel used to
+             only collect name/company/email/phone, so a customer added
+             here had no address at all unless someone later opened them in
+             the Customers tab and filled it in by hand. -->
+        <input id="ord-nc-address1" placeholder="Address line 1" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
+        <input id="ord-nc-address2" placeholder="Address line 2" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
+        <input id="ord-nc-city" placeholder="Town/City" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <input id="ord-nc-county" placeholder="County" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm md:col-span-2" />
+        <input id="ord-nc-postcode" placeholder="Postcode" class="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 text-sm" />
+        <div class="flex gap-2 md:col-span-2">
           <button type="button" onclick="saveNewCustomerFromOrder()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-semibold">Save</button>
           <button type="button" onclick="toggleNewCustomerPanel()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-sm font-semibold">✕</button>
         </div>
@@ -1860,7 +1874,15 @@
       </div>
 
       <label class="text-sm block mb-4">
-        <span class="block font-medium text-slate-700 mb-1">Notes</span>
+        <span class="flex items-center justify-between mb-1">
+          <span class="font-medium text-slate-700">Notes</span>
+          <!-- Appends (never overwrites) the standard "what happens next"
+               wording Martin asked for - see insertStandardOrderNotes().
+               This textarea's value goes straight into the customer-facing
+               quote/invoice email (functions/api/send-email.js), so what's
+               inserted here is customer-facing copy, not an internal note. -->
+          <button type="button" onclick="insertStandardOrderNotes()" class="text-xs text-indigo-600 hover:underline font-medium">+ Insert standard notes</button>
+        </span>
         <textarea id="ord-notes" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" placeholder="Artwork notes, turnaround, special instructions…"></textarea>
       </label>
 
@@ -7481,7 +7503,8 @@
       if (!panel.classList.contains('hidden')) {
         document.getElementById('ord-nc-name').focus();
       } else {
-        ['ord-nc-name', 'ord-nc-company', 'ord-nc-email', 'ord-nc-phone'].forEach((id) => { document.getElementById(id).value = ''; });
+        ['ord-nc-name', 'ord-nc-company', 'ord-nc-email', 'ord-nc-phone', 'ord-nc-address1', 'ord-nc-address2', 'ord-nc-city', 'ord-nc-county', 'ord-nc-postcode'].forEach((id) => { document.getElementById(id).value = ''; });
+        document.getElementById('ord-nc-type').value = 'Retail';
         document.getElementById('ord-nc-msg').textContent = '';
         document.getElementById('ord-nc-dupe-warning').classList.add('hidden');
       }
@@ -7554,8 +7577,13 @@
         company,
         email,
         phone,
-        type: 'Retail',
+        type: document.getElementById('ord-nc-type').value,
         discount_pct: 0,
+        address_1: document.getElementById('ord-nc-address1').value.trim(),
+        address_2: document.getElementById('ord-nc-address2').value.trim(),
+        city: document.getElementById('ord-nc-city').value.trim(),
+        county: document.getElementById('ord-nc-county').value.trim(),
+        postcode: document.getElementById('ord-nc-postcode').value.trim(),
         notes: '',
       };
 
@@ -7573,6 +7601,19 @@
       } catch (e) {
         msg.textContent = 'Could not save: ' + e.message;
       }
+    }
+
+    // Standard "what happens next" wording for the Notes field - it's
+    // customer-facing (rendered straight into the quote/invoice email, see
+    // send-email.js), so this is copy, not an internal reminder. Appends
+    // rather than overwrites, in case Martin's already typed something else
+    // in there - on its own line if the box isn't empty.
+    const STANDARD_ORDER_NOTES = 'Once accepted, an invoice will be automatically generated and emailed to you. Once paid (bank transfer preferred), we will arrange for your logo to be set up and send you a copy for approval. Once approved, we will commence decoration of your garments.';
+    function insertStandardOrderNotes() {
+      const el = document.getElementById('ord-notes');
+      const existing = el.value.trim();
+      el.value = existing ? existing + '\n\n' + STANDARD_ORDER_NOTES : STANDARD_ORDER_NOTES;
+      el.focus();
     }
 
     function addOrderLine(source) {
