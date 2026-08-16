@@ -1906,6 +1906,17 @@
       </div>
       <p id="ord-design-proofs-hint" class="text-xs text-red-600 font-bold mb-4">Save this quote first, then you'll be able to attach a design proof to it.</p>
 
+      <!-- Internal-only markup indicator - never saved to the order, never
+           sent to the customer (see computeOrderProfit/renderOrderTotals),
+           purely a client-side readout while building the quote/invoice.
+           Garment cost vs garment sell price only - decoration (DTF/
+           embroidery) has no cost tracked, so its revenue is deliberately
+           excluded rather than counted as 100% margin. -->
+      <div class="bg-amber-50 rounded-xl border border-dashed border-amber-300 p-3 mb-3 text-sm text-amber-900 flex flex-wrap items-center justify-between gap-2">
+        <span>🔒 Your margin <span class="text-xs text-amber-700">(internal only - not shown or sent to the customer; garment cost vs sell price only, decoration not costed)</span></span>
+        <span class="font-semibold">Cost <span id="ord-profit-cost">£0.00</span> · Profit <span id="ord-profit-amount">£0.00</span> <span id="ord-profit-pct">(0%)</span></span>
+      </div>
+
       <div class="bg-slate-50 rounded-xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
         <div class="text-sm text-slate-600 space-y-0.5">
           <div>Subtotal: <span id="ord-subtotal" class="font-semibold text-slate-900">£0.00</span></div>
@@ -7620,6 +7631,7 @@
       orderLines.push({
         source,
         product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0,
+        cost_price: 0, vat_rate: 0.2,
         description: '',
         qty: 1,
         // Catalog rows are often a pricing tier, not one physical garment -
@@ -7782,6 +7794,10 @@
       Object.assign(orderLines[idx], {
         product_id: p.id, supplier_code: p.supplier_code, title: p.title,
         colour: p.colour, size: p.size, unit_price: Number(p.sell_price) || 0,
+        // cost_price/vat_rate - not shown/sent anywhere customer-facing,
+        // only feeds the internal-only margin line at the bottom of the
+        // builder (see computeOrderProfit/renderOrderTotals).
+        cost_price: Number(p.cost_price) || 0, vat_rate: p.vat_rate ?? 0.2,
         breakdown: [{ colour: specificColour, size: specificSize, qty: 1, decorations: [] }],
         colourOptions: [], sizeOptions: [],
       });
@@ -7813,6 +7829,7 @@
         product_id: p.id, supplier_code: p.supplier_code,
         title: isGarment ? p.title : (p.size ? (p.title + ' - ' + p.size) : p.title),
         colour: '', size: '', unit_price: Number(p.sell_price) || 0,
+        cost_price: Number(p.cost_price) || 0, vat_rate: p.vat_rate ?? 0.2,
         breakdown: [{ colour: p.colour || '', size: p.size || '', qty: 1, decorations: [] }],
         colourOptions: [], sizeOptions: [],
         customer_item: !isGarment,
@@ -8036,6 +8053,7 @@
         Object.assign(orderLines[idx], {
           product_id: data.id, supplier_code: code, title,
           colour, size, unit_price: Number(price) || 0,
+          cost_price: cost, vat_rate: 0.2,
           breakdown: [{ colour, size, qty: 1, decorations: [] }],
           colourOptions: [], sizeOptions: [],
           customer_item: !!targetCustomerId,
@@ -8130,7 +8148,7 @@
     }
 
     function clearOrderLineProduct(idx) {
-      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, breakdown: [{ colour: '', size: '', qty: 1, decorations: [] }], colourOptions: [], sizeOptions: [], customer_item: false });
+      Object.assign(orderLines[idx], { product_id: null, supplier_code: '', title: '', colour: '', size: '', unit_price: 0, cost_price: 0, vat_rate: 0.2, breakdown: [{ colour: '', size: '', qty: 1, decorations: [] }], colourOptions: [], sizeOptions: [], customer_item: false });
       orderLineOpenVariantPicker = null;
       delete orderCustomerItemQuery[idx];
       renderOrderLines();
@@ -8528,6 +8546,36 @@
       const depositRow = document.getElementById('ord-deposit-row');
       depositRow.classList.toggle('hidden', depositDue <= 0);
       document.getElementById('ord-deposit-due').textContent = money(depositDue);
+
+      const { cost, profit, marginPct } = computeOrderProfit();
+      document.getElementById('ord-profit-cost').textContent = money(cost);
+      document.getElementById('ord-profit-amount').textContent = money(profit);
+      document.getElementById('ord-profit-pct').textContent = '(' + marginPct.toFixed(1) + '%)';
+    }
+
+    // Garment cost vs garment sell price, internal-only - see the note above
+    // the "Your margin" box in the builder HTML. "Real profit" here matches
+    // the same formula used everywhere else in the app (Garment Catalog,
+    // stock): Sell − Cost×(1+VAT), since VAT paid to suppliers isn't
+    // reclaimable. Lines with no cost_price tracked (customer-supplied
+    // garments, or a line added before this feature existed) are skipped
+    // entirely rather than costed at £0, so they don't inflate the margin.
+    function computeOrderProfit() {
+      let sell = 0, cost = 0;
+      for (const line of orderLines) {
+        const unitCost = Number(line.cost_price) || 0;
+        if (!unitCost) continue;
+        const vatRate = line.vat_rate ?? 0.2;
+        const isGarmentLine = line.source === 'catalog' && !line.customer_item;
+        const qty = isGarmentLine
+          ? (line.breakdown || []).reduce((s, b) => s + (Number(b.qty) || 0), 0)
+          : lineQty(line);
+        sell += qty * (Number(line.unit_price) || 0);
+        cost += qty * unitCost * (1 + vatRate);
+      }
+      const profit = sell - cost;
+      const marginPct = sell > 0 ? (profit / sell) * 100 : 0;
+      return { cost, profit, marginPct };
     }
 
     // Set while editing an existing quote/invoice in the builder (see
