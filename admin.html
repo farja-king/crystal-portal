@@ -518,7 +518,15 @@
           <button onclick="toggleAddProductForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Product
           </button>
-          <button id="cat-sync-btn" onclick="syncColoursFromPenCarrie()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
+          <!-- Hidden 2026-08-16 (not removed - see syncColoursFromPenCarrie()
+               below and functions/api/sync-colours.js) - superseded by the
+               "Import PenCarrie catalog" tool, which now writes real
+               colour/size data directly onto every catalog row it creates.
+               This button's job (filling available_colours/available_sizes
+               for the order-builder dropdowns) is now redundant for any
+               code that's gone through the new import; kept in code only in
+               case of a future gap or partial rollback. -->
+          <button id="cat-sync-btn" onclick="syncColoursFromPenCarrie()" class="hidden bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm items-center gap-2">
             🎨 Sync Colours/Sizes
           </button>
           <button id="cat-push-btn" onclick="pushPricesToWebsitePreview()" class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
@@ -566,14 +574,16 @@
         <p id="cat-add-msg" class="text-xs text-red-600 md:col-span-4"></p>
       </div>
 
-      <!-- Four compact action boxes: import colours/sizes (PenCarrie CSV),
-           import full PenCarrie catalog (new items + pricing), import UNEEK,
-           bulk pricing. -->
-      <div class="grid gap-4 md:grid-cols-4 mb-6">
-        <!-- Colour/size import from PenCarrie's own CSV price-list export -
-             see importColoursSizesFromCsv(). Not rate-limited like the live
-             PenCarrie sync, since it's a pure DB write once parsed. -->
-        <div class="bg-indigo-50 rounded-xl border border-indigo-200 p-4">
+      <!-- Three compact action boxes: import full PenCarrie catalog (new
+           items + pricing), import UNEEK, bulk pricing. -->
+      <div class="grid gap-4 md:grid-cols-3 mb-6">
+        <!-- Hidden 2026-08-16 (not removed - see importColoursSizesFromCsv()
+             below and functions/api/import-colours-sizes.js) - superseded by
+             the "Import PenCarrie catalog" box, same reasoning as the green
+             Sync Colours/Sizes button above. Colour/size import from
+             PenCarrie's own CSV price-list export, not rate-limited like the
+             live PenCarrie sync since it's a pure DB write once parsed. -->
+        <div class="hidden bg-indigo-50 rounded-xl border border-indigo-200 p-4">
           <h3 class="font-bold text-slate-900 mb-1 text-sm">Import colours/sizes</h3>
           <p class="text-xs text-slate-600 mb-2">PenCarrie's <code>products-NN.csv</code> files - fills colour/size dropdowns, no rate limit.</p>
           <input id="cat-csv-input" type="file" accept=".csv" multiple class="text-xs w-full mb-2" />
