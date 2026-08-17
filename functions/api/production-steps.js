@@ -24,14 +24,28 @@ export async function onRequest(context) {
   const json = (body, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-  // notify: true for the two milestones a customer actually cares about
-  // hearing from us about - the middle two are useful for Martin to track
-  // but not the kind of thing worth an email each time. Fully editable
-  // afterward, same as everything else about these steps.
+  // notify: true for the milestones a customer actually cares about hearing
+  // from us about - the rest are useful for Martin to track but not the
+  // kind of thing worth an email each time. Fully editable afterward, same
+  // as everything else about these steps. Only affects trackers seeded from
+  // now on - an order that already has its own step list (even one using
+  // the old default) keeps it as-is; reorder/rename/delete it by hand via
+  // the tracker's own edit controls if it needs to match the new sequence.
+  //
+  // "Invoice paid" and "Artwork sent for digitization" default to
+  // notify: false rather than mirroring "Artwork approved"/"Ready for
+  // collection" - two reasons: (1) a payment confirmation likely already
+  // goes out through the Square/receipt flow, so notifying here too would
+  // double up, and (2) sendStepNotification below picks its email wording
+  // by matching /artwork/ in the step title - "Artwork sent for
+  // digitization" would also match that regex and go out under the "Your
+  // artwork's approved" wording, which would be wrong this early. Flip
+  // either to notify: true only after checking that doesn't collide.
   const DEFAULT_STEPS = [
-    { title: "Artwork approved", notify: true },
+    { title: "Invoice paid", notify: false },
+    { title: "Artwork sent for digitization", notify: false },
     { title: "Garments ordered", notify: false },
-    { title: "In production", notify: false },
+    { title: "Artwork approved", notify: true },
     { title: "Ready for collection/dispatch", notify: true },
     // notify here doesn't trigger a plain step email like the others - it
     // gates whether marking this step done opens the "Confirmed Pickup?"
@@ -299,6 +313,85 @@ export async function onRequest(context) {
 
       // JSON - adds a new step at the end of this order's list.
       const data = await request.json();
+
+      // One-off backfill: apply the new pipeline (Invoice paid -> Artwork
+      // sent for digitization -> Garments ordered -> Artwork approved ->
+      // Ready for collection/dispatch -> Order collected) to orders that
+      // already had a tracker going, not just new ones from here on.
+      // Existing rows are reused in place (same id) wherever a direct
+      // mapping exists, purely so any attached photos stay linked to the
+      // right step - nothing here deletes an image. Only touches orders
+      // whose current step titles are entirely the old recognizable set
+      // (no custom-renamed/added steps); anything else is left completely
+      // alone and reported back as skipped, since there's no safe way to
+      // guess what a custom step was for.
+      if (data.migrate_pipeline) {
+        const { results: allSteps } = await db.prepare(
+          "SELECT * FROM production_steps ORDER BY order_id, position ASC"
+        ).all();
+        const byOrder = {};
+        for (const s of allSteps) (byOrder[s.order_id] = byOrder[s.order_id] || []).push(s);
+
+        const findStep = (steps, re) => steps.find((s) => re.test(s.title));
+        let migrated = 0, skippedCustom = 0, skippedNoSteps = 0;
+        const skippedOrderIds = [];
+
+        for (const orderId in byOrder) {
+          const steps = byOrder[orderId];
+          const readyStep = findStep(steps, /ready for collection|dispatch/i);
+          const collectedStep = findStep(steps, /order collected/i);
+          const artworkStep = findStep(steps, /artwork.*approv/i);
+          const garmentsStep = findStep(steps, /garment/i);
+          const inProdStep = findStep(steps, /^in production$/i);
+          const recognized = [readyStep, collectedStep, artworkStep, garmentsStep, inProdStep].filter(Boolean);
+          if (recognized.length !== steps.length) { skippedCustom++; skippedOrderIds.push(orderId); continue; }
+          if (!steps.length) { skippedNoSteps++; continue; }
+
+          const isDone = (s) => s && s.status === "done";
+          const inProdDone = isDone(inProdStep);
+          const readyDone = isDone(readyStep) || isDone(collectedStep);
+          const collectedDone = isDone(collectedStep);
+          const artworkDone = isDone(artworkStep) || inProdDone || readyDone || collectedDone;
+          const garmentsDone = isDone(garmentsStep) || inProdDone || readyDone || collectedDone;
+          const digitizationDone = artworkDone; // approval can't happen before digitizing
+
+          const order = await db.prepare("SELECT paid_status FROM orders WHERE id = ?").bind(orderId).first();
+          const invoicePaidDone = order && order.paid_status === "paid";
+
+          if (garmentsStep) await db.prepare("UPDATE production_steps SET position = 3, status = ? WHERE id = ?")
+            .bind(garmentsDone ? "done" : "pending", garmentsStep.id).run();
+          if (artworkStep) await db.prepare("UPDATE production_steps SET position = 4, status = ? WHERE id = ?")
+            .bind(artworkDone ? "done" : "pending", artworkStep.id).run();
+          if (readyStep) await db.prepare("UPDATE production_steps SET position = 5, status = ? WHERE id = ?")
+            .bind(readyDone ? "done" : "pending", readyStep.id).run();
+          if (collectedStep) await db.prepare("UPDATE production_steps SET position = 6, status = ? WHERE id = ?")
+            .bind(collectedDone ? "done" : "pending", collectedStep.id).run();
+
+          if (inProdStep) {
+            const { results: imgs } = await db.prepare("SELECT id FROM production_step_images WHERE step_id = ?").bind(inProdStep.id).all();
+            if (imgs.length || (inProdStep.notes && inProdStep.notes.trim())) {
+              // Has real content attached - keep the row (and its photos)
+              // rather than delete it, just pushed out of the main sequence.
+              await db.prepare("UPDATE production_steps SET title = ?, position = 99 WHERE id = ?")
+                .bind("In production (old step, kept for its notes/photos)", inProdStep.id).run();
+            } else {
+              await db.prepare("DELETE FROM production_steps WHERE id = ?").bind(inProdStep.id).run();
+            }
+          }
+
+          await db.prepare(
+            "INSERT INTO production_steps (id, order_id, title, position, status, notify_customer) VALUES (?, ?, 'Invoice paid', 1, ?, 0)"
+          ).bind(crypto.randomUUID(), orderId, invoicePaidDone ? "done" : "pending").run();
+          await db.prepare(
+            "INSERT INTO production_steps (id, order_id, title, position, status, notify_customer) VALUES (?, ?, 'Artwork sent for digitization', 2, ?, 0)"
+          ).bind(crypto.randomUUID(), orderId, digitizationDone ? "done" : "pending").run();
+
+          migrated++;
+        }
+
+        return json({ success: true, migrate_pipeline: true, migrated, skipped_custom: skippedCustom, skipped_custom_order_ids: skippedOrderIds, skipped_no_steps: skippedNoSteps });
+      }
+
       if (!data.order_id || !data.title) return json({ error: "order_id and title are required" }, 400);
       const { results: existing } = await db.prepare(
         "SELECT MAX(position) AS maxPos FROM production_steps WHERE order_id = ?"
