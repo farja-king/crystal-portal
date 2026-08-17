@@ -8798,6 +8798,43 @@
       });
     }
 
+    // A saved order's items JSON only ever carries unit_price (what the
+    // customer's charged), never cost_price/vat_rate - those were never
+    // saved anywhere, so editing or reordering a saved quote/invoice left
+    // the internal "Your margin" box (see computeOrderProfit) showing
+    // £0.00/0% for every line, looking broken even though it's really just
+    // missing data. This re-looks-up each catalog line's current cost/VAT
+    // by supplier_code (preferring an exact colour match, since a code can
+    // have different costs per colour post-migration - see the PenCarrie
+    // catalog work) and refreshes the display once it's back. Fire-and-
+    // forget - the rest of the builder is usable immediately, the margin
+    // box just fills in a moment later.
+    async function attachCostDataToOrderLines() {
+      const codes = [...new Set(
+        orderLines.filter((l) => l.source === 'catalog' && !l.customer_item && l.supplier_code).map((l) => l.supplier_code)
+      )];
+      if (!codes.length) return;
+
+      const lookups = await Promise.all(codes.map(async (code) => {
+        try {
+          const res = await fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(code) + '&limit=500', { cache: 'no-store' });
+          const data = await res.json();
+          return [code, data.results || []];
+        } catch { return [code, []]; }
+      }));
+      const rowsByCode = new Map(lookups);
+
+      for (const line of orderLines) {
+        if (line.source !== 'catalog' || line.customer_item || !line.supplier_code) continue;
+        const rows = rowsByCode.get(line.supplier_code) || [];
+        if (!rows.length) continue;
+        const match = rows.find((r) => line.colour && r.colour && r.colour.toLowerCase() === line.colour.toLowerCase()) || rows[0];
+        line.cost_price = Number(match.cost_price) || 0;
+        line.vat_rate = match.vat_rate ?? 0.2;
+      }
+      renderOrderLines();
+    }
+
     function editOrderInBuilder(id) {
       const o = ordersById[id];
       if (!o) return;
@@ -8810,6 +8847,7 @@
       editingExistingOrderId = id;
 
       orderLines = mapOrderItemsToBuilderLines(o.items);
+      attachCostDataToOrderLines();
 
       const docNumber = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
       document.getElementById('ord-builder-heading').textContent = 'Editing ' + docNumber;
@@ -8873,6 +8911,7 @@
       editingExistingOrderId = null;
 
       orderLines = mapOrderItemsToBuilderLines(o.items);
+      attachCostDataToOrderLines();
 
       document.getElementById('ord-doctype-toggle').classList.remove('hidden');
       document.getElementById('ord-customer').value = o.customer_id || '';
@@ -11284,6 +11323,7 @@
         <td class="p-2 text-xs text-slate-500">${escapeHtml(ukDate(o.archived_at))}</td>
         <td class="p-2 text-right whitespace-nowrap">
           <button onclick="restoreOrder('${escapeAttr(o.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Restore</button>
+          <button onclick="document.getElementById('order-archive-modal').classList.add('hidden'); reorderOrder('${escapeAttr(o.id)}')" title="Start a new quote/invoice prefilled with this customer and these garments - fully editable before saving. Doesn't restore this archived one." class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Reorder</button>
           <button onclick="moveArchiveBucket('${escapeAttr(o.id)}', '${isCompleted ? 'pending' : 'completed'}')" title="Move to the other section - fixes a mis-filed item, no need to restore and rearchive" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Move to ${isCompleted ? 'Pending' : 'Completed'}</button>
           <button onclick="removeArchivedProofImages('${escapeAttr(o.id)}')" title="Deletes the actual image file(s) to free up storage - keeps the record of what was attached and what the customer decided" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Remove image from database</button>
         </td>
@@ -11304,6 +11344,12 @@
 
         // Anything archived before this split existed has no archive_bucket
         // set - treated as Pending rather than silently dropped.
+        // reorderOrder() (used by the Reorder button below) looks orders up
+        // from ordersById, which only ever gets populated by the main
+        // list load - an item that's been archived can fall out of that
+        // list, so without this its Reorder button would silently no-op.
+        rows.forEach((o) => { ordersById[o.id] = o; });
+
         const completed = rows.filter((o) => o.archive_bucket === 'completed');
         const pending = rows.filter((o) => o.archive_bucket !== 'completed');
 

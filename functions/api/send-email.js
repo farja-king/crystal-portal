@@ -161,13 +161,13 @@ export async function onRequest(context) {
     const items = JSON.parse(o.items || "[]");
     const docLabel = o.doc_type === "invoice" ? "Invoice" : "Quote";
     const docNumber = o.doc_type === "invoice" ? o.invoice_number : o.quote_number;
-    // The very first time an invoice goes out is the moment to actually ask
-    // for the deposit Martin set on it - every send after that is more of a
-    // running statement (what's been paid, what's still owed), since the
-    // deposit ask itself only makes sense once. email_sent_count is what
-    // this same file already increments below on every successful send, so
-    // it's "0/null" only for a send that hasn't happened yet.
-    const isFirstSend = !o.email_sent_count;
+    // Whether to show "Deposit due" vs a running paid-to-date/balance-due
+    // statement is now driven purely by whether anything's actually been
+    // paid (amount_paid > 0) - it used to also depend on email_sent_count
+    // (deposit ask only on the first-ever send), which meant a payment
+    // recorded manually before that first send stayed invisible on both
+    // this email and the matching PDF (document-pdf.js) even though
+    // amount_paid was already correct in the database.
 
     // "Pay by card" - only offered when Square's actually configured (both
     // secrets present) and there's a genuine balance left to charge. Bank
@@ -205,23 +205,29 @@ export async function onRequest(context) {
           <p>Please find your invoice attached.</p>
           <div style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-top:16px;">
             <div style="font-size:14px;">Date: ${ukDate(o.created_at)}</div>
-            <div style="font-size:14px;">Status: ${o.paid_status === "paid" ? "Paid" : "Unpaid"}</div>
+            <div style="font-size:14px;">Status: ${o.paid_status === "paid" ? "Paid" : o.paid_status === "partial" ? "Partially paid" : "Unpaid"}</div>
             ${o.due_date ? `<div style="font-size:14px;">Due by: ${ukDate(o.due_date)}</div>` : ""}
             <div style="font-size:20px;font-weight:700;margin-top:6px;">Total: ${money(o.total)}</div>
             ${(() => {
               if (o.paid_status === "paid") return "";
               const amountPaid = Number(o.amount_paid || 0);
-              if (isFirstSend) {
-                // The deposit ask only belongs on the invoice's first-ever
-                // send - once it's gone out once, every later send is a
-                // running statement instead (see amount_paid branch below).
-                const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
-                return depositDue > 0
-                  ? `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`
-                  : "";
+              // Shows a running paid-to-date/balance-due statement as soon
+              // as anything's actually been paid - regardless of whether
+              // this is the first send, since a payment recorded manually
+              // before the invoice was ever emailed is just as real as one
+              // recorded after. Was previously gated on isFirstSend, which
+              // is why a manually-recorded payment stayed invisible here
+              // (and on the matching PDF, document-pdf.js) until the first
+              // send flipped email_sent_count - amount_paid itself was
+              // already correct in the database the whole time.
+              if (amountPaid > 0) {
+                return `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>
+                  <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
               }
-              return `${amountPaid > 0 ? `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>` : ""}
-                <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
+              const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
+              return depositDue > 0
+                ? `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`
+                : "";
             })()}
           </div>
           ${o.paid_status !== "paid" ? `
@@ -291,48 +297,71 @@ export async function onRequest(context) {
       const baseLabel = item.source === "catalog"
         ? `${escapeHtml(item.supplier_code)} ${escapeHtml(item.title)}`
         : (escapeHtml([item.description, item.title].filter(Boolean).join(" - ")) || "Customer's own garment");
-      // Each breakdown row's decorations are shown right underneath that
-      // row (not lumped together under the whole line) - a real garment
-      // sent to the customer this way now clearly shows e.g. "Black / M"
-      // followed by "Embroidery - Left chest - Highlanders Logo" directly
-      // below it, rather than every logo on the line appearing as one
-      // undifferentiated block a customer can't match back to a size. Falls
-      // back to the old flat display for a quote saved before decorations
-      // moved onto individual rows (see admin.html's itemDetailLines, the
-      // same logic for the internal View/Print).
-      const decLine = (d) => {
-        const dQty = Number(d.qty) || 1;
-        const priceLabel = d.price
-          ? `${money(d.price)} each${dQty > 1 ? ` × ${dQty} = ${money(d.price * dQty)}` : ""}`
-          : "included";
-        return `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(METHOD_LABELS[d.method] || d.method)} - ${escapeHtml(PLACEMENT_LABELS[d.placement] || d.placement)} (${priceLabel})${d.notes ? " - " + escapeHtml(d.notes) : ""}</div>`;
-      };
-      let detailLines;
+
+      // Colour/size breakdown - plain description under the garment row,
+      // no pricing (that's fully covered by the garment row's own
+      // Qty/Unit/Total, same reasoning as document-pdf.js).
+      let breakdownLines = "";
+      if (item.breakdown && item.breakdown.length && !item.customer_item) {
+        breakdownLines = item.breakdown.map((b) =>
+          `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(b.colour || "-")} / ${escapeHtml(b.size || "-")} × ${b.qty}</div>`
+        ).join("");
+      }
+
+      // Decoration - previously shown as descriptive text only, with its
+      // cost folded silently into the garment row's Total (so "2 × £18"
+      // not matching that row's own Total looked like a maths error, even
+      // though the combined total was correct - the decoration cost just
+      // wasn't shown as a number anywhere). Now its own priced row(s),
+      // collapsed by method+placement+price+notes so the same print across
+      // several colours becomes one row with the combined qty, not a
+      // repeat per colour.
+      const rawDecorations = [];
       if (!item.breakdown || !item.breakdown.length || item.customer_item) {
-        detailLines = (item.decorations || []).map(decLine).join("");
+        rawDecorations.push(...(item.decorations || []));
       } else {
         const hasRowDecorations = item.breakdown.some((b) => (b.decorations || []).length);
-        detailLines = item.breakdown.map((b) => {
-          const rowLine = `<div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(b.colour || "-")} / ${escapeHtml(b.size || "-")} × ${b.qty}</div>`;
-          return rowLine + (hasRowDecorations ? (b.decorations || []).map(decLine).join("") : "");
-        }).join("") + (!hasRowDecorations ? (item.decorations || []).map(decLine).join("") : "");
+        if (hasRowDecorations) item.breakdown.forEach((b) => rawDecorations.push(...(b.decorations || [])));
+        else rawDecorations.push(...(item.decorations || []));
       }
-      return `<tr>
-        <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${baseLabel}${detailLines}</td>
+      const decByKey = new Map();
+      for (const d of rawDecorations) {
+        const label = `${METHOD_LABELS[d.method] || d.method} - ${PLACEMENT_LABELS[d.placement] || d.placement}${d.notes ? ` (${d.notes})` : ""}`;
+        const unitPrice = Number(d.price) || 0;
+        const qty = Number(d.qty) || 1;
+        const key = label + "|" + unitPrice;
+        if (decByKey.has(key)) decByKey.get(key).qty += qty;
+        else decByKey.set(key, { label, unitPrice, qty });
+      }
+
+      const qty = Number(item.qty) || 0;
+      const garmentTotal = qty * (Number(item.unit_price) || 0);
+
+      const garmentRow = `<tr>
+        <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${baseLabel}${breakdownLines}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${item.qty}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${money(item.unit_price)}</td>
-        <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${money(item.line_total)}</td>
+        <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${money(garmentTotal)}</td>
       </tr>`;
+
+      const decorationRows = [...decByKey.values()].map((d) => `<tr>
+        <td style="padding:6px 4px 6px 16px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569;">+ ${escapeHtml(d.label)}</td>
+        <td style="padding:6px 4px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569;">${d.qty}</td>
+        <td style="padding:6px 4px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569;">${money(d.unitPrice)}</td>
+        <td style="padding:6px 4px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569;">${money(d.unitPrice * d.qty)}</td>
+      </tr>`).join("");
+
+      return garmentRow + decorationRows;
     }).join("");
 
     const discountLine = o.discount_amount ? `Discount: -${money(o.discount_amount)}` : "";
 
     const isUnpaidInvoice = o.doc_type === "invoice" && o.paid_status !== "paid";
     // A quote always shows what deposit it'll need if accepted - the
-    // customer should know that before they agree to it. An invoice only
-    // asks on its first-ever send; every send after that is a running
-    // statement instead - see isFirstSend above and the matching comment in
-    // document-pdf.js/buildOrderPdf.
+    // customer should know that before they agree to it. An invoice shows
+    // the deposit ask only until something's actually been paid, then
+    // switches to a running paid-to-date/balance-due statement - see the
+    // matching comment in document-pdf.js/buildOrderPdf.
     let depositBalanceLine = "";
     if (o.doc_type === "quote") {
       const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
@@ -340,15 +369,21 @@ export async function onRequest(context) {
         depositBalanceLine = `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due on acceptance: ${money(depositDue)}</div>`;
       }
     } else if (isUnpaidInvoice) {
+      // Shows a running paid-to-date/balance-due statement as soon as
+      // anything's actually been paid, not just from the invoice's second
+      // send onward - see the matching comment in the is_manual branch
+      // above and in document-pdf.js/buildOrderPdf for why this used to
+      // stay wrong (showing "Deposit due" instead) for a payment recorded
+      // manually before the invoice's first send.
       const amountPaid = Number(o.amount_paid || 0);
-      if (isFirstSend) {
+      if (amountPaid > 0) {
+        depositBalanceLine = `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>
+          <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
+      } else {
         const depositDue = Math.min(o.total, o.total * (Number(o.deposit_pct || 0) / 100) + Number(o.deposit_amount || 0));
         if (depositDue > 0) {
           depositBalanceLine = `<div style="font-size:14px;font-weight:600;color:#b45309;margin-top:4px;">Deposit due: ${money(depositDue)}</div>`;
         }
-      } else {
-        depositBalanceLine = `${amountPaid > 0 ? `<div style="font-size:13px;color:#64748b;margin-top:4px;">Paid to date: ${money(amountPaid)}</div>` : ""}
-          <div style="font-size:14px;font-weight:600;color:#b45309;">Balance due: ${money(o.total - amountPaid)}</div>`;
       }
     }
     // Lets the customer approve the quote themselves - no login, just the
@@ -390,7 +425,7 @@ export async function onRequest(context) {
           <div style="flex:1;border:1px solid #e2e8f0;border-radius:12px;padding:14px;">
             <div style="font-weight:600;font-size:14px;margin-bottom:6px;">Details</div>
             <div style="font-size:14px;">Date: ${ukDate(o.created_at)}</div>
-            ${o.doc_type === "invoice" ? `<div style="font-size:14px;">Status: ${o.paid_status === "paid" ? "Paid" : "Unpaid"}</div>` : ""}
+            ${o.doc_type === "invoice" ? `<div style="font-size:14px;">Status: ${o.paid_status === "paid" ? "Paid" : o.paid_status === "partial" ? "Partially paid" : "Unpaid"}</div>` : ""}
             ${o.doc_type === "invoice" && o.due_date ? `<div style="font-size:14px;">Due by: ${ukDate(o.due_date)}</div>` : ""}
           </div>
         </div>
