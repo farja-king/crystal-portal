@@ -18,18 +18,57 @@ function ukDate(raw) {
   return String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0") + "/" + d.getFullYear();
 }
 
-// No AFM width table here (see pdf.js) so long labels are hard-truncated
-// rather than measured/wrapped - good enough for a garment/product name,
-// keeps it from running into the Qty/Unit/Total columns.
-function truncate(str, max) {
-  str = String(str || "");
-  return str.length > max ? str.slice(0, max - 1) + "..." : str;
-}
-
 const COL_ITEM_X = MARGIN;
 const QTY_RIGHT = 380;
 const UNIT_RIGHT = 462;
 const RIGHT_EDGE = PAGE_WIDTH - MARGIN;
+
+// Standard Adobe AFM advance widths (1/1000 em) for Helvetica - published,
+// fixed metrics for one of the PDF standard 14 fonts, not an estimate.
+// Covers every printable ASCII character a garment title/decoration
+// label/note can realistically contain; anything outside this (an accented
+// character, say) falls back to 556 (the average width across this table),
+// good enough for wrapping purposes even if not pixel-exact.
+const CHAR_WIDTH = {
+  " ": 278, "!": 278, '"': 355, "#": 556, "$": 556, "%": 889, "&": 667, "'": 191, "(": 333, ")": 333,
+  "*": 389, "+": 584, ",": 278, "-": 333, ".": 278, "/": 278,
+  "0": 556, "1": 556, "2": 556, "3": 556, "4": 556, "5": 556, "6": 556, "7": 556, "8": 556, "9": 556,
+  ":": 278, ";": 278, "<": 584, "=": 584, ">": 584, "?": 556, "@": 1015,
+  A: 667, B: 667, C: 722, D: 722, E: 667, F: 611, G: 778, H: 722, I: 278, J: 500,
+  K: 667, L: 556, M: 833, N: 722, O: 778, P: 667, Q: 778, R: 722, S: 667, T: 611,
+  U: 722, V: 667, W: 944, X: 667, Y: 667, Z: 611,
+  "[": 278, "\\": 278, "]": 278, "^": 469, _: 556, "`": 333,
+  a: 556, b: 556, c: 500, d: 556, e: 556, f: 278, g: 556, h: 556, i: 222, j: 222,
+  k: 500, l: 222, m: 833, n: 556, o: 556, p: 556, q: 556, r: 333, s: 500, t: 278,
+  u: 556, v: 500, w: 722, x: 500, y: 500, z: 500,
+  "{": 334, "|": 260, "}": 334, "~": 584, "£": 556,
+};
+function textWidth(str, size) {
+  return String(str).split("").reduce((sum, ch) => sum + (CHAR_WIDTH[ch] ?? 556), 0) * size / 1000;
+}
+
+// Greedy word-wrap to a real pixel width in this font/size, instead of a
+// fixed character-count truncation - a long decoration note (e.g. "+
+// Embroidery - Right chest (INCLUDED MAIN LOGO)") used to just get cut off
+// mid-word with "..." once past the old count. Falls back to a hard break
+// only for a single word wider than the whole column on its own (still
+// better than an infinite loop).
+function wrapText(str, maxWidth, size) {
+  const words = String(str || "").split(" ");
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? current + " " + word : word;
+    if (textWidth(candidate, size) <= maxWidth || !current) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [""];
+}
 
 // Real Adobe AFM advance widths (1/1000 em) for the exact characters a
 // money()/qty string can ever contain - digits 0-9, £, ., - and space are
@@ -157,31 +196,46 @@ export function buildOrderPdf(o, customerAddr) {
     // decoration instead of one combined figure.
     const garmentTotalStr = money(qty * (Number(item.unit_price) || 0));
 
+    // Wrapped onto as many lines as it needs rather than cut off with "..."
+    // once past a fixed character count - Qty/Unit/Total only appear on the
+    // first line, wrapped continuation lines are label-only.
+    const baseLines = wrapText(baseLabel, QTY_RIGHT - COL_ITEM_X - 10, 9);
     doc.row(
       [
-        { x: COL_ITEM_X, text: truncate(baseLabel, 48), size: 9 },
+        { x: COL_ITEM_X, text: baseLines[0], size: 9 },
         { x: numericRightX(qtyStr, 9, QTY_RIGHT), text: qtyStr, font: "F2", size: 9, gray: 0 },
         { x: numericRightX(unitStr, 9, UNIT_RIGHT), text: unitStr, font: "F2", size: 9, gray: 0 },
         { x: numericRightX(garmentTotalStr, 9, RIGHT_EDGE), text: garmentTotalStr, font: "F2", size: 9, gray: 0 },
       ],
       { gap: 13 }
     );
-    itemBreakdownLines(item).forEach((l) => {
-      doc.line(truncate(l, 60), { x: COL_ITEM_X + 8, size: 8, gray: 0.45, gap: 11 });
+    baseLines.slice(1).forEach((l) => {
+      doc.line(l, { x: COL_ITEM_X, size: 9, gap: 12 });
     });
+
+    itemBreakdownLines(item).forEach((l) => {
+      wrapText(l, QTY_RIGHT - COL_ITEM_X - 18, 8).forEach((wl) => {
+        doc.line(wl, { x: COL_ITEM_X + 8, size: 8, gray: 0.45, gap: 11 });
+      });
+    });
+
     decorationEntries(item).forEach((d) => {
       const dQtyStr = String(d.qty);
       const dUnitStr = money(d.unitPrice);
       const dTotalStr = money(d.unitPrice * d.qty);
+      const dLines = wrapText("+ " + d.label, QTY_RIGHT - (COL_ITEM_X + 8) - 10, 8.5);
       doc.row(
         [
-          { x: COL_ITEM_X + 8, text: truncate("+ " + d.label, 44), size: 8.5, gray: 0.35 },
+          { x: COL_ITEM_X + 8, text: dLines[0], size: 8.5, gray: 0.35 },
           { x: numericRightX(dQtyStr, 8.5, QTY_RIGHT), text: dQtyStr, size: 8.5, gray: 0.35 },
           { x: numericRightX(dUnitStr, 8.5, UNIT_RIGHT), text: dUnitStr, size: 8.5, gray: 0.35 },
           { x: numericRightX(dTotalStr, 8.5, RIGHT_EDGE), text: dTotalStr, size: 8.5, gray: 0.35 },
         ],
         { gap: 11 }
       );
+      dLines.slice(1).forEach((l) => {
+        doc.line(l, { x: COL_ITEM_X + 8, size: 8.5, gray: 0.35, gap: 10 });
+      });
     });
     doc.gap(3);
   });
@@ -250,7 +304,9 @@ export function buildOrderPdf(o, customerAddr) {
   if (o.notes) {
     doc.gap(10);
     doc.line("Notes:", { font: "F2", size: 10, gap: 13 });
-    String(o.notes).split("\n").forEach((l) => doc.line(truncate(l, 90), { size: 9, gray: 0.4, gap: 12 }));
+    String(o.notes).split("\n").forEach((l) => {
+      wrapText(l, RIGHT_EDGE - MARGIN, 9).forEach((wl) => doc.line(wl, { size: 9, gray: 0.4, gap: 12 }));
+    });
   }
 
   doc.gap(16);
