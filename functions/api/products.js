@@ -259,6 +259,13 @@ export async function onRequest(context) {
       // (for the breakdown dropdowns), rather than a fuzzy LIKE search.
       const code = (p.get("code") || "").trim();
       if (code) { where.push(`supplier_code = ?${binds.length + 1}`); binds.push(code); }
+      // Exact id match - a flat fee/service (e.g. "Design Setup Fee") has no
+      // supplier_code to look up by, so this is the only way to re-fetch its
+      // current cost_price by product_id (see admin.html's
+      // attachCostDataToOrderLines, used by reorder/edit-quote to refresh
+      // the internal margin box).
+      const idParam = (p.get("id") || "").trim();
+      if (idParam) { where.push(`id = ?${binds.length + 1}`); binds.push(idParam); }
       for (const [param, col] of [["supplier", "supplier"], ["brand", "brand"], ["category", "category"]]) {
         const v = p.get(param);
         if (v) { where.push(`${col} = ?${binds.length + 1}`); binds.push(v); }

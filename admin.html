@@ -8810,27 +8810,49 @@
     // forget - the rest of the builder is usable immediately, the margin
     // box just fills in a moment later.
     async function attachCostDataToOrderLines() {
-      const codes = [...new Set(
-        orderLines.filter((l) => l.source === 'catalog' && !l.customer_item && l.supplier_code).map((l) => l.supplier_code)
-      )];
-      if (!codes.length) return;
+      const catalogLines = orderLines.filter((l) => l.source === 'catalog' && !l.customer_item);
+      const codes = [...new Set(catalogLines.filter((l) => l.supplier_code).map((l) => l.supplier_code))];
+      // A flat fee/service (e.g. "Design Setup Fee") has no supplier_code to
+      // group by - each one only findable by its own product_id. Missing
+      // these meant a quote's fee lines silently contributed £0 cost to the
+      // margin box even though they have a real cost_price in the catalog,
+      // understating true cost (confirmed: a "Design Setup Fee" with a real
+      // £5 cost showed as if it cost nothing at all).
+      const feeIds = [...new Set(catalogLines.filter((l) => !l.supplier_code && l.product_id).map((l) => l.product_id))];
+      if (!codes.length && !feeIds.length) return;
 
-      const lookups = await Promise.all(codes.map(async (code) => {
-        try {
-          const res = await fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(code) + '&limit=500', { cache: 'no-store' });
-          const data = await res.json();
-          return [code, data.results || []];
-        } catch { return [code, []]; }
-      }));
-      const rowsByCode = new Map(lookups);
+      const [codeLookups, feeLookups] = await Promise.all([
+        Promise.all(codes.map(async (code) => {
+          try {
+            const res = await fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(code) + '&limit=500', { cache: 'no-store' });
+            const data = await res.json();
+            return [code, data.results || []];
+          } catch { return [code, []]; }
+        })),
+        Promise.all(feeIds.map(async (id) => {
+          try {
+            const res = await fetch(API_PRODUCTS_URL + '?id=' + encodeURIComponent(id) + '&limit=1', { cache: 'no-store' });
+            const data = await res.json();
+            return [id, (data.results || [])[0] || null];
+          } catch { return [id, null]; }
+        })),
+      ]);
+      const rowsByCode = new Map(codeLookups);
+      const rowById = new Map(feeLookups);
 
-      for (const line of orderLines) {
-        if (line.source !== 'catalog' || line.customer_item || !line.supplier_code) continue;
-        const rows = rowsByCode.get(line.supplier_code) || [];
-        if (!rows.length) continue;
-        const match = rows.find((r) => line.colour && r.colour && r.colour.toLowerCase() === line.colour.toLowerCase()) || rows[0];
-        line.cost_price = Number(match.cost_price) || 0;
-        line.vat_rate = match.vat_rate ?? 0.2;
+      for (const line of catalogLines) {
+        if (line.supplier_code) {
+          const rows = rowsByCode.get(line.supplier_code) || [];
+          if (!rows.length) continue;
+          const match = rows.find((r) => line.colour && r.colour && r.colour.toLowerCase() === line.colour.toLowerCase()) || rows[0];
+          line.cost_price = Number(match.cost_price) || 0;
+          line.vat_rate = match.vat_rate ?? 0.2;
+        } else if (line.product_id) {
+          const match = rowById.get(line.product_id);
+          if (!match) continue;
+          line.cost_price = Number(match.cost_price) || 0;
+          line.vat_rate = match.vat_rate ?? 0.2;
+        }
       }
       renderOrderLines();
     }
