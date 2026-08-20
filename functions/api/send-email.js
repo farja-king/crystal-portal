@@ -36,7 +36,7 @@ export async function onRequest(context) {
     // Same "already exists" tolerance as every other API here - these
     // columns were added after orders already went live, so an ALTER on a
     // fresh table (which already has them from CREATE) just no-ops.
-    for (const col of ["email_sent_at TEXT", "email_sent_to TEXT", "email_sent_count INTEGER DEFAULT 0", "accept_token TEXT", "pay_token TEXT"]) {
+    for (const col of ["email_sent_at TEXT", "email_sent_to TEXT", "email_sent_count INTEGER DEFAULT 0", "accept_token TEXT", "pay_token TEXT", "last_email_status TEXT", "last_email_status_at TEXT", "last_email_status_detail TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE orders ADD COLUMN ${col}`).run();
       } catch {
@@ -76,6 +76,18 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // resend_email_id is how functions/api/resend-webhook.js matches a
+    // later delivered/bounced/complained event back to this exact send -
+    // Resend returns it in the POST /emails response body. delivery_status
+    // starts NULL ("sent, no confirmation yet") until a webhook event
+    // updates it - never assume "sent" means "arrived".
+    for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT"]) {
+      try {
+        await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run();
+      } catch {
+        // already exists
+      }
+    }
 
     // GET ?order_id=X - the full send history for one quote/invoice, for
     // the View Quote panel's "Communication History" section.
@@ -83,7 +95,7 @@ export async function onRequest(context) {
       const orderId = new URL(request.url).searchParams.get("order_id");
       if (!orderId) return json({ error: "order_id is required" }, 400);
       const { results } = await db.prepare(
-        "SELECT sent_to, subject, sent_at FROM email_log WHERE order_id = ? ORDER BY sent_at DESC"
+        "SELECT sent_to, subject, sent_at, delivery_status, delivery_status_at, delivery_detail FROM email_log WHERE order_id = ? ORDER BY sent_at DESC"
       ).bind(orderId).all();
       return json(results);
     }
@@ -317,12 +329,17 @@ export async function onRequest(context) {
         const errBody = await resendRes.text();
         return json({ error: "Resend rejected the email: " + errBody }, 502);
       }
+      // Resend's own id for this send - functions/api/resend-webhook.js
+      // matches a later delivered/bounced/complained event back to this
+      // row by it. Best-effort: a malformed success response shouldn't
+      // block the send that already went out.
+      const resendEmailId = await resendRes.json().then((r) => r.id).catch(() => null);
       await db.prepare(
         "UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP, email_sent_to = ?, email_sent_count = email_sent_count + 1 WHERE id = ?"
       ).bind(to, o.id).run();
       await db.prepare(
-        "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
-      ).bind(crypto.randomUUID(), o.id, to, subject).run();
+        "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
+      ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId).run();
       if (pendingProof) {
         await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(pendingProof.id).run();
       }
@@ -570,13 +587,18 @@ export async function onRequest(context) {
       const errBody = await resendRes.text();
       return json({ error: "Resend rejected the email: " + errBody }, 502);
     }
+    // Resend's own id for this send - functions/api/resend-webhook.js
+    // matches a later delivered/bounced/complained event back to this row
+    // by it. Best-effort: a malformed success response shouldn't block
+    // the send that already went out.
+    const resendEmailId = await resendRes.json().then((r) => r.id).catch(() => null);
 
     await db.prepare(
       "UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP, email_sent_to = ?, email_sent_count = email_sent_count + 1 WHERE id = ?"
     ).bind(to, o.id).run();
     await db.prepare(
-      "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
-    ).bind(crypto.randomUUID(), o.id, to, subject).run();
+      "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
+    ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId).run();
     if (pendingProof) {
       await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(pendingProof.id).run();
     }

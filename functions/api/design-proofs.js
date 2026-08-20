@@ -91,17 +91,49 @@ export async function onRequest(context) {
       </div>`;
 
     try {
+      const subject = `Design proof for your ${docLabel.toLowerCase()} ${docNumber} - please review`;
       const resendRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           from: fromAddress, to: [to], reply_to: replyToAddress,
-          subject: `Design proof for your ${docLabel.toLowerCase()} ${docNumber} - please review`,
+          subject,
           html,
           ...(attachments ? { attachments } : {}),
         }),
       });
       if (!resendRes.ok) return { sent: false, reason: "Resend rejected the email" };
+      // Logged the same way as functions/api/send-email.js's sends, so this
+      // shows up in the quote/invoice's Communication History too, and
+      // resend_email_id lets functions/api/resend-webhook.js report back
+      // whether this specific proof email actually arrived - the exact
+      // "did the customer even get it" question this whole feature exists
+      // to answer without waiting on a bounce to land in Martin's own inbox.
+      const resendEmailId = await resendRes.json().then((r) => r.id).catch(() => null);
+      try {
+        await db.prepare(`
+          CREATE TABLE IF NOT EXISTS email_log (
+            id TEXT PRIMARY KEY,
+            order_id TEXT NOT NULL,
+            sent_to TEXT NOT NULL,
+            subject TEXT,
+            sent_at TEXT DEFAULT CURRENT_TIMESTAMP
+          )
+        `).run();
+        for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT"]) {
+          try {
+            await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run();
+          } catch {
+            // already exists
+          }
+        }
+        await db.prepare(
+          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
+        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId).run();
+      } catch (e) {
+        // Best-effort logging - never let it undo a proof email that
+        // already genuinely went out.
+      }
       await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(proof.id).run();
       return { sent: true };
     } catch (e) {
