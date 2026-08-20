@@ -7407,7 +7407,7 @@
     // there. No suggestDecorationPrice rule for it (same as "Other") -
     // always manual entry, since a name isn't a fixed placement charge the
     // same way left/right chest or a sleeve logo is.
-    const PLACEMENT_LABELS = { left_chest: 'Left chest', right_chest: 'Right chest', sleeve: 'Sleeve', back: 'Back', name: 'Name', other: 'Other' };
+    const PLACEMENT_LABELS = { left_chest: 'Left chest', right_chest: 'Right chest', sleeve: 'Sleeve', left_sleeve: 'Left sleeve', right_sleeve: 'Right sleeve', back: 'Back', name: 'Name', other: 'Other' };
 
     // Customer picker for the quote builder - a search box (matching name,
     // company, email or phone, same fields as the Customer Directory search)
@@ -8306,7 +8306,15 @@
     // line level) so both look and behave identically; only which mutator
     // function each control calls differs, passed in as ready-to-use
     // onclick/oninput strings.
-    function decorationRowMarkup(dec, showQuickPicks, includedNote, h) {
+    // showQtyMultiplier: the "× N" field means "instances per garment"
+    // (e.g. 2 for both sleeves) - genuinely useful on the legacy per-row
+    // markup, where each row is already scoped to one exact colour/size.
+    // On the shared line-level decorationsBlock it applies across every
+    // colour/size row already (see lineTotal), so "×2" there reads as
+    // "for 2 garments" and silently double-charges instead - hidden there
+    // by default so a new decoration always applies once per garment,
+    // full stop.
+    function decorationRowMarkup(dec, showQuickPicks, includedNote, h, showQtyMultiplier = true) {
       const decQty = Number(dec.qty) || 1;
       return `
         <div class="flex flex-wrap items-center gap-2 bg-slate-50 rounded-lg p-2 mt-2">
@@ -8327,9 +8335,10 @@
               <button type="button" onclick="${h.price75}" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£7.50</button>
               <button type="button" onclick="${h.price10}" class="text-xs bg-white border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">£10</button>
             </span>` : ''}
+          ${showQtyMultiplier ? `
           <span class="text-sm text-slate-500">×</span>
           <input type="number" min="1" value="${decQty}" oninput="${h.qtyLive}" title="e.g. 2 for both sleeves" class="w-14 rounded border border-slate-300 px-2 py-1 text-sm" />
-          ${decQty > 1 ? `<span class="text-xs text-slate-500">= £${((Number(dec.price) || 0) * decQty).toFixed(2)}</span>` : ''}
+          ${decQty > 1 ? `<span class="text-xs text-slate-500">= £${((Number(dec.price) || 0) * decQty).toFixed(2)}</span>` : ''}` : ''}
           <input value="${escapeAttr(dec.notes)}" oninput="${h.notes}" placeholder="Notes (optional) - e.g. which logo" class="flex-1 min-w-[100px] rounded border border-slate-300 px-2 py-1 text-sm" />
           <button type="button" onclick="${h.remove}" class="text-rose-500 hover:text-rose-700 text-sm px-1">✕</button>
         </div>`;
@@ -8479,7 +8488,7 @@
           qtyLive: `updateDecorationQtyLive(${idx}, ${decIdx}, this.value)`,
           notes: `updateDecorationNotes(${idx}, ${decIdx}, this.value)`,
           remove: `removeOrderLineDecoration(${idx}, ${decIdx})`,
-        })).join('');
+        }, false)).join('');
 
         const topRow = isCustomerSupplied
           ? `<div class="grid gap-2 md:grid-cols-6 items-start">

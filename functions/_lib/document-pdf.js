@@ -7,7 +7,7 @@
 import { PdfDoc, MARGIN, PAGE_WIDTH } from "./pdf.js";
 
 const METHOD_LABELS = { embroidery: "Embroidery", dtf: "DTF", sublimation: "Sublimation", other: "Other" };
-const PLACEMENT_LABELS = { left_chest: "Left chest", right_chest: "Right chest", sleeve: "Sleeve", back: "Back", name: "Name", other: "Other" };
+const PLACEMENT_LABELS = { left_chest: "Left chest", right_chest: "Right chest", sleeve: "Sleeve", left_sleeve: "Left sleeve", right_sleeve: "Right sleeve", back: "Back", name: "Name", other: "Other" };
 
 const money = (n) => "£" + Number(n || 0).toFixed(2);
 
