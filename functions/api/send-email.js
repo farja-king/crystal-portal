@@ -369,13 +369,31 @@ export async function onRequest(context) {
       // collapsed by method+placement+price+notes so the same print across
       // several colours becomes one row with the combined qty, not a
       // repeat per colour.
+      // d.qty on a decoration is "instances per garment" (e.g. 2 for both
+      // sleeves), not a count of garments - a row/line's decoration cost is
+      // that × how many garments it actually applies to (the breakdown
+      // row's own qty for a per-row decoration, or the item's total qty for
+      // a line-level one - same multiplication lineTotal already does when
+      // computing the real total this itemization has to reconcile with).
+      // Pushing d.qty through unscaled here undercounted any decoration on
+      // more than one garment - e.g. 2 shirts × DTF once each showed as a
+      // single £5 instead of £10, even though the order's actual total
+      // already correctly charged for both.
       const rawDecorations = [];
       if (!item.breakdown || !item.breakdown.length || item.customer_item) {
-        rawDecorations.push(...(item.decorations || []));
+        const garmentQty = Number(item.qty) || 1;
+        (item.decorations || []).forEach((d) => rawDecorations.push({ ...d, qty: (Number(d.qty) || 1) * garmentQty }));
       } else {
         const hasRowDecorations = item.breakdown.some((b) => (b.decorations || []).length);
-        if (hasRowDecorations) item.breakdown.forEach((b) => rawDecorations.push(...(b.decorations || [])));
-        else rawDecorations.push(...(item.decorations || []));
+        if (hasRowDecorations) {
+          item.breakdown.forEach((b) => {
+            const rowQty = Number(b.qty) || 1;
+            (b.decorations || []).forEach((d) => rawDecorations.push({ ...d, qty: (Number(d.qty) || 1) * rowQty }));
+          });
+        } else {
+          const totalQty = item.breakdown.reduce((sum, b) => sum + (Number(b.qty) || 0), 0) || 1;
+          (item.decorations || []).forEach((d) => rawDecorations.push({ ...d, qty: (Number(d.qty) || 1) * totalQty }));
+        }
       }
       const decByKey = new Map();
       for (const d of rawDecorations) {

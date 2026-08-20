@@ -104,15 +104,28 @@ function itemBreakdownLines(item) {
 // like a maths error even though the underlying total was correct - the
 // decoration cost just wasn't shown anywhere as a number.
 function decorationEntries(item) {
+  // d.qty is "instances per garment" (e.g. 2 for both sleeves), not a count
+  // of garments - the actual cost is that × how many garments it applies
+  // to (the breakdown row's own qty for a per-row decoration, or the
+  // item's total qty for a line-level one), same multiplication lineTotal
+  // already does for the real total this itemization has to reconcile
+  // with. Without scaling here, 2 shirts with DTF once each showed as a
+  // single £5 instead of £10, even though the order's real total already
+  // correctly charged for both.
   const raw = [];
   if (!item.breakdown || !item.breakdown.length || item.customer_item) {
-    (item.decorations || []).forEach((d) => raw.push(d));
+    const garmentQty = Number(item.qty) || 1;
+    (item.decorations || []).forEach((d) => raw.push({ ...d, qty: (Number(d.qty) || 1) * garmentQty }));
   } else {
     const hasRowDecorations = item.breakdown.some((b) => (b.decorations || []).length);
     if (hasRowDecorations) {
-      item.breakdown.forEach((b) => (b.decorations || []).forEach((d) => raw.push(d)));
+      item.breakdown.forEach((b) => {
+        const rowQty = Number(b.qty) || 1;
+        (b.decorations || []).forEach((d) => raw.push({ ...d, qty: (Number(d.qty) || 1) * rowQty }));
+      });
     } else {
-      (item.decorations || []).forEach((d) => raw.push(d));
+      const totalQty = item.breakdown.reduce((sum, b) => sum + (Number(b.qty) || 0), 0) || 1;
+      (item.decorations || []).forEach((d) => raw.push({ ...d, qty: (Number(d.qty) || 1) * totalQty }));
     }
   }
   const byKey = new Map();
