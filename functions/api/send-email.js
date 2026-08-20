@@ -158,6 +158,54 @@ export async function onRequest(context) {
     // the plain document.
     const personalMessage = (data.message || "").trim().slice(0, 2000);
 
+    // If a design proof is attached but not yet sent, fold it into THIS
+    // email instead of the customer getting a second one moments later
+    // (functions/api/design-proofs.js's sendPendingDesignProof, called by
+    // admin.html right after this endpoint returns, queries the same
+    // "sent_at IS NULL" condition - marking it sent below makes that call
+    // a no-op, so this is the only place the combined send actually
+    // happens, not a duplicate path). Two emails landing back to back was
+    // also making the second one more likely to be caught by spam
+    // filters - one email with everything in it reads as a normal reply
+    // in a thread instead.
+    let pendingProof = null;
+    let proofAttachment = null;
+    let proofBlockHtml = "";
+    try {
+      pendingProof = await db.prepare(
+        "SELECT * FROM design_proofs WHERE order_id = ? AND sent_at IS NULL ORDER BY version DESC LIMIT 1"
+      ).bind(o.id).first();
+    } catch {
+      // design_proofs table doesn't exist yet on a fresh DB - it's created
+      // lazily by design-proofs.js, so "no proof" is the correct read here.
+    }
+    if (pendingProof && env.DESIGN_FILES) {
+      const proofUrl = `${new URL(request.url).origin}/proof.html?token=${pendingProof.token}`;
+      const isImage = /^image\//.test(pendingProof.content_type || "");
+      if (isImage) {
+        const obj = await env.DESIGN_FILES.get(pendingProof.r2_key);
+        if (obj) {
+          const bytes = new Uint8Array(await obj.arrayBuffer());
+          let binary = "";
+          const CHUNK = 8192; // avoid blowing the call stack on String.fromCharCode(...bigArray)
+          for (let i = 0; i < bytes.length; i += CHUNK) binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+          proofAttachment = { filename: pendingProof.filename, content: btoa(binary), content_id: "proof-image" };
+        }
+      }
+      const imageTag = proofAttachment
+        ? `<img src="cid:proof-image" alt="${escapeHtml(pendingProof.filename)}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:8px;margin:10px 0;" />`
+        : `<p style="margin:8px 0;"><a href="${proofUrl}" style="color:#4f46e5;">View the attached design file</a></p>`;
+      proofBlockHtml = `
+        <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:20px;background:#f8fafc;">
+          <div style="font-weight:600;font-size:15px;margin-bottom:6px;">Design proof${pendingProof.version > 1 ? ` (version ${pendingProof.version})` : ""}</div>
+          <p style="margin:0 0 4px;font-size:14px;color:#475569;">Here's the design for this order - please take a look and let us know if it's good to go.</p>
+          ${imageTag}
+          <div style="margin-top:10px;">
+            <a href="${proofUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600;font-size:14px;">Review &amp; Respond</a>
+          </div>
+        </div>`;
+    }
+
     const items = JSON.parse(o.items || "[]");
     const docLabel = o.doc_type === "invoice" ? "Invoice" : "Quote";
     const docNumber = o.doc_type === "invoice" ? o.invoice_number : o.quote_number;
@@ -237,6 +285,7 @@ export async function onRequest(context) {
             <div>Sort Code: 04-03-33, Account Number: 55185130</div>
             ${payByCardBlock}
           </div>` : ""}
+          ${proofBlockHtml}
           ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
           ${myOrdersUrl ? `<p style="margin-top:20px;font-size:13px;"><a href="${myOrdersUrl}" style="color:#4f46e5;">View all your orders</a></p>` : ""}
           <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery<br>
@@ -254,13 +303,14 @@ export async function onRequest(context) {
           pdfAttachment = { filename: o.manual_pdf_filename || `${docNumber || "invoice"}.pdf`, content: btoa(binary) };
         }
       }
+      const manualAttachments = [pdfAttachment, proofAttachment].filter(Boolean);
 
       const resendRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           from: fromAddress, to: [to], reply_to: replyToAddress, subject, html,
-          ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
+          ...(manualAttachments.length ? { attachments: manualAttachments } : {}),
         }),
       });
       if (!resendRes.ok) {
@@ -273,8 +323,11 @@ export async function onRequest(context) {
       await db.prepare(
         "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
       ).bind(crypto.randomUUID(), o.id, to, subject).run();
+      if (pendingProof) {
+        await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(pendingProof.id).run();
+      }
       await logOrderEvent(db, o.id, "sent", `Emailed to ${to}`);
-      return json({ success: true, sent_to: to });
+      return json({ success: true, sent_to: to, proof_included: !!pendingProof, proof_version: pendingProof ? pendingProof.version : null });
     }
 
     // Same live-from-the-customer-record address lookup as the printed
@@ -449,6 +502,7 @@ export async function onRequest(context) {
           ${depositBalanceLine}
           <div style="font-size:12px;color:#64748b;margin-top:4px;">VAT not applicable - not VAT registered.</div>
         </div>
+        ${proofBlockHtml}
         ${o.notes ? `<p style="margin-top:24px;color:#64748b;"><strong>Notes:</strong> ${escapeHtml(o.notes)}</p>` : ""}
         ${myOrdersUrl ? `<p style="margin-top:20px;font-size:13px;"><a href="${myOrdersUrl}" style="color:#4f46e5;">View all your orders</a></p>` : ""}
         <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery<br>
@@ -476,6 +530,8 @@ export async function onRequest(context) {
       // the HTML body alone is still a complete, readable copy.
     }
 
+    const attachments = [pdfAttachment, proofAttachment].filter(Boolean);
+
     const resendRes = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -488,7 +544,7 @@ export async function onRequest(context) {
         reply_to: replyToAddress,
         subject,
         html,
-        ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
+        ...(attachments.length ? { attachments } : {}),
       }),
     });
 
@@ -503,9 +559,12 @@ export async function onRequest(context) {
     await db.prepare(
       "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
     ).bind(crypto.randomUUID(), o.id, to, subject).run();
+    if (pendingProof) {
+      await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(pendingProof.id).run();
+    }
     await logOrderEvent(db, o.id, "sent", `Emailed to ${to}`);
 
-    return json({ success: true, sent_to: to });
+    return json({ success: true, sent_to: to, proof_included: !!pendingProof, proof_version: pendingProof ? pendingProof.version : null });
   } catch (err) {
     return json({ error: err.message }, 500);
   }

@@ -11742,13 +11742,18 @@
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-        // Any design proof attached but not yet sent goes out now too - see
-        // sendPendingDesignProof. A no-op if nothing's waiting.
-        const proofResult = await sendPendingDesignProof(id);
+        // Any design proof that was still pending got folded into that same
+        // email by send-email.js itself (see proof_included/proof_version
+        // in its response) rather than going out as a second email - this
+        // call is now just a safety-net no-op for the rare case a proof
+        // somehow wasn't already resolved above.
+        const proofResult = data.proof_included ? null : await sendPendingDesignProof(id);
         await loadOrders();
         if (viewingOrderId === id) { loadOrderCommHistory(id); loadOrderDesignProofs(id); }
         if (!silent) {
-          if (proofResult && proofResult.sent) {
+          if (data.proof_included) {
+            showActionToast('✓', `${docNumber} emailed to ${to.trim()} - version ${data.proof_version} mockup included.`);
+          } else if (proofResult && proofResult.sent) {
             showActionToast('✓', `${docNumber} emailed to ${to.trim()} - version ${proofResult.version} mockup included.`);
           } else {
             showActionToast('✓', `${docNumber} emailed to ${to.trim()}.`);
