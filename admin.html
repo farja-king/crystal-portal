@@ -9430,9 +9430,12 @@
           // with a permanently-grey "unknown" state.
           const deliveryBadge = ({
             bounced: `<span class="block mt-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-rose-100 text-rose-700 inline-block" title="${escapeAttr(o.last_email_status_detail || 'Resend reported this email bounced')}">⚠ Email bounced</span>`,
+            failed: `<span class="block mt-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-rose-100 text-rose-700 inline-block" title="${escapeAttr(o.last_email_status_detail || 'Resend could not send this email')}">⚠ Send failed</span>`,
             complained: `<span class="block mt-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-rose-100 text-rose-700 inline-block" title="The recipient marked this email as spam">⚠ Marked as spam</span>`,
             delayed: `<span class="block mt-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-700 inline-block" title="Resend is still retrying delivery">⏳ Delivery delayed</span>`,
             delivered: `<span class="block mt-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700 inline-block" title="Confirmed delivered by Resend">✓ Delivered</span>`,
+            opened: `<span class="block mt-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700 inline-block" title="Delivered and opened by the recipient">👁 Opened</span>`,
+            clicked: `<span class="block mt-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700 inline-block" title="Recipient opened it and clicked a link inside">🖱 Clicked</span>`,
           })[o.last_email_status] || '';
 
           const actions = [];
@@ -9849,9 +9852,12 @@
         // thing this history exists to show.
         const DELIVERY_BADGE = {
           bounced: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-rose-100 text-rose-700">⚠ Bounced</span>',
+          failed: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-rose-100 text-rose-700">⚠ Send failed</span>',
           complained: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-rose-100 text-rose-700">⚠ Marked as spam</span>',
           delayed: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-amber-100 text-amber-700">⏳ Delayed</span>',
           delivered: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-emerald-100 text-emerald-700">✓ Delivered</span>',
+          opened: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-emerald-100 text-emerald-700">👁 Opened</span>',
+          clicked: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-emerald-100 text-emerald-700">🖱 Clicked</span>',
         };
         el.innerHTML = log.map((e) => `
           <div class="text-sm text-slate-700 border-b border-slate-100 last:border-0 py-1.5">
@@ -9859,7 +9865,7 @@
             <span class="text-slate-400">- ${escapeHtml(ukDateTime(e.sent_at))}</span>
             ${DELIVERY_BADGE[e.delivery_status] || ''}</div>
             ${e.subject ? `<div class="text-xs text-slate-500">Subject: ${escapeHtml(e.subject)}</div>` : ''}
-            ${e.delivery_detail && (e.delivery_status === 'bounced' || e.delivery_status === 'complained') ? `<div class="text-xs text-rose-600">${escapeHtml(e.delivery_detail)}</div>` : ''}
+            ${e.delivery_detail && (e.delivery_status === 'bounced' || e.delivery_status === 'complained' || e.delivery_status === 'failed') ? `<div class="text-xs text-rose-600">${escapeHtml(e.delivery_detail)}</div>` : ''}
           </div>`).join('');
       } catch (e) {
         if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load communication history.</p>';

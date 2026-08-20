@@ -41,16 +41,21 @@ async function verifySvixSignature(secret, svixId, svixTimestamp, rawBody, svixS
   return provided.includes(expected);
 }
 
-// Only these event types map to a status worth recording - "opened"/
-// "clicked" aren't tracked (open-tracking pixels are unreliable and not
-// something Martin asked for), and anything unrecognised is ignored rather
-// than erroring, since Resend can add new event types without warning.
+// Only these event types map to a status worth recording - anything
+// unrecognised is ignored rather than erroring, since Resend can add new
+// event types without warning. Events fire in roughly this order for a
+// normal send (sent -> delivered -> opened -> clicked), each overwriting
+// the previous status unconditionally below, so "clicked" naturally ends
+// up as the most positive confirmation shown once it happens.
 const STATUS_BY_EVENT = {
   "email.sent": "sent",
   "email.delivered": "delivered",
   "email.delivery_delayed": "delayed",
   "email.bounced": "bounced",
   "email.complained": "complained",
+  "email.failed": "failed",
+  "email.opened": "opened",
+  "email.clicked": "clicked",
 };
 
 export async function onRequest(context) {
