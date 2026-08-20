@@ -8154,8 +8154,20 @@
       renderOrderLines();
     }
 
+    // New row starts with the same decorations as the row above it (deep-
+    // copied, not shared by reference) rather than blank - the common case
+    // by far is several colour/size rows of the same garment all getting
+    // the same logo/placement, and re-adding "Embroidery, Left chest,
+    // MAIN LOGO" by hand for every single row was the actual complaint
+    // this was built to fix. Each row's decorations still edit
+    // independently after that (see the comment on addBreakdownDecoration
+    // for why decorations are per-row at all) - this only changes the
+    // starting point, not the ability to make one row different.
     function addBreakdownRow(idx) {
-      orderLines[idx].breakdown.push({ colour: '', size: '', qty: 1, decorations: [] });
+      const line = orderLines[idx];
+      const template = line.breakdown[line.breakdown.length - 1];
+      const clonedDecorations = template ? template.decorations.map((d) => ({ ...d })) : [];
+      line.breakdown.push({ colour: '', size: '', qty: 1, decorations: clonedDecorations });
       renderOrderLines();
     }
 
