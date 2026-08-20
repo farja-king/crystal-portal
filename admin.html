@@ -9692,10 +9692,21 @@
         // colour/size - the breakdown row only ever carries its qty, so
         // showing it here would just be a redundant "- / - × 1".
         const detailLines = itemDetailLines(item, 'text-xs text-slate-500');
+        // Total includes decoration cost, but Qty × unit price on its own
+        // doesn't - "Qty: 2 | £35.00 each | Total: £80.00" reads like a
+        // maths error when the extra £10 (decoration) has nowhere to show.
+        // Same reasoning as the itemization fix already applied to the
+        // customer-facing PDF/email (functions/_lib/document-pdf.js,
+        // functions/api/send-email.js) - reconcile the numbers here too
+        // rather than presenting a total nothing above it adds up to.
+        const garmentSubtotal = Number(item.qty) * Number(item.unit_price);
+        const decorationSubtotal = Number(item.line_total) - garmentSubtotal;
         return `<div class="border-b border-slate-100 pb-3 mb-3 last:border-0">
           <div class="font-medium text-slate-900">${baseLabel}</div>
           ${detailLines}
-          <div class="text-sm mt-1">Qty: ${item.qty} | £${Number(item.unit_price).toFixed(2)} each | Total: £${Number(item.line_total).toFixed(2)}</div>
+          <div class="text-sm mt-1">Qty: ${item.qty} | £${Number(item.unit_price).toFixed(2)} each = £${garmentSubtotal.toFixed(2)}</div>
+          ${decorationSubtotal > 0.001 ? `<div class="text-sm text-slate-500">+ Decoration: £${decorationSubtotal.toFixed(2)}</div>` : ''}
+          <div class="text-sm font-semibold mt-1">Total: £${Number(item.line_total).toFixed(2)}</div>
         </div>`;
       }).join('');
 
@@ -11574,7 +11585,15 @@
         // was actually cut and packed. Skipped for a customer's own saved
         // item (no colour/size concept - see admin.html's other breakdownLines).
         const detailLines = itemDetailLines(item, 'dec');
-        return `<tr><td>${baseLabel}${detailLines}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
+        // Unit × Qty here is the garment alone, but the Total column is
+        // the full line (garment + decoration) - same reconciliation as
+        // viewOrder's itemsHtml above, so the decoration cost has
+        // somewhere to show instead of just inflating Total with no
+        // explanation on the row.
+        const garmentSubtotal = Number(item.qty) * Number(item.unit_price);
+        const decorationSubtotal = Number(item.line_total) - garmentSubtotal;
+        const decorationTotalLine = decorationSubtotal > 0.001 ? `<div class="dec">+ Decoration: £${decorationSubtotal.toFixed(2)}</div>` : '';
+        return `<tr><td>${baseLabel}${detailLines}${decorationTotalLine}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
       }).join('');
 
       win.document.write(`
