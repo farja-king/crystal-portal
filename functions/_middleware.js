@@ -104,6 +104,16 @@ export async function onRequest(context) {
   // from the login gate entirely rather than trying to also gate it here.
   if (url.pathname === "/api/square-webhook") return pass("public-square-webhook");
 
+  // resend-webhook.js - same reasoning as square-webhook.js above, called
+  // by Resend itself with no session/API key available. Its own Svix
+  // signature verification (against RESEND_WEBHOOK_SECRET) is the real
+  // auth for this route - without this exemption every event arrived here
+  // as a 401 before ever reaching that check, which is exactly what
+  // happened to the first real delivered/opened events after this was
+  // built (visible in Resend's own webhook Events log as "Attempting" /
+  // 401 "Not authenticated").
+  if (url.pathname === "/api/resend-webhook") return pass("public-resend-webhook");
+
   if (!env.DB) return pass("no-db");
 
   let cfg = null;
