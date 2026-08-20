@@ -8154,20 +8154,11 @@
       renderOrderLines();
     }
 
-    // New row starts with the same decorations as the row above it (deep-
-    // copied, not shared by reference) rather than blank - the common case
-    // by far is several colour/size rows of the same garment all getting
-    // the same logo/placement, and re-adding "Embroidery, Left chest,
-    // MAIN LOGO" by hand for every single row was the actual complaint
-    // this was built to fix. Each row's decorations still edit
-    // independently after that (see the comment on addBreakdownDecoration
-    // for why decorations are per-row at all) - this only changes the
-    // starting point, not the ability to make one row different.
+    // Decorations now live once at the line level (see decorationsBlock in
+    // renderOrderLines) and apply to every colour/size row underneath -
+    // a new row never needs its own decorations, just colour/size/qty.
     function addBreakdownRow(idx) {
-      const line = orderLines[idx];
-      const template = line.breakdown[line.breakdown.length - 1];
-      const clonedDecorations = template ? template.decorations.map((d) => ({ ...d })) : [];
-      line.breakdown.push({ colour: '', size: '', qty: 1, decorations: clonedDecorations });
+      orderLines[idx].breakdown.push({ colour: '', size: '', qty: 1, decorations: [] });
       renderOrderLines();
     }
 
@@ -8225,23 +8216,11 @@
       el.textContent = preview ? preview.text : '';
     }
 
-    // Decorations scoped to one specific breakdown row (one colour/size),
-    // not the whole line - so "Highlanders Logo" on the Black/M row and
-    // "RCT Logo" on the Black/XL row stay two distinct, correctly-priced
-    // and correctly-labelled things instead of both applying ambiguously
-    // to the whole line. Mirrors the line-level addOrderLineDecoration/etc
-    // functions, just indexed by rowIdx as well - those still exist
-    // unchanged for a customer-supplied line or a customer's flat saved
-    // item (no colour/size breakdown to attach a decoration to).
-    function addBreakdownDecoration(idx, rowIdx) {
-      const line = orderLines[idx];
-      const row = line.breakdown[rowIdx];
-      const method = 'embroidery';
-      const placement = 'left_chest';
-      row.decorations.push({ method, placement, price: suggestDecorationPrice(method, placement, line.source) ?? 0, qty: 1, notes: '' });
-      renderOrderLines();
-    }
-
+    // Nothing adds a NEW per-row decoration any more (decorations are
+    // entered once at the line level - see decorationsBlock in
+    // renderOrderLines and addOrderLineDecoration). These remaining
+    // mutators only exist to view/edit/remove decorations already sitting
+    // on a breakdown row from an order built before that change.
     function removeBreakdownDecoration(idx, rowIdx, decIdx) {
       orderLines[idx].breakdown[rowIdx].decorations.splice(decIdx, 1);
       renderOrderLines();
@@ -8292,28 +8271,41 @@
         : (Number(line.qty) || 0);
     }
 
-    // A garment line (real colour/size breakdown, not a customer's flat
-    // saved item) prices each row's decorations against just that row's own
-    // qty - see addBreakdownDecoration above. Every other line type keeps
-    // the original whole-line formula (decorations shared across lineQty).
+    // Decorations are entered once at the line level and apply across every
+    // colour/size row (see decorationsBlock in renderOrderLines) - same
+    // formula as every other line type: decoration cost per unit × total
+    // qty across the whole line. Old orders built before this change may
+    // still carry decorations on individual breakdown rows instead (see
+    // addBreakdownDecoration, kept only for viewing/removing legacy data,
+    // not for adding new ones) - those are priced against just that row's
+    // own qty, same exclusive-or as the matching logic in
+    // functions/_lib/document-pdf.js and functions/api/send-email.js, so
+    // the builder's total always matches what actually goes out on the
+    // PDF/email for both old and new-style lines.
     function lineTotal(line) {
       const isGarmentLine = line.source === 'catalog' && !line.customer_item;
       if (isGarmentLine) {
-        return (line.breakdown || []).reduce((sum, b) => {
-          const decTotal = (b.decorations || []).reduce((s, d) => s + (Number(d.price) || 0) * (Number(d.qty) || 1), 0);
-          return sum + (Number(b.qty) || 0) * ((Number(line.unit_price) || 0) + decTotal);
-        }, 0);
+        const hasRowDecorations = (line.breakdown || []).some((b) => (b.decorations || []).length);
+        if (hasRowDecorations) {
+          return (line.breakdown || []).reduce((sum, b) => {
+            const decTotal = (b.decorations || []).reduce((s, d) => s + (Number(d.price) || 0) * (Number(d.qty) || 1), 0);
+            return sum + (Number(b.qty) || 0) * ((Number(line.unit_price) || 0) + decTotal);
+          }, 0);
+        }
+        const lineDecTotal = (line.decorations || []).reduce((sum, d) => sum + (Number(d.price) || 0) * (Number(d.qty) || 1), 0);
+        return lineQty(line) * ((Number(line.unit_price) || 0) + lineDecTotal);
       }
       const decTotal = (line.decorations || []).reduce((sum, d) => sum + (Number(d.price) || 0) * (Number(d.qty) || 1), 0);
       return lineQty(line) * ((Number(line.unit_price) || 0) + decTotal);
     }
 
     // One decoration's editable row - shared markup between a line-level
-    // decoration (customer-supplied / customer's flat saved item) and a
-    // per-breakdown-row decoration (a real garment line - see
-    // usesRowDecorations in renderOrderLines) so both look and behave
-    // identically; only which mutator function each control calls differs,
-    // passed in as ready-to-use onclick/oninput strings.
+    // decoration (every line type now, see decorationsBlock in
+    // renderOrderLines) and a legacy per-breakdown-row decoration (still
+    // rendered for a garment line built before decorations moved to the
+    // line level) so both look and behave identically; only which mutator
+    // function each control calls differs, passed in as ready-to-use
+    // onclick/oninput strings.
     function decorationRowMarkup(dec, showQuickPicks, includedNote, h) {
       const decQty = Number(dec.qty) || 1;
       return `
@@ -8415,23 +8407,24 @@
         // selected the actual colour/size/qty per unit gets itemized here.
         // A customer's own saved item (line.customer_item) has no colour/size
         // concept at all - just a qty, so it skips this grid entirely.
-        // A real garment breakdown row (usesRowDecorations below) carries its
-        // OWN decorations - one row, one garment, one logo, all grouped
-        // together as a single unit - instead of a decoration list shared
-        // ambiguously across every colour/size on the line (see
-        // addBreakdownDecoration and lineTotal).
-        const usesRowDecorations = !isCustomerSupplied && line.product_id && !line.customer_item;
+        const isGarmentBreakdown = !isCustomerSupplied && line.product_id && !line.customer_item;
 
         const breakdownBlock = (!isCustomerSupplied && line.product_id && line.customer_item) ? `
           <div class="mt-2 flex items-center gap-2">
             <span class="text-xs text-slate-500 font-medium">Qty</span>
             <input type="number" min="1" value="${line.breakdown[0] ? line.breakdown[0].qty : 1}" oninput="updateBreakdownQtyLive(${idx}, 0, this.value)" class="w-20 rounded border border-slate-300 px-2 py-1 text-sm" />
-          </div>` : usesRowDecorations ? `
+          </div>` : isGarmentBreakdown ? `
           <div class="mt-2 space-y-2">
             <div class="flex items-center gap-2 text-xs text-slate-500 font-medium px-1">
               <span class="w-32">Colour</span><span class="w-[120px]">Size</span><span class="w-16">Qty</span><span class="w-5"></span>
             </div>
             ${line.breakdown.map((b, rowIdx) => {
+              // Decorations moved to one shared field for the whole line
+              // (decorationsBlock below) - this per-row markup only still
+              // appears when a row already has legacy decorations from an
+              // order built before that change, so they stay visible and
+              // removable rather than silently disappearing; there's no
+              // way to add a new one here any more.
               const rowDecorationsHtml = (b.decorations || []).map((dec, decIdx) => decorationRowMarkup(dec, false,
                 dec.method === 'embroidery' && dec.placement === 'left_chest', {
                 method: `updateBreakdownDecorationMethod(${idx}, ${rowIdx}, ${decIdx}, this.value)`,
@@ -8460,7 +8453,6 @@
                   ${breakdownStockHtml(idx, rowIdx)}
                 </div>
                 ${rowDecorationsHtml}
-                <button type="button" onclick="addBreakdownDecoration(${idx}, ${rowIdx})" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1.5">+ Add decoration for this item</button>
               </div>`;
             }).join('')}
             <div class="flex items-center justify-between pt-0.5">
@@ -8469,11 +8461,13 @@
             </div>
           </div>` : '';
 
-        // Line-level decorations - only used for the two line types with no
-        // colour/size breakdown to attach a decoration to (customer-supplied,
-        // and a customer's flat saved item): a real garment breakdown line
-        // renders its decorations per row instead (see breakdownBlock above).
-        const decorationsBlock = usesRowDecorations ? '' : line.decorations.map((dec, decIdx) => decorationRowMarkup(dec,
+        // One shared decorations field per line, applying to every colour/
+        // size row above it (see lineTotal) - used for every line type now,
+        // garment lines included. Used to be per-breakdown-row only for a
+        // garment line, which meant re-entering the same embroidery/DTF
+        // decoration on every single colour/size row; this is what fixes
+        // that repetition.
+        const decorationsBlock = line.decorations.map((dec, decIdx) => decorationRowMarkup(dec,
           dec.method === 'embroidery' && dec.placement === 'left_chest' && isCustomerSupplied,
           dec.method === 'embroidery' && dec.placement === 'left_chest' && !isCustomerSupplied, {
           method: `updateDecorationMethod(${idx}, ${decIdx}, this.value)`,
@@ -8520,7 +8514,7 @@
             ${topRow}
             ${decorationsBlock}
             <div class="flex items-center justify-between mt-2">
-              ${usesRowDecorations ? '<span></span>' : `<button type="button" onclick="addOrderLineDecoration(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add decoration</button>`}
+              <button type="button" onclick="addOrderLineDecoration(${idx})" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add decoration${isGarmentBreakdown ? ' (applies to every colour/size above)' : ''}</button>
               <span id="line-total-${idx}" class="text-sm font-semibold text-slate-700">Line total: ${money(lineTotal(line))}</span>
             </div>
           </div>`;
@@ -8775,21 +8769,13 @@
             method: d.method, placement: d.placement, price: d.price, qty: d.qty || 1, notes: d.notes || '',
           })),
         }));
-        // Backward-compat: a quote saved before decorations moved onto
-        // individual breakdown rows still has them as one flat line-level
-        // list (item.decorations) with no row carrying its own - rather than
-        // lose that on edit, drop them onto the first row so they're still
-        // visible and editable (best-effort single association; multiple
-        // rows on a pre-existing quote were always ambiguous about which
-        // decoration belonged to which anyway - see lineTotal's old-style
-        // fallback in functions/api/orders.js for the read-only view/print
-        // equivalent of this same fallback).
-        const isGarmentLine = item.source === 'catalog' && !item.customer_item;
-        if (isGarmentLine && breakdown.length && !breakdown.some((b) => b.decorations.length) && (item.decorations || []).length) {
-          breakdown[0].decorations = (item.decorations || []).map((d) => ({
-            method: d.method, placement: d.placement, price: d.price, qty: d.qty || 1, notes: d.notes || '',
-          }));
-        }
+        // item.decorations (flat, line-level) is the current/default style
+        // for every line type, garment lines included - it maps straight
+        // onto the builder line's own decorations field below, no
+        // conversion needed. Only a garment line with genuine per-row
+        // decorations (breakdown[].decorations, from an order built before
+        // decorations moved to the line level) keeps them attached to
+        // their own row above.
         return {
           source: item.source,
           product_id: item.product_id || null,
@@ -9650,20 +9636,16 @@
     }
 
     // Shared by viewOrder and printOrder - one line per breakdown row
-    // (colour/size × qty), each immediately followed by ITS OWN decorations,
-    // so "Black / M" sits right above "Embroidery - Left chest - Highlanders
-    // Logo" instead of every decoration being lumped together underneath
-    // every row with no way to tell which garment it was actually for (the
-    // bug this whole per-row restructuring fixes - see usesRowDecorations in
-    // renderOrderLines for the matching builder-side pairing). A decoration's
-    // notes (e.g. which logo) are always included - previously missing
-    // entirely from the View panel, which is exactly why a saved quote
-    // looked like it was charging for embroidery with no indication of what
-    // was actually being embroidered.
-    // Falls back to the old flat "every decoration once, underneath every
-    // row" display for a quote saved before this existed (no breakdown row
-    // has its own decorations, but the item still has old-style line-level
-    // ones) - so an old quote still displays exactly as it always did.
+    // (colour/size × qty). If the item still carries old-style per-row
+    // decorations (a garment line built before decorations moved to the
+    // line level - see decorationsBlock in renderOrderLines), each row is
+    // immediately followed by ITS OWN decorations, so "Black / M" sits
+    // right above "Embroidery - Left chest - Highlanders Logo" instead of
+    // every decoration being lumped together with no way to tell which
+    // garment it was actually for. Otherwise falls back to the flat "every
+    // decoration once, underneath every row" display, which is what every
+    // line (garment or not) uses now that decorations are entered once per
+    // line. A decoration's notes (e.g. which logo) are always included.
     function itemDetailLines(item, decClass) {
       const decLine = (d) => {
         const dQty = Number(d.qty) || 1;
