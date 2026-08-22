@@ -10,9 +10,23 @@
 // Storage: a second R2 bucket, env.BACKUPS (crystal-portal-backups),
 // separate from env.DESIGN_FILES (the live file storage) so a backup can
 // never be corrupted by whatever it's backing up. Each run writes under its
-// own timestamped prefix - db/<table>.json per table, files/<original-key>
-// for every referenced file - so old snapshots are never overwritten.
+// own timestamped prefix - db/<table>-<page>.json per PAGE_SIZE-row chunk of
+// each table, files/<original-key> for every referenced file - so old
+// snapshots are never overwritten.
+//
+// Tables are paged (keyset pagination on id, not OFFSET - stays index-backed
+// however deep it goes) rather than pulled with one SELECT * / JSON.stringify
+// - the products table alone holds 100k+ rows since the PenCarrie/Uneek
+// catalogue syncs (see functions/api/pencarrie-sync.js), and a single-shot
+// export of that size silently ran past this Function's execution limit
+// with no catchable error, leaving backup_log stuck on 'running' forever -
+// every 15-minute cron sweep just piled up another dead row (never actually
+// backing anything up) instead of the once-a-day snapshot this is meant to
+// be. Paging keeps every individual D1 query and R2 write small regardless
+// of table size.
 import { emailShell } from "../_lib/email-template.js";
+
+const PAGE_SIZE = 2000;
 
 // Every table backed up/restored. Order matters for restore: tables with no
 // foreign-key-ish dependency on others go first, though D1/SQLite here
@@ -72,18 +86,38 @@ export async function onRequest(context) {
       )
     `).run();
 
-    async function exportTable(table) {
-      const { results } = await db.prepare(`SELECT * FROM ${table}`).all();
-      return results;
+    // Pages through the table in id order (keyset, not OFFSET) writing one
+    // JSON file to R2 per PAGE_SIZE-row chunk, plus a small `.pages.json`
+    // manifest recording how many chunks there are - so both the export
+    // query and every individual write stay small no matter how large the
+    // table is. Returns the row count and any R2 file keys this table's
+    // rows referenced (per FILE_KEY_SOURCES), collected page-by-page rather
+    // than by holding the whole table in memory.
+    async function exportTable(table, prefix) {
+      const fileColumns = FILE_KEY_SOURCES.filter((s) => s.table === table).map((s) => s.column);
+      const fileKeys = [];
+      let cursor = "";
+      let page = 0;
+      let total = 0;
+      while (true) {
+        const { results } = await db.prepare(
+          `SELECT * FROM ${table} WHERE id > ? ORDER BY id LIMIT ?`
+        ).bind(cursor, PAGE_SIZE).all();
+        if (!results.length) break;
+        await env.BACKUPS.put(`${prefix}db/${table}-${page}.json`, JSON.stringify(results));
+        for (const col of fileColumns) {
+          for (const row of results) if (row[col]) fileKeys.push(row[col]);
+        }
+        total += results.length;
+        cursor = results[results.length - 1].id;
+        page += 1;
+        if (results.length < PAGE_SIZE) break;
+      }
+      await env.BACKUPS.put(`${prefix}db/${table}.pages.json`, JSON.stringify({ pages: page, rows: total }));
+      return { total, fileKeys };
     }
 
-    // Deletes every row then re-inserts from the snapshot, using each row's
-    // own keys to build the INSERT - self-describing, so it doesn't need a
-    // hardcoded column list per table (and tolerates a table having grown
-    // new columns since the snapshot was taken; those just stay at their
-    // DEFAULT for restored rows that predate them).
-    async function restoreTable(table, rows) {
-      await db.prepare(`DELETE FROM ${table}`).run();
+    async function insertRows(table, rows) {
       if (!rows || !rows.length) return;
       const columns = Object.keys(rows[0]);
       const placeholders = columns.map(() => "?").join(",");
@@ -94,14 +128,31 @@ export async function onRequest(context) {
       }
     }
 
-    function collectFileKeys(tableData) {
-      const keys = new Set();
-      for (const { table, column } of FILE_KEY_SOURCES) {
-        for (const row of tableData[table] || []) {
-          if (row[column]) keys.add(row[column]);
-        }
+    // Deletes every row then re-inserts from the snapshot's chunk files,
+    // page by page - the export-side counterpart above. Falls back to the
+    // old single db/<table>.json format for backups taken before chunking
+    // existed (the six from 11-16 Aug, back when the tables were still
+    // small enough for that to work) so those stay restorable too.
+    async function restoreTable(table, prefix) {
+      await db.prepare(`DELETE FROM ${table}`).run();
+      const pagesText = await env.BACKUPS.get(prefix + "db/" + table + ".pages.json");
+      if (!pagesText) {
+        const legacy = await env.BACKUPS.get(prefix + "db/" + table + ".json");
+        if (!legacy) return 0;
+        const rows = JSON.parse(await legacy.text());
+        await insertRows(table, rows);
+        return rows.length;
       }
-      return [...keys];
+      const { pages } = JSON.parse(await pagesText.text());
+      let total = 0;
+      for (let p = 0; p < pages; p++) {
+        const text = await env.BACKUPS.get(`${prefix}db/${table}-${p}.json`);
+        if (!text) continue;
+        const rows = JSON.parse(await text.text());
+        await insertRows(table, rows);
+        total += rows.length;
+      }
+      return total;
     }
 
     function fmtBytes(n) {
@@ -152,16 +203,15 @@ export async function onRequest(context) {
       ).bind(id, startedAt.toISOString(), triggeredBy, prefix).run();
 
       try {
-        const tableData = {};
         const tableCounts = {};
+        const fileKeySet = new Set();
         for (const table of BACKUP_TABLES) {
-          const rows = await exportTable(table);
-          tableData[table] = rows;
-          tableCounts[table] = rows.length;
-          await env.BACKUPS.put(prefix + "db/" + table + ".json", JSON.stringify(rows));
+          const { total, fileKeys: keys } = await exportTable(table, prefix);
+          tableCounts[table] = total;
+          keys.forEach((k) => fileKeySet.add(k));
         }
 
-        const fileKeys = collectFileKeys(tableData);
+        const fileKeys = [...fileKeySet];
         let filesCount = 0;
         let totalBytes = 0;
         for (const key of fileKeys) {
@@ -188,7 +238,24 @@ export async function onRequest(context) {
       }
     }
 
+    // A row can only ever be left on 'running' by something that killed the
+    // Function mid-backup (this is exactly how the pre-paging bug above
+    // surfaced - every attempt died silently, past the point where the
+    // try/catch could mark it 'error', and the 15-min cron just kept piling
+    // up more of them). Anything still 'running' after 10 minutes - far
+    // longer than a real paged backup takes - gets swept to 'error' so a
+    // genuine future failure shows up honestly instead of sitting there
+    // looking perpetually in-progress.
+    async function reapStaleRunning() {
+      await db.prepare(`
+        UPDATE backup_log SET status = 'error', completed_at = CURRENT_TIMESTAMP,
+          error_message = 'Timed out - the Function was stopped before this backup could finish'
+        WHERE status = 'running' AND started_at < datetime('now', '-10 minutes')
+      `).run();
+    }
+
     async function listBackups() {
+      await reapStaleRunning();
       const { results } = await db.prepare(
         "SELECT * FROM backup_log ORDER BY started_at DESC LIMIT 60"
       ).all();
@@ -231,16 +298,20 @@ export async function onRequest(context) {
       // touching anything, no way to skip this.
       const preRestore = await runBackup("pre_restore");
 
-      const tableData = {};
+      const tableCounts = {};
       for (const table of BACKUP_TABLES) {
-        const text = await env.BACKUPS.get(target.r2_prefix + "db/" + table + ".json");
-        tableData[table] = text ? JSON.parse(await text.text()) : [];
-      }
-      for (const table of BACKUP_TABLES) {
-        await restoreTable(table, tableData[table]);
+        tableCounts[table] = await restoreTable(table, target.r2_prefix);
       }
 
-      const fileKeys = collectFileKeys(tableData);
+      // Re-derive which files are needed from the rows just restored into
+      // D1, rather than from the snapshot's own JSON (works the same for
+      // both the chunked and legacy single-file backup formats, so this
+      // doesn't need its own format fallback).
+      const fileKeys = new Set();
+      for (const { table, column } of FILE_KEY_SOURCES) {
+        const { results } = await db.prepare(`SELECT ${column} FROM ${table} WHERE ${column} IS NOT NULL`).all();
+        results.forEach((r) => { if (r[column]) fileKeys.add(r[column]); });
+      }
       let filesRestored = 0;
       for (const key of fileKeys) {
         const obj = await env.BACKUPS.get(target.r2_prefix + "files/" + key);
@@ -253,7 +324,7 @@ export async function onRequest(context) {
         success: true,
         restored_to: target.started_at,
         pre_restore_backup_id: preRestore.id,
-        tables_restored: Object.fromEntries(BACKUP_TABLES.map((t) => [t, (tableData[t] || []).length])),
+        tables_restored: tableCounts,
         files_restored: filesRestored,
       });
     }
