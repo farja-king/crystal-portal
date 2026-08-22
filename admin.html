@@ -10068,14 +10068,36 @@
           opened: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-emerald-100 text-emerald-700">👁 Opened</span>',
           clicked: '<span class="ml-1 px-1.5 py-0.5 text-xs font-semibold rounded bg-emerald-100 text-emerald-700">🖱 Clicked</span>',
         };
-        el.innerHTML = log.map((e) => `
+        // Full event-by-event history (id="comm-activity-N") - "Sent" is
+        // always first (this portal's own record of when it actually sent
+        // it, not a webhook event), then every delivered/opened/clicked/
+        // bounced event Resend has ever reported for that specific email,
+        // each with its own timestamp - see functions/api/resend-webhook.js's
+        // email_events table, which keeps every one of these separately
+        // rather than only the latest status. This is what answers "how
+        // many times has this actually been opened, and when" - the single
+        // badge above only ever showed the most recent status.
+        const EVENT_LABEL = {
+          sent: '📤 Sent', delivered: '✓ Delivered', opened: '👁 Opened', clicked: '🖱 Clicked',
+          bounced: '⚠ Bounced', complained: '⚠ Marked as spam', delayed: '⏳ Delivery delayed', failed: '⚠ Send failed',
+        };
+        el.innerHTML = log.map((e, idx) => {
+          const timeline = [{ event_type: 'sent', occurred_at: e.sent_at }, ...(e.events || [])];
+          const activityId = `comm-activity-${idx}`;
+          return `
           <div class="text-sm text-slate-700 border-b border-slate-100 last:border-0 py-1.5">
             <div>Emailed to <span class="font-medium">${escapeHtml(e.sent_to)}</span>
             <span class="text-slate-400">- ${escapeHtml(ukDateTime(e.sent_at))}</span>
             ${DELIVERY_BADGE[e.delivery_status] || ''}</div>
             ${e.subject ? `<div class="text-xs text-slate-500">Subject: ${escapeHtml(e.subject)}</div>` : ''}
             ${e.delivery_detail && (e.delivery_status === 'bounced' || e.delivery_status === 'complained' || e.delivery_status === 'failed') ? `<div class="text-xs text-rose-600">${escapeHtml(e.delivery_detail)}</div>` : ''}
-          </div>`).join('');
+            <button type="button" onclick="document.getElementById('${activityId}').classList.toggle('hidden')" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1">📊 View activity (${timeline.length})</button>
+            <div id="${activityId}" class="hidden mt-1 pl-3 border-l-2 border-slate-100 space-y-0.5">
+              ${timeline.map((t) => `<div class="text-xs text-slate-500">${EVENT_LABEL[t.event_type] || t.event_type} - ${escapeHtml(ukDateTime(t.occurred_at))}${t.detail ? ` (${escapeHtml(t.detail)})` : ''}</div>`).join('')}
+              <div class="text-xs text-slate-400 italic mt-1">Replies aren't tracked here - check the Inbox tab for anything the customer actually wrote back.</div>
+            </div>
+          </div>`;
+        }).join('');
       } catch (e) {
         if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load communication history.</p>';
       }

@@ -114,6 +114,24 @@ export async function onRequest(context) {
       // already exists
     }
   }
+  // email_log/orders above only ever hold the LATEST status - fine for a
+  // quick badge, but "how many times has this actually been opened, and
+  // when" needs every event kept, not just overwritten by the next one.
+  // This is that full history: one row per webhook call, never updated
+  // once written, joined back to its email via resend_email_id in
+  // functions/api/send-email.js's GET ?order_id= (which is what the
+  // "View activity" report in admin.html's Communication History reads).
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS email_events (
+      id TEXT PRIMARY KEY,
+      resend_email_id TEXT NOT NULL,
+      order_id TEXT,
+      event_type TEXT NOT NULL,
+      occurred_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      detail TEXT
+    )
+  `).run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_email_events_email ON email_events (resend_email_id)").run();
 
   // The bounce/complaint reason, if Resend included one - kept as a plain
   // string so it can just be shown as a tooltip, not parsed further.
@@ -126,6 +144,9 @@ export async function onRequest(context) {
   await db.prepare(
     "UPDATE email_log SET delivery_status = ?, delivery_status_at = CURRENT_TIMESTAMP, delivery_detail = ? WHERE resend_email_id = ?"
   ).bind(status, detail, emailId).run();
+  await db.prepare(
+    "INSERT INTO email_events (id, resend_email_id, order_id, event_type, detail) VALUES (?, ?, ?, ?, ?)"
+  ).bind(crypto.randomUUID(), emailId, row ? row.order_id : null, status, detail).run();
 
   if (row && row.order_id) {
     await db.prepare(

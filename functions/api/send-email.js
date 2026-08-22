@@ -90,14 +90,36 @@ export async function onRequest(context) {
     }
 
     // GET ?order_id=X - the full send history for one quote/invoice, for
-    // the View Quote panel's "Communication History" section.
+    // the View Quote panel's "Communication History" section. Each row
+    // also carries its full event timeline (events[]) - see functions/api/
+    // resend-webhook.js's email_events table, which keeps every delivered/
+    // opened/clicked/bounced event separately rather than the single
+    // latest-status columns on this row, so "opened 3 times" is answerable
+    // (the "View activity" report in admin.html reads this).
     if (request.method === "GET") {
       const orderId = new URL(request.url).searchParams.get("order_id");
       if (!orderId) return json({ error: "order_id is required" }, 400);
       const { results } = await db.prepare(
-        "SELECT sent_to, subject, sent_at, delivery_status, delivery_status_at, delivery_detail FROM email_log WHERE order_id = ? ORDER BY sent_at DESC"
+        "SELECT sent_to, subject, sent_at, resend_email_id, delivery_status, delivery_status_at, delivery_detail FROM email_log WHERE order_id = ? ORDER BY sent_at DESC"
       ).bind(orderId).all();
-      return json(results);
+
+      const emailIds = results.map((r) => r.resend_email_id).filter(Boolean);
+      let eventsByEmail = {};
+      if (emailIds.length) {
+        try {
+          const placeholders = emailIds.map(() => "?").join(",");
+          const { results: events } = await db.prepare(
+            `SELECT resend_email_id, event_type, occurred_at, detail FROM email_events WHERE resend_email_id IN (${placeholders}) ORDER BY occurred_at ASC`
+          ).bind(...emailIds).all();
+          for (const e of events) {
+            (eventsByEmail[e.resend_email_id] = eventsByEmail[e.resend_email_id] || []).push(e);
+          }
+        } catch {
+          // email_events table doesn't exist yet (no webhook event has ever
+          // landed) - every row just gets an empty events list below.
+        }
+      }
+      return json(results.map((r) => ({ ...r, events: eventsByEmail[r.resend_email_id] || [] })));
     }
 
     if (request.method !== "POST") {
