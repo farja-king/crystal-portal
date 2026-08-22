@@ -1128,19 +1128,27 @@
             <button id="ord-filter-quote-btn" onclick="setOrdersDocTypeFilter('quote')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Quotes</button>
             <button id="ord-filter-invoice-btn" onclick="setOrdersDocTypeFilter('invoice')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Invoices</button>
           </div>
-          <button onclick="cleanUpOrphanedProofs()" title="Design proof files left over from quotes deleted before this cleanup existed - a one-off backlog, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            🧹 Clean Up Old Files
-          </button>
-          <button onclick="backfillOrderTimeline()" title="Rebuilds the Activity Timeline for every order that predates that feature, from history that already exists (email log, payments, production steps). Safe to click more than once - only fills in orders with no timeline yet." class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            📜 Backfill Timeline
-          </button>
-          <div class="flex flex-col gap-2">
-            <button onclick="resetInvoiceCounter()" title="Only changes where the NEXT invoice number starts counting from - doesn't touch, renumber, or delete any existing invoice" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-              🔢 Renumber Invoices
+          <!-- Rare/one-off maintenance actions, tucked away from the
+               everyday buttons above - see toggleOrdersUtilitiesMenu.
+               Nothing here changed, just moved out of the main row. -->
+          <div class="relative">
+            <button onclick="toggleOrdersUtilitiesMenu()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              ⚙️ Utilities
             </button>
-            <button onclick="resetQuoteCounter()" title="Only changes where the NEXT quote number starts counting from - doesn't touch, renumber, or delete any existing quote" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-              🔢 Renumber Quotes
-            </button>
+            <div id="ord-utilities-menu" class="hidden absolute right-0 mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1">
+              <button onclick="closeOrdersUtilitiesMenu(); cleanUpOrphanedProofs()" title="Design proof files left over from quotes deleted before this cleanup existed - a one-off backlog, not something normal use creates" class="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                🧹 Clean Up Old Files
+              </button>
+              <button onclick="closeOrdersUtilitiesMenu(); backfillOrderTimeline()" title="Rebuilds the Activity Timeline for every order that predates that feature, from history that already exists (email log, payments, production steps). Safe to click more than once - only fills in orders with no timeline yet." class="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                📜 Backfill Timeline
+              </button>
+              <button onclick="closeOrdersUtilitiesMenu(); resetInvoiceCounter()" title="Only changes where the NEXT invoice number starts counting from - doesn't touch, renumber, or delete any existing invoice" class="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                🔢 Renumber Invoices
+              </button>
+              <button onclick="closeOrdersUtilitiesMenu(); resetQuoteCounter()" title="Only changes where the NEXT quote number starts counting from - doesn't touch, renumber, or delete any existing quote" class="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                🔢 Renumber Quotes
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -9460,6 +9468,23 @@
     // loadOrders() fetch does that.
     let ordersDocTypeFilter = 'all';
     let ordersSearchQuery = '';
+
+    function toggleOrdersUtilitiesMenu() {
+      document.getElementById('ord-utilities-menu').classList.toggle('hidden');
+    }
+    function closeOrdersUtilitiesMenu() {
+      document.getElementById('ord-utilities-menu').classList.add('hidden');
+    }
+    // Closes the Utilities menu on any click outside it - the menu items'
+    // own onclick handlers already close it before running their action, so
+    // this only ever needs to catch "clicked away without picking anything".
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('ord-utilities-menu');
+      if (!menu || menu.classList.contains('hidden')) return;
+      if (!menu.contains(e.target) && e.target.closest('button')?.getAttribute('onclick') !== 'toggleOrdersUtilitiesMenu()') {
+        menu.classList.add('hidden');
+      }
+    });
 
     function setOrdersDocTypeFilter(type) {
       ordersDocTypeFilter = type;
