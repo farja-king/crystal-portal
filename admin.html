@@ -1148,6 +1148,9 @@
               <button onclick="closeOrdersUtilitiesMenu(); resetQuoteCounter()" title="Only changes where the NEXT quote number starts counting from - doesn't touch, renumber, or delete any existing quote" class="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                 🔢 Renumber Quotes
               </button>
+              <button onclick="closeOrdersUtilitiesMenu(); fixDecorationQtyMismatch()" title="One-off cleanup for old decoration rows where the 'x N' field was set to match the garment count instead of instances-per-garment - only fixes £0 entries, anything priced is reported instead of changed. Safe to click more than once." class="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                🧵 Fix Decoration Counts
+              </button>
             </div>
           </div>
         </div>
@@ -11750,7 +11753,8 @@
         <td class="p-2">${money(o.total)}</td>
         <td class="p-2 text-xs text-slate-500">${escapeHtml(ukDate(o.archived_at))}</td>
         <td class="p-2 text-right whitespace-nowrap">
-          <button onclick="restoreOrder('${escapeAttr(o.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Restore</button>
+          <button onclick="document.getElementById('order-archive-modal').classList.add('hidden'); viewOrder('${escapeAttr(o.id)}')" title="View this archived quote/invoice - same detail panel as the main list, read-only until you restore it" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">View</button>
+          <button onclick="restoreOrder('${escapeAttr(o.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold ml-1">Restore</button>
           <button onclick="document.getElementById('order-archive-modal').classList.add('hidden'); reorderOrder('${escapeAttr(o.id)}')" title="Start a new quote/invoice prefilled with this customer and these garments - fully editable before saving. Doesn't restore this archived one." class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Reorder</button>
           ${moveButton}
           <button onclick="removeArchivedProofImages('${escapeAttr(o.id)}')" title="Deletes the actual image file(s) to free up storage - keeps the record of what was attached and what the customer decided" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Remove image from database</button>
@@ -11893,6 +11897,29 @@
         }
       } catch (e) {
         showActionToast('⚠', 'Could not backfill: ' + e.message);
+      }
+    }
+
+    async function fixDecorationQtyMismatch() {
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'fix_decoration_qty_mismatch' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Cleanup failed');
+        const flagged = data.flagged_for_review || [];
+        let msg = data.decorations_fixed
+          ? `Fixed ${data.decorations_fixed} decoration(s) across ${data.orders_fixed} order(s).`
+          : 'Nothing to fix - no £0 mismatches found.';
+        if (flagged.length) {
+          msg += ` ${flagged.length} priced decoration(s) look like the same mistake but were left untouched (real money) - check the browser console for details.`;
+          console.log('Decoration qty mismatches needing manual review:', flagged);
+        }
+        showActionToast(flagged.length ? '⚠' : '✓', msg);
+        loadOrders();
+      } catch (e) {
+        showActionToast('⚠', 'Could not clean up: ' + e.message);
       }
     }
 

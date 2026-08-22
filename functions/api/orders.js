@@ -752,6 +752,55 @@ export async function onRequest(context) {
         return json({ success: true, value });
       }
 
+      // One-off cleanup for a data-entry habit from before the decoration
+      // "x N" field's meaning was clarified: on a legacy per-row decoration
+      // (breakdown[].decorations, from before decorations moved to the
+      // line level - see decorationsBlock in admin.html), the field means
+      // "instances per garment" (e.g. 2 for both sleeves), but several old
+      // rows have it set to match the row's own garment count instead
+      // (e.g. 13 waistcoats with the decoration itself also set to "x13"),
+      // which double-counts against the row's qty everywhere that
+      // multiplies the two together (lineTotal, the dashboard's Top-Line
+      // Analytics, the PDF/email itemization). Only touches a decoration
+      // priced at £0 - real invoice totals were never affected by this
+      // (0 x anything is still 0), so there's nothing financial to get
+      // wrong by fixing it. A priced decoration with the same suspicious
+      // pattern is left alone and reported instead, never silently
+      // changed - that would touch a number that was actually charged and
+      // possibly already paid.
+      if (data.action === "fix_decoration_qty_mismatch") {
+        const { results: allOrders } = await db.prepare("SELECT id, items FROM orders WHERE items IS NOT NULL AND items <> ''").all();
+        let ordersFixed = 0, decorationsFixed = 0;
+        const flaggedForReview = [];
+        for (const row of allOrders) {
+          let items;
+          try { items = JSON.parse(row.items || "[]"); } catch { continue; }
+          let changed = false;
+          items.forEach((item) => {
+            (item.breakdown || []).forEach((b) => {
+              const rowQty = Number(b.qty) || 0;
+              if (rowQty <= 1) return;
+              (b.decorations || []).forEach((d) => {
+                if (Number(d.qty) === rowQty) {
+                  if (Number(d.price) === 0) {
+                    d.qty = 1;
+                    changed = true;
+                    decorationsFixed++;
+                  } else {
+                    flaggedForReview.push({ order_id: row.id, method: d.method, price: d.price, qty: d.qty, row_qty: rowQty });
+                  }
+                }
+              });
+            });
+          });
+          if (changed) {
+            await db.prepare("UPDATE orders SET items = ? WHERE id = ?").bind(JSON.stringify(items), row.id).run();
+            ordersFixed++;
+          }
+        }
+        return json({ success: true, orders_fixed: ordersFixed, decorations_fixed: decorationsFixed, flagged_for_review: flaggedForReview });
+      }
+
       // One-off backfill for the Activity Timeline (functions/_lib/order-
       // events.js) - a real order predating that feature has no history
       // there at all, even though the history genuinely exists, just
