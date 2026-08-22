@@ -335,6 +335,40 @@ export async function onRequest(context) {
       });
     }
 
+    // Wipes every backup_log row (and its R2 files) except successful runs
+    // from today - built to clear out the ~500 dead 'running'/'error' rows
+    // left behind by the pre-paging bug above, plus the handful of small,
+    // now-superseded successes from before that bug started, once a fresh
+    // known-good backup exists to replace them. Not a scheduled thing -
+    // triggered manually from the Backups tab.
+    if (data.action === "cleanup_old") {
+      const { results: keep } = await db.prepare(
+        "SELECT id FROM backup_log WHERE status = 'success' AND date(started_at) = date('now')"
+      ).all();
+      const keepIds = new Set(keep.map((r) => r.id));
+      const { results: all } = await db.prepare("SELECT id, r2_prefix FROM backup_log").all();
+
+      let rowsDeleted = 0;
+      let filesDeleted = 0;
+      for (const row of all) {
+        if (keepIds.has(row.id)) continue;
+        if (row.r2_prefix) {
+          let cursor;
+          do {
+            const listing = await env.BACKUPS.list({ prefix: row.r2_prefix, cursor });
+            if (listing.objects.length) {
+              await env.BACKUPS.delete(listing.objects.map((o) => o.key));
+              filesDeleted += listing.objects.length;
+            }
+            cursor = listing.truncated ? listing.cursor : undefined;
+          } while (cursor);
+        }
+        await db.prepare("DELETE FROM backup_log WHERE id = ?").bind(row.id).run();
+        rowsDeleted += 1;
+      }
+      return json({ success: true, rows_deleted: rowsDeleted, files_deleted: filesDeleted, kept: keepIds.size });
+    }
+
     return json({ error: "Unknown action" }, 400);
   } catch (err) {
     return json({ error: err.message }, 500);

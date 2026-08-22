@@ -1591,6 +1591,9 @@
           <button id="backup-now-btn" onclick="runBackupNow()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             💾 Backup Now
           </button>
+          <button onclick="cleanUpOldBackups()" title="Deletes every backup entry and its stored files except today's successful run - for clearing out a backlog of failed/superseded attempts, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🧹 Clean Up Old
+          </button>
         </div>
       </div>
 
@@ -10654,6 +10657,22 @@
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
+      }
+    }
+
+    async function cleanUpOldBackups() {
+      if (!(await confirmModal('Delete every backup entry and its stored files except today\'s successful run? This clears out failed/superseded attempts permanently - it does not touch any customer, quote, invoice or payment data, only old backup snapshots.'))) return;
+      try {
+        const res = await fetch(API_BACKUP_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'cleanup_old' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast('✓', `Cleaned up ${data.rows_deleted} old backup entr${data.rows_deleted === 1 ? 'y' : 'ies'} (${data.files_deleted} file(s)) - kept ${data.kept} from today.`);
+        loadBackups();
+      } catch (e) {
+        showActionToast('⚠', 'Could not clean up: ' + e.message);
       }
     }
 
