@@ -1303,6 +1303,17 @@
         <!-- Bulk selection bar -->
         <div id="ord-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
           <span id="ord-bulk-count" class="font-semibold text-indigo-900"></span>
+          <select id="ord-bulk-step-select" class="rounded-lg border border-slate-300 px-2 py-1.5 text-xs">
+            <option value="Invoice paid">Invoice paid</option>
+            <option value="Artwork sent for digitization">Artwork sent for digitization</option>
+            <option value="Garments ordered" selected>Garments ordered</option>
+            <option value="Artwork approved">Artwork approved</option>
+            <option value="Ready for collection/dispatch">Ready for collection/dispatch</option>
+            <option value="Order collected">Order collected</option>
+          </select>
+          <button type="button" onclick="bulkMarkProductionStepDone()" title="Marks this step done on every selected order's Production Tracker - only orders whose tracker has a step with this exact title are updated, e.g. one supplier order covering several customers' garments" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Mark step done
+          </button>
           <button type="button" onclick="bulkDeleteOrders()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
             Delete selected
           </button>
@@ -9659,6 +9670,33 @@
       bar.classList.toggle('hidden', count === 0);
       if (count === 0) return;
       document.getElementById('ord-bulk-count').textContent = count + ' selected';
+    }
+
+    // Marks one production step done across every selected order at once -
+    // see the matching bulk_mark_done action in functions/api/
+    // production-steps.js. Built for garments ordered in bulk (one
+    // supplier order covering several customers' jobs) - ticking
+    // "Garments ordered" order-by-order for a batch that all moved at the
+    // same time was pure friction.
+    async function bulkMarkProductionStepDone() {
+      const ids = [...selectedOrderIds];
+      if (!ids.length) return;
+      const title = document.getElementById('ord-bulk-step-select').value;
+      if (!(await confirmModal(`Mark "${title}" done on ${ids.length} order(s)? Only orders whose tracker has this exact step are updated.`))) return;
+      try {
+        const res = await fetch(API_PRODUCTION_STEPS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'bulk_mark_done', order_ids: ids, title }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Update failed');
+        selectedOrderIds = new Set();
+        const skipped = data.skipped_order_ids.length;
+        showActionToast('✓', `"${title}" marked done on ${data.updated} order(s).${skipped ? ` ${skipped} skipped (no matching step).` : ''}`);
+        loadOrders();
+      } catch (e) {
+        showActionToast('⚠', 'Could not update: ' + e.message);
+      }
     }
 
     async function bulkDeleteOrders() {

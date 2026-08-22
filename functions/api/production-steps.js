@@ -406,6 +406,63 @@ export async function onRequest(context) {
 
     if (request.method === "PUT") {
       const data = await request.json();
+
+      // Marks the same-titled step done across several orders at once -
+      // built for garments ordered in bulk (one supplier order covering
+      // several customers' jobs), where ticking "Garments ordered" one
+      // order at a time was pure friction for something that genuinely
+      // happens all at once. Matches by exact step title per order (case-
+      // insensitive) - an order whose tracker has no step with that title
+      // (already-custom-renamed, or a step deleted) is silently skipped
+      // and reported back, never guessed at. Already-done steps count as
+      // success with no-op, so re-running this over a mixed batch is safe.
+      if (data.action === "bulk_mark_done") {
+        if (!Array.isArray(data.order_ids) || !data.order_ids.length || !data.title) {
+          return json({ error: "order_ids and title are required" }, 400);
+        }
+        let updated = 0;
+        const skippedOrderIds = [];
+        for (const orderId of data.order_ids) {
+          // Same lazy-seed as the GET handler above - a selected order
+          // whose tracker was never opened yet has no rows at all, not
+          // "no matching step", and would otherwise skip for a reason
+          // that'd surprise Martin (every order gets the same default
+          // pipeline the moment its tracker is first touched, one way or
+          // another).
+          const { results: existingSteps } = await db.prepare(
+            "SELECT id FROM production_steps WHERE order_id = ? LIMIT 1"
+          ).bind(orderId).all();
+          if (!existingSteps.length) {
+            for (let i = 0; i < DEFAULT_STEPS.length; i++) {
+              await db.prepare(
+                "INSERT INTO production_steps (id, order_id, title, position, notify_customer) VALUES (?, ?, ?, ?, ?)"
+              ).bind(crypto.randomUUID(), orderId, DEFAULT_STEPS[i].title, i, DEFAULT_STEPS[i].notify ? 1 : 0).run();
+            }
+          }
+
+          const step = await db.prepare(
+            "SELECT * FROM production_steps WHERE order_id = ? AND title = ? COLLATE NOCASE"
+          ).bind(orderId, data.title).first();
+          if (!step) { skippedOrderIds.push(orderId); continue; }
+          if (step.status === "done") { updated++; continue; }
+
+          const completedAt = new Date().toISOString();
+          await db.prepare(
+            "UPDATE production_steps SET status = 'done', completed_at = ?, notified_at = NULL WHERE id = ?"
+          ).bind(completedAt, step.id).run();
+          await logOrderEvent(db, orderId, "production_step", `Production: ${step.title}`);
+
+          if (step.notify_customer) {
+            const emailResult = await sendStepNotification(orderId, step.title);
+            if (emailResult.sent) {
+              await db.prepare("UPDATE production_steps SET notified_at = ? WHERE id = ?").bind(new Date().toISOString(), step.id).run();
+            }
+          }
+          updated++;
+        }
+        return json({ success: true, updated, skipped_order_ids: skippedOrderIds });
+      }
+
       if (!data.id) return json({ error: "id is required" }, 400);
       const existing = await db.prepare("SELECT * FROM production_steps WHERE id = ?").bind(data.id).first();
       if (!existing) return json({ error: "Step not found" }, 404);
