@@ -5781,13 +5781,13 @@
 
       if (!colourOptions.length && !sizeOptions.length) {
         // Nothing to choose between - queue it as-is, same as the single form does.
-        addBulkStockLine(p.colour || '', p.size || '');
+        addBulkStockLine(p.colour || '', p.size || '', false);
         return;
       }
       fieldsEl.innerHTML = `
         <label class="text-xs text-slate-600">
           <span class="block mb-1">Colour</span>
-          <select id="stock-bulk-variant-colour" onchange="maybeAddBulkStockLine()" class="w-36 rounded border border-slate-300 px-2 py-1.5 text-sm">
+          <select id="stock-bulk-variant-colour" onchange="onBulkColourChange()" class="w-36 rounded border border-slate-300 px-2 py-1.5 text-sm">
             <option value="">Choose colour…</option>
             ${colourOptions.map((c) => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('')}
           </select>
@@ -5799,21 +5799,33 @@
             ${sizeOptions.map((s) => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join('')}
           </select>
         </label>
-        <button type="button" onclick="document.getElementById('stock-bulk-variant-picker').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-600 font-medium pb-1.5">Cancel</button>
+        <button type="button" onclick="document.getElementById('stock-bulk-variant-picker').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-600 font-medium pb-1.5">Done</button>
       `;
+    }
+
+    // Changing colour clears any previously-picked size - otherwise a size
+    // left over from the last line would silently re-queue against the new
+    // colour the moment it's chosen, since Size's onchange is what adds.
+    function onBulkColourChange() {
+      const sizeSelect = document.getElementById('stock-bulk-variant-size');
+      if (sizeSelect) sizeSelect.value = '';
     }
 
     function maybeAddBulkStockLine() {
       const colour = document.getElementById('stock-bulk-variant-colour').value;
       const size = document.getElementById('stock-bulk-variant-size').value;
-      if (colour && size) addBulkStockLine(colour, size);
+      if (colour && size) addBulkStockLine(colour, size, true);
     }
 
-    // Queues a line and immediately resets the search box/picker so the
-    // next code can be typed straight away - this is the "polo, then
-    // hoodie, then sweatshirt, then beanie" flow, one after another with no
-    // save round-trip in between.
-    function addBulkStockLine(colour, size) {
+    // Queues a line. keepOpen=true (picked from the colour/size panel)
+    // leaves that panel open on the same garment and just resets Size back
+    // to blank - so Black S, then Black M, then Black L (or a colour
+    // change, which resets Size too) all queue straight away without
+    // re-searching the code each time. keepOpen=false (a code with no
+    // colour/size to choose between at all) goes back to the search box
+    // instead, same as the "polo, then hoodie, then sweatshirt" flow this
+    // always supported for distinct codes.
+    function addBulkStockLine(colour, size, keepOpen) {
       const p = bulkStockPicked;
       if (!p) return;
       bulkStockLines.push({
@@ -5827,9 +5839,14 @@
         sale_price: Number(p.sell_price) || 0,
       });
       renderBulkStockTable();
-      document.getElementById('stock-bulk-variant-picker').classList.add('hidden');
-      document.getElementById('stock-bulk-search').value = '';
-      document.getElementById('stock-bulk-search').focus();
+      if (keepOpen) {
+        const sizeSelect = document.getElementById('stock-bulk-variant-size');
+        if (sizeSelect) { sizeSelect.value = ''; sizeSelect.focus(); }
+      } else {
+        document.getElementById('stock-bulk-variant-picker').classList.add('hidden');
+        document.getElementById('stock-bulk-search').value = '';
+        document.getElementById('stock-bulk-search').focus();
+      }
     }
 
     function updateBulkLineQty(idx, value) {
