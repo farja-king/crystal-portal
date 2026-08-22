@@ -12955,9 +12955,31 @@
           const qty = Number(item.qty) || 0;
           garmentQty[label] = (garmentQty[label] || 0) + qty;
 
+          // d.qty is "instances per garment" (e.g. 2 for both sleeves), not
+          // a count of garments - counting it unscaled here undercounted
+          // every line-level decoration (the default since decorations
+          // moved to the line level - see decorationsBlock in
+          // renderOrderLines) by however many garments were actually on
+          // the line. Same multiplication lineTotal/send-email.js/
+          // document-pdf.js already do for the real total and the
+          // customer-facing itemization - this just closes the same gap
+          // in the dashboard's own analytics, which never got that fix.
           const decorations = [];
-          (item.breakdown || []).forEach((b) => (b.decorations || []).forEach((d) => decorations.push(d)));
-          (item.decorations || []).forEach((d) => decorations.push(d));
+          if (!item.breakdown || !item.breakdown.length || item.customer_item) {
+            const garmentQty = Number(item.qty) || 1;
+            (item.decorations || []).forEach((d) => decorations.push({ ...d, qty: (Number(d.qty) || 1) * garmentQty }));
+          } else {
+            const hasRowDecorations = item.breakdown.some((b) => (b.decorations || []).length);
+            if (hasRowDecorations) {
+              item.breakdown.forEach((b) => {
+                const rowQty = Number(b.qty) || 1;
+                (b.decorations || []).forEach((d) => decorations.push({ ...d, qty: (Number(d.qty) || 1) * rowQty }));
+              });
+            } else {
+              const totalQty = item.breakdown.reduce((sum, b) => sum + (Number(b.qty) || 0), 0) || 1;
+              (item.decorations || []).forEach((d) => decorations.push({ ...d, qty: (Number(d.qty) || 1) * totalQty }));
+            }
+          }
           decorations.forEach((d) => {
             const methodLabel = METHOD_LABELS[d.method] || d.method || 'Other';
             const dqty = Number(d.qty) || 1;
