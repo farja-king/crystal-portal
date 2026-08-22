@@ -48,6 +48,11 @@ const FILE_KEY_SOURCES = [
 
 const BACKUP_TIMEOUT_HOURS = 23; // "once every 24 hours" off a 15-min cron
 
+// The keyset-pagination column for each table - every table here uses
+// `id TEXT PRIMARY KEY` except counters, which predates that convention and
+// keys on its own name instead.
+const PK_COLUMN = { counters: "name" };
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -94,6 +99,7 @@ export async function onRequest(context) {
     // rows referenced (per FILE_KEY_SOURCES), collected page-by-page rather
     // than by holding the whole table in memory.
     async function exportTable(table, prefix) {
+      const pk = PK_COLUMN[table] || "id";
       const fileColumns = FILE_KEY_SOURCES.filter((s) => s.table === table).map((s) => s.column);
       const fileKeys = [];
       let cursor = "";
@@ -101,7 +107,7 @@ export async function onRequest(context) {
       let total = 0;
       while (true) {
         const { results } = await db.prepare(
-          `SELECT * FROM ${table} WHERE id > ? ORDER BY id LIMIT ?`
+          `SELECT * FROM ${table} WHERE ${pk} > ? ORDER BY ${pk} LIMIT ?`
         ).bind(cursor, PAGE_SIZE).all();
         if (!results.length) break;
         await env.BACKUPS.put(`${prefix}db/${table}-${page}.json`, JSON.stringify(results));
@@ -109,7 +115,7 @@ export async function onRequest(context) {
           for (const row of results) if (row[col]) fileKeys.push(row[col]);
         }
         total += results.length;
-        cursor = results[results.length - 1].id;
+        cursor = results[results.length - 1][pk];
         page += 1;
         if (results.length < PAGE_SIZE) break;
       }
