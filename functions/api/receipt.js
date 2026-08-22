@@ -90,10 +90,11 @@ export async function onRequest(context) {
       body: JSON.stringify({ from: fromAddress, to: [to], reply_to: replyToAddress, subject, html }),
     });
     if (!res.ok) return json({ success: true, sent: false, reason: "Resend rejected the email" });
+    const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
 
     await db.prepare(
-      "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
-    ).bind(crypto.randomUUID(), order_id, to, subject).run();
+      "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
+    ).bind(crypto.randomUUID(), order_id, to, subject, resendEmailId).run();
     await db.prepare(
       "UPDATE payments SET receipt_sent_at = CURRENT_TIMESTAMP WHERE id = ?"
     ).bind(payment_id).run();

@@ -152,13 +152,14 @@ export async function onRequest(context) {
       body: JSON.stringify({ from: fromAddress, to: [to], reply_to: replyToAddress, subject, html }),
     });
     if (!res.ok) return json({ success: true, sent: false, reason: "Resend rejected the email" });
+    const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
 
     // Logged once per invoice included, so "statement sent" shows up in
     // each of that invoice's own Communication History panel too - there's
     // no single order_id this email is "about", and email_log requires one.
     await db.batch(invoices.map((o) =>
-      db.prepare("INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)")
-        .bind(crypto.randomUUID(), o.id, to, subject)
+      db.prepare("INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)")
+        .bind(crypto.randomUUID(), o.id, to, subject, resendEmailId)
     ));
 
     return json({ success: true, sent: true });

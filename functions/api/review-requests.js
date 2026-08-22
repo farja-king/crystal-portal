@@ -84,9 +84,10 @@ export async function onRequest(context) {
         });
         if (!res.ok) return { sent: false, reason: "Resend rejected the email" };
         try {
+          const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
           await db.prepare(
-            "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
-          ).bind(crypto.randomUUID(), order.id, to, subject).run();
+            "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
+          ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId).run();
         } catch (e) {
           // email_log couldn't be written to - the email still sent either way
         }

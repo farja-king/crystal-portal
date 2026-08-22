@@ -135,10 +135,15 @@ export async function onRequest(context) {
         body: JSON.stringify({ from: fromAddress, to: [to], reply_to: replyToAddress, subject, html }),
       });
       if (!res.ok) return { sent: false, reason: "Resend rejected the email" };
+      // Resend's own id for this send - functions/api/resend-webhook.js
+      // matches a later delivered/opened/clicked event back to this row by
+      // it. Without this, the send is logged but can never show delivery/
+      // open tracking, since the webhook has nothing to match it against.
+      const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
       try {
         await db.prepare(
-          "INSERT INTO email_log (id, order_id, sent_to, subject) VALUES (?, ?, ?, ?)"
-        ).bind(crypto.randomUUID(), orderId, to, subject).run();
+          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
+        ).bind(crypto.randomUUID(), orderId, to, subject, resendEmailId).run();
       } catch (e) {
         // email_log table doesn't exist yet (send-email.js/payment-reminders.js
         // create it lazily) - the email still sent, just not logged this time
