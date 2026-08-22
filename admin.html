@@ -32,7 +32,12 @@
           <button id="tab-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition">
             📊 Dashboard
           </button>
-          <button id="tab-quotes" onclick="switchTab('quotes')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+          <!-- Hidden from the nav at Martin's request - "Quotes & Invoices"
+               (tab-orders) is the one actually used day to day; this
+               incoming-submissions pipeline view stayed unused alongside
+               it. Code/section left intact, not deleted - switchTab('quotes')
+               and section-quotes still work if ever linked to again. -->
+          <button id="tab-quotes" onclick="switchTab('quotes')" class="hidden px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             📋 Quotes & Orders
           </button>
           <button id="tab-customers" onclick="switchTab('customers')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
@@ -1113,6 +1118,16 @@
             <button id="ord-view-list-btn" onclick="switchOrdersView('list')" class="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white">List</button>
             <button id="ord-view-calendar-btn" onclick="switchOrdersView('calendar')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">📅 Calendar</button>
           </div>
+          <!-- Quotes vs Invoices, all in one combined table underneath -
+               splitting into genuinely separate pages would mean losing
+               "Convert to Invoice"/Reorder's easy cross-linking and
+               duplicating every column/action, so this filters the same
+               list in place instead (see loadOrders' visibleRows). -->
+          <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
+            <button id="ord-filter-all-btn" onclick="setOrdersDocTypeFilter('all')" class="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white">All</button>
+            <button id="ord-filter-quote-btn" onclick="setOrdersDocTypeFilter('quote')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Quotes</button>
+            <button id="ord-filter-invoice-btn" onclick="setOrdersDocTypeFilter('invoice')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Invoices</button>
+          </div>
           <button onclick="cleanUpOrphanedProofs()" title="Design proof files left over from quotes deleted before this cleanup existed - a one-off backlog, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-500 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🧹 Clean Up Old Files
           </button>
@@ -1128,6 +1143,14 @@
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Quick lookup by quote/invoice number or customer name - filters
+           the already-loaded list in place (renderOrdersTable), no fetch
+           per keystroke. -->
+      <div class="relative mb-4 max-w-md">
+        <input id="ord-search-input" type="text" oninput="filterOrdersTable(this.value)" placeholder="Search by quote/invoice number or customer name…" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-sm" />
+        <button type="button" onclick="document.getElementById('ord-search-input').value=''; filterOrdersTable('');" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
       </div>
 
       <!-- Incoming requests from the public "Request a Quote" form
@@ -9423,12 +9446,57 @@
           if (productionRes && productionRes.ok) productionSummaryByOrder = await productionRes.json();
         } catch (e) {}
 
-        if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No quotes yet.</td></tr>';
-          return;
-        }
+        renderOrdersTable();
+        renderProductionCalendar();
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
 
-        tbody.innerHTML = rows.map((o) => {
+    // All/Quotes/Invoices segmented filter (setOrdersDocTypeFilter) plus the
+    // number/customer search box (filterOrdersTable) both just re-run this
+    // against the already-fetched ordersById/productionSummaryByOrder - no
+    // network round-trip per keystroke or per filter click, only the initial
+    // loadOrders() fetch does that.
+    let ordersDocTypeFilter = 'all';
+    let ordersSearchQuery = '';
+
+    function setOrdersDocTypeFilter(type) {
+      ordersDocTypeFilter = type;
+      const idle = 'px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100';
+      const active = 'px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white';
+      document.getElementById('ord-filter-all-btn').className = type === 'all' ? active : idle;
+      document.getElementById('ord-filter-quote-btn').className = type === 'quote' ? active : idle;
+      document.getElementById('ord-filter-invoice-btn').className = type === 'invoice' ? active : idle;
+      renderOrdersTable();
+    }
+
+    function filterOrdersTable(value) {
+      ordersSearchQuery = value.trim().toLowerCase();
+      renderOrdersTable();
+    }
+
+    function renderOrdersTable() {
+      const tbody = document.getElementById('orders-table-body');
+      if (!tbody) return;
+      let rows = Object.values(ordersById);
+      if (ordersDocTypeFilter !== 'all') rows = rows.filter((o) => o.doc_type === ordersDocTypeFilter);
+      if (ordersSearchQuery) {
+        rows = rows.filter((o) => {
+          const haystack = [o.quote_number, o.invoice_number, o.customer_name].filter(Boolean).join(' ').toLowerCase();
+          return haystack.includes(ordersSearchQuery);
+        });
+      }
+      rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-slate-400">${
+          ordersSearchQuery || ordersDocTypeFilter !== 'all' ? 'Nothing matches - try clearing the search or filter.' : 'No quotes yet.'
+        }</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = rows.map((o) => {
           const isInvoice = o.doc_type === 'invoice';
           const number = isInvoice
             ? `${escapeHtml(o.invoice_number)} <span class="text-xs text-slate-400 block">from ${escapeHtml(o.quote_number)}</span>`
@@ -9526,10 +9594,6 @@
               <td class="p-4"><div class="flex flex-wrap gap-1.5">${actions.join('')}</div></td>
             </tr>`;
         }).join('');
-        renderProductionCalendar();
-      } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
-      }
     }
 
     // ======================== Production Calendar ========================
