@@ -1105,15 +1105,6 @@
           <button onclick="openNewOrderBuilder('invoice')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + New Invoice
           </button>
-          <button id="ord-sync-btn" onclick="syncColourData()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
-            🎨 Sync Colours/Sizes
-          </button>
-          <button onclick="openOrderArchive()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            🗄️ Archived
-          </button>
-          <button onclick="loadOrders()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            🔄 Refresh
-          </button>
           <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
             <button id="ord-view-list-btn" onclick="switchOrdersView('list')" class="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white">List</button>
             <button id="ord-view-calendar-btn" onclick="switchOrdersView('calendar')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">📅 Calendar</button>
@@ -1128,6 +1119,12 @@
             <button id="ord-filter-quote-btn" onclick="setOrdersDocTypeFilter('quote')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Quotes</button>
             <button id="ord-filter-invoice-btn" onclick="setOrdersDocTypeFilter('invoice')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Invoices</button>
           </div>
+          <button onclick="openOrderArchive()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🗄️ Archived
+          </button>
+          <button onclick="loadOrders()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🔄 Refresh
+          </button>
           <!-- Rare/one-off maintenance actions, tucked away from the
                everyday buttons above - see toggleOrdersUtilitiesMenu.
                Nothing here changed, just moved out of the main row. -->
@@ -1136,6 +1133,9 @@
               ⚙️ Utilities
             </button>
             <div id="ord-utilities-menu" class="hidden absolute right-0 mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1">
+              <button id="ord-sync-btn" onclick="closeOrdersUtilitiesMenu(); syncColourData()" title="Fills in colour/size dropdowns for PenCarrie catalog codes from their scraped product pages" class="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                🎨 Sync Colours/Sizes
+              </button>
               <button onclick="closeOrdersUtilitiesMenu(); cleanUpOrphanedProofs()" title="Design proof files left over from quotes deleted before this cleanup existed - a one-off backlog, not something normal use creates" class="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                 🧹 Clean Up Old Files
               </button>
@@ -1209,6 +1209,11 @@
             <button onclick="closeOrderArchive()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
           </div>
 
+          <div class="relative mb-4">
+            <input id="order-archive-search" type="text" oninput="filterOrderArchive(this.value)" placeholder="Search by number or customer name…" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-sm" />
+            <button type="button" onclick="document.getElementById('order-archive-search').value=''; filterOrderArchive('');" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+          </div>
+
           <h4 class="font-bold text-slate-900 mb-2">✓ Completed</h4>
           <div class="overflow-x-auto border border-slate-200 rounded-lg mb-6">
             <table class="w-full text-left text-sm">
@@ -1226,7 +1231,7 @@
           </div>
 
           <h4 class="font-bold text-slate-900 mb-2">⏳ Pending</h4>
-          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <div class="overflow-x-auto border border-slate-200 rounded-lg mb-6">
             <table class="w-full text-left text-sm">
               <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
                 <tr>
@@ -1238,6 +1243,22 @@
                 </tr>
               </thead>
               <tbody id="order-archive-pending-body" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+
+          <h4 class="font-bold text-slate-900 mb-2">🚫 Cancelled</h4>
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th class="p-2">Number</th>
+                  <th class="p-2">Customer</th>
+                  <th class="p-2">Total</th>
+                  <th class="p-2">Archived</th>
+                  <th class="p-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="order-archive-cancelled-body" class="divide-y divide-slate-100"></tbody>
             </table>
           </div>
         </div>
@@ -1261,6 +1282,31 @@
           </div>
           <button type="button" onclick="closeArchiveChoice()" class="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             Cancel
+          </button>
+        </div>
+      </div>
+
+      <!-- Cancel Invoice - see openCancelInvoiceModal/confirmCancelInvoice.
+           Restores stock and stops payment reminders either way (that's
+           what "cancelled" means); the only choice here is whether the
+           customer gets told about it. Tucked into Archived > Cancelled
+           afterward, not deleted - restore from there if it was a mistake
+           (note: restoring doesn't re-deduct the stock automatically). -->
+      <div id="cancel-invoice-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+          <h3 class="text-lg font-bold text-slate-900 mb-1">Cancel <span id="cancel-invoice-number"></span>?</h3>
+          <p class="text-sm text-slate-500 mb-4">Any stock reserved for it is restored and payment reminders stop. It moves to Archived &gt; Cancelled rather than being deleted - restore it any time if this was a mistake.</p>
+          <p class="text-sm font-medium text-slate-700 mb-2">Let the customer know it's cancelled?</p>
+          <div class="flex gap-2 mb-3">
+            <button type="button" onclick="confirmCancelInvoice(true)" class="flex-1 bg-orange-500 hover:bg-orange-600 text-white px-4 py-3 rounded-lg text-sm font-semibold shadow-sm">
+              ✉️ Cancel &amp; Email Customer
+            </button>
+            <button type="button" onclick="confirmCancelInvoice(false)" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-3 rounded-lg text-sm font-semibold shadow-sm">
+              Cancel, Don't Email
+            </button>
+          </div>
+          <button type="button" onclick="closeCancelInvoiceModal()" class="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            Never mind
           </button>
         </div>
       </div>
@@ -9607,6 +9653,9 @@
           actions.push(`<button onclick="sendOrderViaWhatsApp('${escapeAttr(o.id)}')" title="Opens WhatsApp with a message pre-filled - you send it yourself, nothing goes out automatically" class="bg-white border border-slate-300 hover:bg-slate-50 text-emerald-700 px-3 py-1 rounded text-xs font-semibold">💬 WhatsApp</button>`);
           actions.push(`<button onclick="openArchiveChoice('${escapeAttr(o.id)}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Archive</button>`);
           actions.push(`<button onclick="deleteOrder('${o.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold">Delete</button>`);
+          if (isInvoice) {
+            actions.push(`<button onclick="openCancelInvoiceModal('${escapeAttr(o.id)}')" title="Cancels this invoice - restores any stock reserved for it and stops payment reminders, kept in Archived > Cancelled rather than deleted" class="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-xs font-semibold">Cancel</button>`);
+          }
 
           return `
             <tr class="hover:bg-slate-50">
@@ -11632,6 +11681,46 @@
       document.getElementById('order-archive-choice-modal').classList.add('hidden');
     }
 
+    // Which invoice the Cancel popup is currently asking about - see
+    // openCancelInvoiceModal/confirmCancelInvoice.
+    let cancelInvoiceOrderId = null;
+
+    function openCancelInvoiceModal(id) {
+      cancelInvoiceOrderId = id;
+      const o = ordersById[id];
+      document.getElementById('cancel-invoice-number').textContent = o ? o.invoice_number : '';
+      document.getElementById('cancel-invoice-modal').classList.remove('hidden');
+    }
+
+    function closeCancelInvoiceModal() {
+      cancelInvoiceOrderId = null;
+      document.getElementById('cancel-invoice-modal').classList.add('hidden');
+    }
+
+    async function confirmCancelInvoice(notifyCustomer) {
+      const id = cancelInvoiceOrderId;
+      if (!id) return;
+      const o = ordersById[id];
+      const docNumber = o ? o.invoice_number : 'Invoice';
+      closeCancelInvoiceModal();
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, action: 'cancel_invoice', notify_customer: notifyCustomer }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Cancel failed');
+        if (notifyCustomer && data.email && !data.email.sent) {
+          showActionToast('⚠', `${docNumber} cancelled, but the customer couldn't be emailed: ${data.email.reason}`);
+        } else {
+          showActionToast('✓', `${docNumber} cancelled${notifyCustomer ? ' and customer emailed' : ''}. Moved to Archived > Cancelled.`);
+        }
+        loadOrders();
+      } catch (e) {
+        showActionToast('⚠', 'Could not cancel: ' + e.message);
+      }
+    }
+
     // One click, no confirmation step - whichever button was clicked
     // (Completed/Pending) archives it into that section immediately.
     async function archiveOrder(bucket) {
@@ -11648,6 +11737,13 @@
     function archivedOrderRow(o) {
       const number = o.doc_type === 'invoice' ? o.invoice_number : o.quote_number;
       const isCompleted = o.archive_bucket === 'completed';
+      const isCancelled = o.archive_bucket === 'cancelled';
+      // A cancelled invoice's stock/reminders were already deliberately
+      // resolved by the Cancel action - a plain bucket move doesn't redo
+      // any of that, so re-filing it as Completed/Pending here would imply
+      // more than it actually does. Only Restore (back to the active list,
+      // exactly as-is) makes sense for a cancelled row.
+      const moveButton = isCancelled ? '' : `<button onclick="moveArchiveBucket('${escapeAttr(o.id)}', '${isCompleted ? 'pending' : 'completed'}')" title="Move to the other section - fixes a mis-filed item, no need to restore and rearchive" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Move to ${isCompleted ? 'Pending' : 'Completed'}</button>`;
       return `<tr>
         <td class="p-2 font-semibold text-slate-900">${escapeHtml(number)}</td>
         <td class="p-2">${escapeHtml(o.customer_name)}</td>
@@ -11656,45 +11752,81 @@
         <td class="p-2 text-right whitespace-nowrap">
           <button onclick="restoreOrder('${escapeAttr(o.id)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Restore</button>
           <button onclick="document.getElementById('order-archive-modal').classList.add('hidden'); reorderOrder('${escapeAttr(o.id)}')" title="Start a new quote/invoice prefilled with this customer and these garments - fully editable before saving. Doesn't restore this archived one." class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Reorder</button>
-          <button onclick="moveArchiveBucket('${escapeAttr(o.id)}', '${isCompleted ? 'pending' : 'completed'}')" title="Move to the other section - fixes a mis-filed item, no need to restore and rearchive" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Move to ${isCompleted ? 'Pending' : 'Completed'}</button>
+          ${moveButton}
           <button onclick="removeArchivedProofImages('${escapeAttr(o.id)}')" title="Deletes the actual image file(s) to free up storage - keeps the record of what was attached and what the customer decided" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold ml-1">Remove image from database</button>
         </td>
       </tr>`;
     }
 
+    // Cached so the search box (filterOrderArchive) can re-render instantly
+    // without refetching - only openOrderArchive itself hits the network.
+    let orderArchiveRows = [];
+
     async function openOrderArchive() {
       const modal = document.getElementById('order-archive-modal');
       const completedBody = document.getElementById('order-archive-completed-body');
       const pendingBody = document.getElementById('order-archive-pending-body');
+      const cancelledBody = document.getElementById('order-archive-cancelled-body');
       completedBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
       pendingBody.innerHTML = '';
+      cancelledBody.innerHTML = '';
+      document.getElementById('order-archive-search').value = '';
       modal.classList.remove('hidden');
       try {
         const res = await fetch(API_ORDERS_URL + '?archived=1', { cache: 'no-store' });
         const rows = await res.json();
         if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
 
-        // Anything archived before this split existed has no archive_bucket
-        // set - treated as Pending rather than silently dropped.
-        // reorderOrder() (used by the Reorder button below) looks orders up
+        // reorderOrder() (used by the Reorder button above) looks orders up
         // from ordersById, which only ever gets populated by the main
         // list load - an item that's been archived can fall out of that
         // list, so without this its Reorder button would silently no-op.
         rows.forEach((o) => { ordersById[o.id] = o; });
-
-        const completed = rows.filter((o) => o.archive_bucket === 'completed');
-        const pending = rows.filter((o) => o.archive_bucket !== 'completed');
-
-        completedBody.innerHTML = completed.length
-          ? completed.map(archivedOrderRow).join('')
-          : '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing here.</td></tr>';
-        pendingBody.innerHTML = pending.length
-          ? pending.map(archivedOrderRow).join('')
-          : '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing here.</td></tr>';
+        orderArchiveRows = rows;
+        renderOrderArchive();
       } catch (e) {
         completedBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-500 text-sm">Could not load archived items.</td></tr>';
         pendingBody.innerHTML = '';
+        cancelledBody.innerHTML = '';
       }
+    }
+
+    function filterOrderArchive(value) {
+      orderArchiveSearchQuery = value.trim().toLowerCase();
+      renderOrderArchive();
+    }
+    let orderArchiveSearchQuery = '';
+
+    function renderOrderArchive() {
+      const completedBody = document.getElementById('order-archive-completed-body');
+      const pendingBody = document.getElementById('order-archive-pending-body');
+      const cancelledBody = document.getElementById('order-archive-cancelled-body');
+
+      let rows = orderArchiveRows;
+      if (orderArchiveSearchQuery) {
+        rows = rows.filter((o) => {
+          const haystack = [o.quote_number, o.invoice_number, o.customer_name].filter(Boolean).join(' ').toLowerCase();
+          return haystack.includes(orderArchiveSearchQuery);
+        });
+      }
+
+      const completed = rows.filter((o) => o.archive_bucket === 'completed');
+      const cancelled = rows.filter((o) => o.archive_bucket === 'cancelled');
+      // Anything archived before the Completed/Pending split existed has no
+      // archive_bucket set at all - treated as Pending rather than silently
+      // dropped, same as always (see the original comment this replaced).
+      const pending = rows.filter((o) => o.archive_bucket !== 'completed' && o.archive_bucket !== 'cancelled');
+
+      const emptyMsg = orderArchiveSearchQuery ? 'Nothing matches.' : 'Nothing here.';
+      completedBody.innerHTML = completed.length
+        ? completed.map(archivedOrderRow).join('')
+        : `<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">${emptyMsg}</td></tr>`;
+      pendingBody.innerHTML = pending.length
+        ? pending.map(archivedOrderRow).join('')
+        : `<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">${emptyMsg}</td></tr>`;
+      cancelledBody.innerHTML = cancelled.length
+        ? cancelled.map(archivedOrderRow).join('')
+        : `<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">${emptyMsg}</td></tr>`;
     }
 
     async function moveArchiveBucket(id, bucket) {

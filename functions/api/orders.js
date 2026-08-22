@@ -31,6 +31,64 @@ async function resetReorderReminder(db, customerId) {
   }
 }
 
+// Sent when Martin chooses "Cancel & email customer" on the Cancel Invoice
+// popup - a plain, short notice, not the full itemised invoice template
+// (there's nothing left to itemise, it's cancelled). Logged into email_log
+// the same way as every other customer-facing send, so it shows up in the
+// order's own Communication History rather than looking like nothing was
+// ever sent about the cancellation.
+async function sendCancellationEmail(db, env, origin, order) {
+  if (!env.RESEND_API_KEY) return { sent: false, reason: "Email isn't set up yet - the RESEND_API_KEY secret is missing." };
+  const to = (order.customer_email || "").trim();
+  if (!to) return { sent: false, reason: "No email address on file for this customer" };
+
+  const escapeHtml = (str) => String(str ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
+  const replyToAddress = env.RESEND_REPLY_TO || "hello@embroidery.click";
+  const subject = `Invoice ${order.invoice_number} cancelled`;
+  const html = `
+    <div style="font-family:Arial,sans-serif;color:#0f172a;max-width:640px;margin:0 auto;padding:24px;">
+      <h1 style="margin:0 0 4px;font-size:22px;">Crystal Custom Embroidery</h1>
+      <div style="color:#64748b;margin-bottom:20px;">Invoice ${escapeHtml(order.invoice_number)} - cancelled</div>
+      <p>Hi ${escapeHtml(order.customer_name)},</p>
+      <p>This is to let you know that invoice <strong>${escapeHtml(order.invoice_number)}</strong> (total £${Number(order.total || 0).toFixed(2)}) has been cancelled - no payment is required for it.</p>
+      <p>If you think this was a mistake, or have any questions, just reply to this email or message us on WhatsApp.</p>
+      <p style="margin-top:32px;color:#64748b;font-size:13px;">Thanks,<br>Crystal Custom Embroidery<br>
+        <a href="https://wa.me/447530576197?text=Hi%2C%20I%20have%20a%20question%20about%20${encodeURIComponent(order.invoice_number || "")}." style="color:#4f46e5;">Message us on WhatsApp</a></p>
+    </div>`;
+
+  try {
+    const resendRes = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: fromAddress, to: [to], reply_to: replyToAddress, subject, html }),
+    });
+    if (!resendRes.ok) return { sent: false, reason: "Resend rejected the email" };
+    const resendEmailId = await resendRes.json().then((r) => r.id).catch(() => null);
+
+    try {
+      await db.prepare(`
+        CREATE TABLE IF NOT EXISTS email_log (
+          id TEXT PRIMARY KEY, order_id TEXT NOT NULL, sent_to TEXT NOT NULL, subject TEXT,
+          sent_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      `).run();
+      for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT"]) {
+        try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+      }
+      await db.prepare(
+        "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
+      ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId).run();
+    } catch {
+      // Best-effort logging - never undo an email that already went out.
+    }
+    return { sent: true };
+  } catch (e) {
+    return { sent: false, reason: e.message };
+  }
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -803,10 +861,33 @@ export async function onRequest(context) {
       }
 
       if (data.action === "archive") {
-        const bucket = data.bucket === "completed" ? "completed" : "pending";
+        const bucket = data.bucket === "completed" ? "completed" : data.bucket === "cancelled" ? "cancelled" : "pending";
         await db.prepare("UPDATE orders SET archived_at = CURRENT_TIMESTAMP, archive_bucket = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(bucket, data.id).run();
         await logOrderEvent(db, data.id, "archived", `Archived (${bucket})`);
         return json({ success: true });
+      }
+
+      // Cancel invoice - restores any stock reserved for it (same as a
+      // Delete, but the record itself is kept, just tucked into Archived >
+      // Cancelled rather than removed) and stops the automatic payment
+      // chase (reminder_paused, same flag "Pause Reminders" uses - the
+      // daily sweep in payment-reminders.js already skips anything with it
+      // set, so nothing extra needed there). Only ever invoices - a quote
+      // has nothing to cancel, it's just accepted or not.
+      if (data.action === "cancel_invoice") {
+        if (existing.doc_type !== "invoice") return json({ error: "Only invoices can be cancelled" }, 400);
+
+        await restoreStockForOrder(db, existing.id, env, new URL(request.url).origin);
+        await db.prepare(
+          "UPDATE orders SET archived_at = CURRENT_TIMESTAMP, archive_bucket = 'cancelled', reminder_paused = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).bind(existing.id).run();
+        await logOrderEvent(db, existing.id, "cancelled", "Invoice cancelled");
+
+        let emailResult = null;
+        if (data.notify_customer) {
+          emailResult = await sendCancellationEmail(db, env, new URL(request.url).origin, existing);
+        }
+        return json({ success: true, email: emailResult });
       }
 
       if (data.action === "unarchive") {
@@ -830,7 +911,7 @@ export async function onRequest(context) {
       // Fixes a mis-filed archived item (Completed <-> Pending) without
       // having to unarchive and rearchive it.
       if (data.action === "set_archive_bucket") {
-        const bucket = data.bucket === "completed" ? "completed" : "pending";
+        const bucket = data.bucket === "completed" ? "completed" : data.bucket === "cancelled" ? "cancelled" : "pending";
         await db.prepare("UPDATE orders SET archive_bucket = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(bucket, data.id).run();
         return json({ success: true });
       }
