@@ -1098,7 +1098,9 @@
           <h2 class="text-2xl font-bold text-slate-900">Quotes & Invoices</h2>
           <p class="text-slate-500 text-sm">Build a garment quote and convert it to an invoice when it is confirmed.<br>No VAT is shown anywhere. Not VAT registered.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-end gap-1">
+          <div id="ord-last-refreshed" class="text-xs text-slate-400"></div>
+          <div class="flex items-center gap-2">
           <button onclick="openNewOrderBuilder('quote')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + New Quote
           </button>
@@ -1152,6 +1154,7 @@
                 🧵 Fix Decoration Counts
               </button>
             </div>
+          </div>
           </div>
         </div>
       </div>
@@ -9514,6 +9517,8 @@
 
         renderOrdersTable();
         renderProductionCalendar();
+        const stamp = document.getElementById('ord-last-refreshed');
+        if (stamp) stamp.textContent = `Last refreshed: ${ukDateTime(new Date().toISOString())}`;
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
       }
