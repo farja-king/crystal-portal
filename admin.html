@@ -9474,13 +9474,19 @@
       return shortages;
     }
 
-    async function loadOrders() {
+    // silent=true is used by the background auto-refresh below - same data
+    // reload, but skips the "Loading…" wipe (which would otherwise flash the
+    // table blank every cycle) and backs off entirely while something the
+    // refresh could disrupt is in progress: the detail panel open, or rows
+    // selected for a bulk action.
+    async function loadOrders(silent) {
+      if (silent && (viewingOrderId || (selectedOrderIds && selectedOrderIds.size))) return;
       ordersLoaded = true;
       loadReminderDays();
       loadFollowupDays();
       loadStaleQuoteIds();
       const tbody = document.getElementById('orders-table-body');
-      tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>';
+      if (!silent) tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       try {
         const [res, productionRes] = await Promise.all([
           fetch(API_ORDERS_URL, { cache: 'no-store' }),
@@ -13350,6 +13356,15 @@
     setInterval(loadInbox, 60000); // keeps the unread badge current even off the Inbox tab
     loadQuoteRequests();
     setInterval(loadQuoteRequests, 60000); // keeps the badge current even off the Quotes & Invoices tab
+    // Keeps the Quotes & Invoices list itself current - payment/email
+    // status changes happen from outside this tab (a customer paying, an
+    // email being opened) just as often as from inside it, same reasoning
+    // as the Inbox auto-refresh above. Only actually reloads while that
+    // tab is the one on screen - loadOrders(true) below is a no-op cost
+    // otherwise beyond the visibility check.
+    setInterval(() => {
+      if (!document.getElementById('section-orders').classList.contains('hidden')) loadOrders(true);
+    }, 30000);
   </script>
 </body>
 </html>
