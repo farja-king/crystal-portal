@@ -1046,6 +1046,9 @@
              scrolling back up to act on what's ticked. -->
         <div id="stock-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
           <span id="stock-bulk-count" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="openStockBulkEditModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            ✎ Edit selected
+          </button>
           <button type="button" onclick="bulkDeleteStock()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
             Delete selected
           </button>
@@ -1081,6 +1084,9 @@
 
         <div id="stock-bulk-bar-bottom" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mt-3 text-sm">
           <span id="stock-bulk-count-bottom" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="openStockBulkEditModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            ✎ Edit selected
+          </button>
           <button type="button" onclick="bulkDeleteStock()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
             Delete selected
           </button>
@@ -1825,6 +1831,46 @@
        trust a client-side-only check for something this destructive). A
        fresh safety backup of the CURRENT state is always taken first,
        automatically, no way to skip it. -->
+  <!-- Bulk price/threshold edit for several ticked Stock rows at once - see
+       openStockBulkEditModal()/confirmStockBulkEdit(). Each field left
+       blank is skipped entirely (not sent as "clear this"), so ticking a
+       handful of rows and only filling in Sale price leaves everything
+       else about them untouched. A Sale price change here also pushes
+       through to the matching Garment Catalog row(s) - see the
+       supplier_code+colour+size sync in functions/api/stock.js's PUT
+       handler - since the catalog is what quotes/invoices actually price
+       against, and it would otherwise silently drift from whatever's
+       being charged on the shelf. -->
+  <div id="stock-bulk-edit-modal" class="hidden fixed inset-0 bg-black/40 z-[110] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
+      <h3 class="font-bold text-slate-900 mb-1">Edit <span id="stock-bulk-edit-count"></span> selected items</h3>
+      <p class="text-xs text-slate-500 mb-4">Leave a field blank to leave it unchanged on every selected item. A sale price here also updates the matching Garment Catalog price.</p>
+      <div class="space-y-3">
+        <label class="text-sm block">
+          <span class="block font-medium text-slate-700 mb-1">Sale price (£)</span>
+          <input id="stock-bulk-edit-sale" type="number" step="0.01" min="0" placeholder="Leave blank to leave unchanged" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+        </label>
+        <label class="text-sm block">
+          <span class="block font-medium text-slate-700 mb-1">Brand</span>
+          <input id="stock-bulk-edit-brand" list="stock-brand-options" placeholder="Leave blank to leave unchanged" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+        </label>
+        <label class="text-sm block">
+          <span class="block font-medium text-slate-700 mb-1">Reorder threshold</span>
+          <input id="stock-bulk-edit-threshold" type="number" step="1" min="0" placeholder="Leave blank to leave unchanged" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+        </label>
+        <label class="text-sm block">
+          <span class="block font-medium text-slate-700 mb-1">Minimum stock level to hold</span>
+          <input id="stock-bulk-edit-min-level" type="number" step="1" min="0" placeholder="Leave blank to leave unchanged" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+        </label>
+      </div>
+      <p id="stock-bulk-edit-msg" class="text-xs text-red-600 mt-3"></p>
+      <div class="flex justify-end gap-3 mt-4">
+        <button type="button" onclick="closeStockBulkEditModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Cancel</button>
+        <button type="button" id="stock-bulk-edit-save-btn" onclick="confirmStockBulkEdit()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">Save to all selected</button>
+      </div>
+    </div>
+  </div>
+
   <div id="restore-modal" class="hidden fixed inset-0 bg-black/40 z-[110] flex items-center justify-center p-4">
     <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
       <h3 class="font-bold text-rose-700 mb-3">⚠ Restore backup</h3>
@@ -5513,6 +5559,71 @@
       filterStock();
       if (failed) showActionToast('⚠', `${failed} item(s) could not be deleted.`);
       else showActionToast('✓', `${ids.length} stock item(s) deleted.`);
+    }
+
+    // Reuses the same PUT as the single-item Edit form, one request per
+    // ticked row - stock.js only ever touches a field that's actually
+    // present in the body (see its "!== undefined" checks throughout), so
+    // leaving a field blank here genuinely means "don't touch it" rather
+    // than clearing it to empty/zero. A Sale price included in the patch
+    // also pushes to the matching Garment Catalog row(s) server-side - see
+    // the comment above stock-bulk-edit-modal.
+    function openStockBulkEditModal() {
+      if (!selectedStockIds.size) return;
+      document.getElementById('stock-bulk-edit-count').textContent = selectedStockIds.size;
+      document.getElementById('stock-bulk-edit-sale').value = '';
+      document.getElementById('stock-bulk-edit-brand').value = '';
+      document.getElementById('stock-bulk-edit-threshold').value = '';
+      document.getElementById('stock-bulk-edit-min-level').value = '';
+      document.getElementById('stock-bulk-edit-msg').textContent = '';
+      document.getElementById('stock-bulk-edit-modal').classList.remove('hidden');
+    }
+
+    function closeStockBulkEditModal() {
+      document.getElementById('stock-bulk-edit-modal').classList.add('hidden');
+    }
+
+    async function confirmStockBulkEdit() {
+      const saleRaw = document.getElementById('stock-bulk-edit-sale').value;
+      const brandRaw = document.getElementById('stock-bulk-edit-brand').value.trim();
+      const thresholdRaw = document.getElementById('stock-bulk-edit-threshold').value;
+      const minLevelRaw = document.getElementById('stock-bulk-edit-min-level').value;
+      const msg = document.getElementById('stock-bulk-edit-msg');
+
+      const patch = {};
+      if (saleRaw !== '') patch.sale_price = Number(saleRaw);
+      if (brandRaw !== '') patch.brand = brandRaw;
+      if (thresholdRaw !== '') patch.reorder_threshold = Number(thresholdRaw);
+      if (minLevelRaw !== '') patch.min_stock_level = Number(minLevelRaw);
+
+      if (!Object.keys(patch).length) { msg.textContent = 'Fill in at least one field to change.'; return; }
+
+      const btn = document.getElementById('stock-bulk-edit-save-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      const ids = [...selectedStockIds];
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          const res = await fetch(API_STOCK_URL, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, ...patch }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) failed++;
+        } catch (e) {
+          failed++;
+        }
+      }
+      btn.disabled = false;
+      btn.textContent = 'Save to all selected';
+      closeStockBulkEditModal();
+      clearStockSelection();
+      showActionToast(
+        failed ? '⚠' : '✓',
+        failed ? `Updated ${ids.length - failed} of ${ids.length} - ${failed} failed.` : `Updated ${ids.length} item(s).`
+      );
+      loadStock();
     }
 
     // Amount typed is always positive - direction comes from which button

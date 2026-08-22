@@ -244,6 +244,11 @@ export async function onRequest(context) {
         return json({ success: true, quantity });
       }
 
+      const resolvedSupplierCode = data.supplier_code !== undefined ? String(data.supplier_code).trim() : existing.supplier_code;
+      const resolvedColour = data.colour !== undefined ? String(data.colour).trim() : existing.colour;
+      const resolvedSize = data.size !== undefined ? String(data.size).trim() : existing.size;
+      const resolvedSale = data.sale_price !== undefined ? Number(data.sale_price) || 0 : existing.sale_price;
+
       const threshold = data.reorder_threshold === undefined
         ? existing.reorder_threshold
         : (data.reorder_threshold === null || data.reorder_threshold === "" ? null : Number(data.reorder_threshold));
@@ -261,17 +266,64 @@ export async function onRequest(context) {
         WHERE id = ?
       `).bind(
         String(data.item || existing.item).trim(),
-        data.supplier_code !== undefined ? String(data.supplier_code).trim() : existing.supplier_code,
+        resolvedSupplierCode,
         data.brand !== undefined ? String(data.brand).trim() : existing.brand,
-        data.colour !== undefined ? String(data.colour).trim() : existing.colour,
-        data.size !== undefined ? String(data.size).trim() : existing.size,
+        resolvedColour,
+        resolvedSize,
         data.cost_price !== undefined ? Number(data.cost_price) || 0 : existing.cost_price,
-        data.sale_price !== undefined ? Number(data.sale_price) || 0 : existing.sale_price,
+        resolvedSale,
         threshold,
         minStockLevel,
         data.notes !== undefined ? String(data.notes).trim() : existing.notes,
         data.id
       ).run();
+
+      // A stock item isn't linked back to the catalog row it was copied
+      // from (see the note on stock_garment_picker in admin.html) - so a
+      // sale-price edit here only pushed the shelf price, and the Garment
+      // Catalog (what quotes/invoices actually price against) silently
+      // drifted out of sync with it. Best-effort match on supplier_code +
+      // colour + size instead: exact, so it can only ever hit the one
+      // catalog row this stock item is actually a physical instance of.
+      // Never touches a customer's own price list (same guard products.js's
+      // bulk pricing sweep uses) - that's edited from their customer record,
+      // not from shelf stock.
+      if (data.sale_price !== undefined && resolvedSupplierCode) {
+        await db.prepare(`
+          CREATE TABLE IF NOT EXISTS product_price_history (
+            id TEXT PRIMARY KEY,
+            product_id TEXT NOT NULL,
+            supplier_code TEXT,
+            customer_id TEXT,
+            old_sell_price REAL,
+            new_sell_price REAL,
+            source TEXT,
+            changed_at TEXT DEFAULT CURRENT_TIMESTAMP
+          )
+        `).run();
+        const { results: matches } = await db.prepare(`
+          SELECT id, sell_price FROM products
+          WHERE supplier_code = ? AND colour = ? AND size = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL
+        `).bind(resolvedSupplierCode, resolvedColour, resolvedSize).all();
+        if (matches.length) {
+          const roundedSale = Math.round(resolvedSale * 100) / 100;
+          await db.batch(matches.map((m) =>
+            db.prepare(`
+              UPDATE products SET sell_price = ?, profit = ROUND(? - cost_price * (1 + vat_rate), 2), updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(roundedSale, roundedSale, m.id)
+          ));
+          const historyRows = matches.filter((m) => m.sell_price !== roundedSale);
+          if (historyRows.length) {
+            const stmt = db.prepare(`
+              INSERT INTO product_price_history (id, product_id, supplier_code, customer_id, old_sell_price, new_sell_price, source)
+              VALUES (?, ?, ?, NULL, ?, ?, 'stock_edit')
+            `);
+            await db.batch(historyRows.map((m) => stmt.bind(crypto.randomUUID(), m.id, resolvedSupplierCode, m.sell_price, roundedSale)));
+          }
+        }
+      }
+
       return json({ success: true });
     }
 
