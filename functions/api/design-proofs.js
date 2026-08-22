@@ -189,6 +189,19 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // archived_at - separate from deleted_at (Trash): archiving is for a
+    // proof that's a real, kept record (e.g. an old test/finished job)
+    // that should just stop cluttering the main Design Proofs dashboard,
+    // not something being thrown away - same distinction as orders.js's
+    // Archive vs Delete on the Quotes & Invoices list. Set/cleared on every
+    // version of an order's proofs together (see the archive/unarchive
+    // actions below), so an order never ends up with some versions
+    // archived and others not.
+    try {
+      await db.prepare(`ALTER TABLE design_proofs ADD COLUMN archived_at TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     const url = new URL(request.url);
 
@@ -270,7 +283,10 @@ export async function onRequest(context) {
     // newest-sent-or-created first. Backs the master Design Proofs
     // dashboard - the one place to see everything currently awaiting a
     // customer's response, or find a specific version to resend, without
-    // having to already know which quote it's on.
+    // having to already know which quote it's on. Archived proofs are
+    // deliberately excluded here (see ?archived=1 below) - that's the
+    // whole point of archiving, to get a finished/test entry off this list
+    // without deleting it.
     if (request.method === "GET" && url.searchParams.get("all")) {
       const { results } = await db.prepare(`
         SELECT p.id, p.order_id, p.customer_id, p.version, p.filename, p.content_type, p.status,
@@ -278,9 +294,26 @@ export async function onRequest(context) {
                o.quote_number, o.invoice_number, o.doc_type, o.customer_name
         FROM design_proofs p
         JOIN orders o ON o.id = p.order_id
-        WHERE p.deleted_at IS NULL
+        WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
           AND p.version = (SELECT MAX(version) FROM design_proofs WHERE order_id = p.order_id AND deleted_at IS NULL)
         ORDER BY COALESCE(p.sent_at, p.created_at) DESC
+      `).all();
+      return json(results);
+    }
+
+    // GET ?archived=1 - the flip side of ?all=1 above, for the Archived
+    // panel next to the dashboard's Refresh button (same "tucked away, not
+    // deleted" pattern as orders.js's Archived quotes/invoices list).
+    if (request.method === "GET" && url.searchParams.get("archived")) {
+      const { results } = await db.prepare(`
+        SELECT p.id, p.order_id, p.customer_id, p.version, p.filename, p.content_type, p.status,
+               p.decision_notes, p.created_at, p.sent_at, p.decided_at, p.archived_at, (p.r2_key <> '') AS has_file,
+               o.quote_number, o.invoice_number, o.doc_type, o.customer_name
+        FROM design_proofs p
+        JOIN orders o ON o.id = p.order_id
+        WHERE p.deleted_at IS NULL AND p.archived_at IS NOT NULL
+          AND p.version = (SELECT MAX(version) FROM design_proofs WHERE order_id = p.order_id AND deleted_at IS NULL)
+        ORDER BY p.archived_at DESC
       `).all();
       return json(results);
     }
@@ -364,6 +397,21 @@ export async function onRequest(context) {
 
           const result = await sendProofEmail(env, db, bucket, url.origin, order, proof);
           return json({ success: true, ...result, id: proof.id, version: proof.version });
+        }
+
+        // Archive/unarchive - applied to every version on the order at
+        // once (not just the latest one the dashboard row represents), so
+        // an order never ends up half-archived with an older version still
+        // surfacing on the main list. Distinct from Delete/Trash below:
+        // archiving is for a real, finished (or test) record that should
+        // just stop cluttering the dashboard, never removed or hidden from
+        // the quote's own Design Proofs card.
+        if (data.action === "archive" || data.action === "unarchive") {
+          if (!data.order_id) return json({ error: "order_id is required" }, 400);
+          await db.prepare(
+            `UPDATE design_proofs SET archived_at = ? WHERE order_id = ?`
+          ).bind(data.action === "archive" ? new Date().toISOString() : null, data.order_id).run();
+          return json({ success: true });
         }
 
         // Manual "Remove image from database" (offered on an Archived
@@ -564,7 +612,28 @@ export async function onRequest(context) {
         return json({ success: true, purged: orphaned.length });
       }
 
-      if (!data.id) return json({ error: "id is required" }, 400);
+      // Deleting from the Design Proofs dashboard row deletes every version
+      // on that order at once (data.order_id), not just the latest one the
+      // row represents - same reasoning as archive/unarchive above, so an
+      // older un-deleted version doesn't silently resurface on the
+      // dashboard in place of the one just removed. The single-id path
+      // (data.id) is still used elsewhere - the version history on a
+      // quote's own Design Proofs card, where deleting one specific
+      // version while keeping others is exactly the point.
+      if (data.order_id && !data.id) {
+        const { results: proofs } = await db.prepare(
+          "SELECT id, r2_key FROM design_proofs WHERE order_id = ? AND deleted_at IS NULL"
+        ).bind(data.order_id).all();
+        if (data.permanent) {
+          await Promise.all(proofs.filter((p) => p.r2_key).map((p) => bucket.delete(p.r2_key).catch(() => {})));
+          await db.prepare("DELETE FROM design_proofs WHERE order_id = ?").bind(data.order_id).run();
+        } else {
+          await db.prepare("UPDATE design_proofs SET deleted_at = CURRENT_TIMESTAMP WHERE order_id = ?").bind(data.order_id).run();
+        }
+        return json({ success: true, count: proofs.length });
+      }
+
+      if (!data.id) return json({ error: "id or order_id is required" }, 400);
       if (data.permanent) {
         const row = await db.prepare("SELECT r2_key FROM design_proofs WHERE id = ?").bind(data.id).first();
         if (row) {

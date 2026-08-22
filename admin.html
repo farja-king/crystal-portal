@@ -1428,6 +1428,9 @@
           <button onclick="loadProofsDashboard()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
+          <button onclick="openProofsArchive()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🗄 Archived
+          </button>
         </div>
       </div>
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
@@ -1449,6 +1452,33 @@
         </table>
       </div>
     </section>
+
+    <!-- Design Proofs Archived panel - same "separate modal, restore any
+         time" pattern as order-archive-modal for quotes/invoices. -->
+    <div id="proofs-archive-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full max-h-[80vh] flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b border-slate-200">
+          <h3 class="text-lg font-bold text-slate-900">Archived Design Proofs</h3>
+          <button onclick="closeProofsArchive()" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="overflow-y-auto overflow-x-auto flex-1">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-xs uppercase sticky top-0">
+              <tr>
+                <th class="text-left px-4 py-3">Customer</th>
+                <th class="text-left px-4 py-3">Quote/Invoice</th>
+                <th class="text-left px-4 py-3">Version</th>
+                <th class="text-left px-4 py-3">Archived</th>
+                <th class="text-left px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="proofs-archive-body">
+              <tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
     <!-- Full-system backup & restore - see functions/api/backup.js. Runs
          automatically ~once every 24 hours (the crystal-inbox-worker cron
@@ -10216,14 +10246,119 @@
             <td class="px-4 py-3">v${p.version}</td>
             <td class="px-4 py-3">${designProofStatusBadge(p.status, p.sent_at)}</td>
             <td class="px-4 py-3 text-slate-500">${p.sent_at ? escapeHtml(ukDate(p.sent_at)) : '-'}</td>
-            <td class="px-4 py-3">${p.sent_at
-              ? `<button type="button" onclick="resendDesignProof('${escapeAttr(p.id)}', '${escapeAttr(p.order_id)}', null, 'proofs-dashboard-status')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Resend</button>`
-              : `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(p.order_id)}', null, 'proofs-dashboard-status')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Send now</button>`}
+            <td class="px-4 py-3">
+              <div class="flex flex-wrap gap-2">
+                ${p.sent_at
+                  ? `<button type="button" onclick="resendDesignProof('${escapeAttr(p.id)}', '${escapeAttr(p.order_id)}', null, 'proofs-dashboard-status')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Resend</button>`
+                  : `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(p.order_id)}', null, 'proofs-dashboard-status')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Send now</button>`}
+                <button type="button" onclick="archiveDesignProof('${escapeAttr(p.order_id)}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="text-xs text-slate-500 hover:text-slate-700 font-semibold">Archive</button>
+                <button type="button" onclick="deleteDesignProofFromDashboard('${escapeAttr(p.order_id)}', '${escapeAttr(p.customer_name)}')" class="text-xs text-rose-600 hover:text-rose-800 font-semibold">Delete</button>
+              </div>
             </td>
           </tr>`;
         }).join('');
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-red-500 text-sm">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    // Delete from the master Design Proofs dashboard - soft-deletes every
+    // version on this order at once (see functions/api/design-proofs.js's
+    // DELETE handler), same "recoverable from Trash" pattern as every
+    // other delete in the portal. Distinct from Archive below: this is for
+    // getting rid of something (a test customer, a mistake), not tucking
+    // away a real finished record.
+    async function deleteDesignProofFromDashboard(orderId, customerName) {
+      if (!(await confirmModal(`Delete the design proof for ${customerName}? You can restore it from Trash afterward if needed.`))) return;
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_id: orderId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Delete failed');
+        showActionToast('✓', 'Design proof deleted.');
+        loadProofsDashboard();
+      } catch (e) {
+        showActionToast('⚠', 'Could not delete: ' + e.message);
+      }
+    }
+
+    // Archive from the master Design Proofs dashboard - see the matching
+    // action in functions/api/design-proofs.js. Applied to every version
+    // on the order, mirroring orders.js's Archive for quotes/invoices:
+    // still a real, kept record, just off the main list.
+    async function archiveDesignProof(orderId) {
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'archive', order_id: orderId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Archive failed');
+        showActionToast('✓', 'Design proof archived.');
+        loadProofsDashboard();
+      } catch (e) {
+        showActionToast('⚠', 'Could not archive: ' + e.message);
+      }
+    }
+
+    async function unarchiveDesignProof(orderId) {
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'unarchive', order_id: orderId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Restore failed');
+        showActionToast('✓', 'Design proof restored to the main list.');
+        loadProofsArchive();
+        loadProofsDashboard();
+      } catch (e) {
+        showActionToast('⚠', 'Could not restore: ' + e.message);
+      }
+    }
+
+    // Archived panel - same "separate modal, listed newest-first" pattern
+    // as openOrderArchive() for quotes/invoices.
+    async function openProofsArchive() {
+      const modal = document.getElementById('proofs-archive-modal');
+      modal.classList.remove('hidden');
+      await loadProofsArchive();
+    }
+
+    function closeProofsArchive() {
+      document.getElementById('proofs-archive-modal').classList.add('hidden');
+    }
+
+    async function loadProofsArchive() {
+      const tbody = document.getElementById('proofs-archive-body');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL + '?archived=1', { cache: 'no-store' });
+        const rows = await res.json();
+        if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-slate-400 text-sm">Nothing archived.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = rows.map((p) => {
+          const docNumber = p.doc_type === 'invoice' ? p.invoice_number : p.quote_number;
+          return `
+          <tr class="border-t border-slate-100">
+            <td class="px-4 py-3 font-medium text-slate-900">${escapeHtml(p.customer_name)}</td>
+            <td class="px-4 py-3"><button type="button" onclick="closeProofsArchive(); viewOrder('${escapeAttr(p.order_id)}')" class="text-indigo-600 hover:text-indigo-800 font-semibold">${escapeHtml(docNumber)}</button></td>
+            <td class="px-4 py-3">v${p.version}</td>
+            <td class="px-4 py-3 text-xs text-slate-500">${escapeHtml(ukDate(p.archived_at))}</td>
+            <td class="px-4 py-3">
+              <button type="button" onclick="unarchiveDesignProof('${escapeAttr(p.order_id)}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Restore</button>
+              <button type="button" onclick="deleteDesignProofFromDashboard('${escapeAttr(p.order_id)}', '${escapeAttr(p.customer_name)}'); closeProofsArchive();" class="text-xs text-rose-600 hover:text-rose-800 font-semibold ml-2">Delete</button>
+            </td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-red-500 text-sm">Could not load: ${escapeHtml(e.message)}</td></tr>`;
       }
     }
 
