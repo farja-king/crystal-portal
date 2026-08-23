@@ -140,7 +140,10 @@ export async function onRequest(context) {
       ).bind(jti, customer.id, expiresAt).run();
 
       if (env.RESEND_API_KEY) {
-        const loginUrl = `${env.DTF_PREP_ORIGIN}/?login_token=${loginToken}`;
+        // Always back to cart.html — checkout (the only thing that ever
+        // triggers this login) always ends up recomputable from there
+        // regardless of which page (builder or cart) started it.
+        const loginUrl = `${env.DTF_PREP_ORIGIN}/cart.html?login_token=${loginToken}`;
         const html = emailShell({
           heading: "Sign in to DTF-Prep",
           bodyHtml: "<p>Click below to sign in and finish your order. This link works once and expires in 15 minutes.</p>",
