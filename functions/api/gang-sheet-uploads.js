@@ -51,6 +51,25 @@ export async function onRequest(context) {
         await db.prepare("UPDATE gang_sheet_uploads SET keep_file = ? WHERE id = ?").bind(data.keep ? 1 : 0, data.id).run();
         return json({ success: true });
       }
+      // Manual delete - staff removing a gang sheet they no longer need to
+      // keep on file, from either the per-order card or the dashboard.
+      // Deletes the R2 object too (not just detaching, unlike an order
+      // deletion which respects keep_file) since this IS the explicit
+      // "get rid of it" action.
+      if (data.action === "delete") {
+        if (!data.id) return json({ error: "id is required" }, 400);
+        const row = await db.prepare("SELECT r2_key FROM gang_sheet_uploads WHERE id = ?").bind(data.id).first();
+        if (!row) return json({ error: "Not found" }, 404);
+        if (bucket && row.r2_key) {
+          try {
+            await bucket.delete(row.r2_key);
+          } catch {
+            // R2 object already gone - fine, still remove the DB row below.
+          }
+        }
+        await db.prepare("DELETE FROM gang_sheet_uploads WHERE id = ?").bind(data.id).run();
+        return json({ success: true });
+      }
       return json({ error: "Unknown action" }, 400);
     } catch (err) {
       return json({ error: err.message }, 500);
