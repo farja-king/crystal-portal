@@ -13821,6 +13821,13 @@
     // another tab. Falls back to Dashboard for a plain/unrecognized URL.
     switchTab(ADMIN_TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dashboard');
     checkNewGangSheetOrders(); // once per admin session load, not on every Dashboard tab re-entry
+    // A paid DTF-Prep order can land at any time, not just while Martin
+    // happens to be sitting on Dashboard - previously this only ever ran
+    // once at page load, so the popup only showed up after a manual
+    // refresh. Cheap count-only query (?count_new=1), safe to poll
+    // regardless of which tab is currently open, same reasoning as the
+    // Inbox/Quotes badge polls just above.
+    setInterval(checkNewGangSheetOrders, 30000);
     loadQuotes();
     loadCustomers();
     loadFacets();
