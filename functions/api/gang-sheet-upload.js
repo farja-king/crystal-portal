@@ -6,6 +6,18 @@
 // staff-facing path here at all; that's functions/api/gang-sheet-queue.js.
 import { verifyCustomerToken } from "../_lib/customer-token.js";
 
+// Pricing is computed here, not trusted from the client, since this price is
+// what gang-sheet-checkout.js later charges through Square. Must be kept in
+// sync with DTF-Prep's own CONFIG in src/app.js if the rate ever changes -
+// sheet width is fixed (the print bed), so only height/length feeds price.
+const RATE_PER_MM = 10 / 600; // a full 600mm sheet prints at £10
+const MIN_CHARGE_GBP = 5;
+const UPSCALE_CHARGE_GBP = 0.5;
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -88,8 +100,9 @@ export async function onRequest(context) {
       await bucket.put(key, buffer, { httpMetadata: { contentType: file.type || "image/png" } });
 
       const widthMm = Number(form.get("width_mm")) || null;
-      const heightMm = Number(form.get("height_mm")) || null;
-      const price = Number(form.get("price")) || null;
+      const heightMm = Number(form.get("height_mm")) || 0;
+      const upscaleCount = Math.max(0, parseInt(form.get("upscale_count"), 10) || 0);
+      const price = round2(Math.max(heightMm * RATE_PER_MM, MIN_CHARGE_GBP) + upscaleCount * UPSCALE_CHARGE_GBP);
       const filename = file.name || `gang-sheet-${id}.png`;
 
       await db.prepare(`
