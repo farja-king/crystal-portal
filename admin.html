@@ -2193,6 +2193,20 @@
 
       <p id="cv-square-summary" class="hidden bg-slate-50 rounded-lg p-3 mb-4 text-sm text-slate-700"></p>
 
+      <!-- DTF Gang Sheet flat price - same field as the Edit Customer form
+           (customers.js's dtf_flat_sheet_price), just also editable right
+           here so it doesn't need a trip to Edit to check or change while
+           already looking at this customer's record. Auto-saves on blur,
+           same pattern as Notes below. -->
+      <div class="border-t border-slate-200 pt-4 mb-4">
+        <label class="text-sm block">
+          <span class="font-bold text-slate-900 block mb-1">DTF Gang Sheet flat price (£)</span>
+          <input id="cv-dtf-flat-price" type="number" min="0" step="0.01" onblur="saveCvDtfFlatPrice()" placeholder="Leave blank for standard pricing" class="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" />
+        </label>
+        <p class="text-xs text-slate-400 mt-1">Replaces the normal length-based rate - this customer pays this one price for any gang sheet up to the 600mm max.</p>
+        <p id="cv-dtf-flat-price-status" class="text-xs mt-1 hidden"></p>
+      </div>
+
       <!-- Free-text notes, right here on the record itself rather than only
            reachable via the separate Edit Customer form - anything worth
            jotting down while looking at this customer's activity. Auto-
@@ -3284,6 +3298,8 @@
       cvNotesCustomerId = id;
       document.getElementById('cv-notes').value = c.notes || '';
       document.getElementById('cv-notes-status').classList.add('hidden');
+      document.getElementById('cv-dtf-flat-price').value = c.dtf_flat_sheet_price != null ? c.dtf_flat_sheet_price : '';
+      document.getElementById('cv-dtf-flat-price-status').classList.add('hidden');
 
       // Same combined figure (Square baseline + this customer's own portal
       // invoices) as the Customer Directory list and the edit form's
@@ -3346,6 +3362,36 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
         c.notes = notes;
+        status.className = 'text-xs mt-1 text-emerald-600';
+        status.textContent = 'Saved.';
+        status.classList.remove('hidden');
+        setTimeout(() => status.classList.add('hidden'), 2000);
+      } catch (e) {
+        status.className = 'text-xs mt-1 text-red-600';
+        status.textContent = 'Could not save: ' + e.message;
+        status.classList.remove('hidden');
+      }
+    }
+
+    async function saveCvDtfFlatPrice() {
+      if (!cvNotesCustomerId) return;
+      const c = customersById[cvNotesCustomerId];
+      if (!c) return;
+      const status = document.getElementById('cv-dtf-flat-price-status');
+      const raw = document.getElementById('cv-dtf-flat-price').value;
+      const value = raw === '' ? null : Number(raw);
+      if (value === (c.dtf_flat_sheet_price ?? null)) return; // nothing changed, don't spam a save
+      try {
+        // Same "spread the already-loaded record" reasoning as saveCvNotes -
+        // customers.js's PUT overwrites every editable field, not just the
+        // ones sent.
+        const res = await fetch(API_CUSTOMERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...c, dtf_flat_sheet_price: value }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+        c.dtf_flat_sheet_price = value;
         status.className = 'text-xs mt-1 text-emerald-600';
         status.textContent = 'Saved.';
         status.classList.remove('hidden');
