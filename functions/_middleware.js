@@ -98,6 +98,21 @@ export async function onRequest(context) {
     return pass("public-quote-request-submission");
   }
 
+  // gang-sheet-auth.js - DTF-Prep's passwordless customer login (a separate
+  // static app on a different origin, so it can never carry the staff
+  // portal_token cookie). Public POST; the endpoint's own request/verify
+  // actions and the single-use gang_sheet_login_tokens table are the real
+  // auth here, same reasoning as the other customer-facing token flows
+  // above. gang-sheet-upload.js is exempted the same way, one entry down -
+  // it checks the customer's own session bearer token itself rather than
+  // relying on anything this middleware could inspect (a multipart body).
+  if (url.pathname === "/api/gang-sheet-auth" && request.method === "POST") {
+    return pass("public-gang-sheet-auth");
+  }
+  if (url.pathname === "/api/gang-sheet-upload") {
+    return pass("public-gang-sheet-upload-token-checked-in-file");
+  }
+
   // square-webhook.js - called by Square itself, never by a browser. There
   // is no session/API key to check here at all; the file's own HMAC
   // signature verification IS the auth for this route, so it's exempted
