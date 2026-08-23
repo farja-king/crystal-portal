@@ -10669,7 +10669,7 @@
               <input type="checkbox" ${g.keep_file ? 'checked' : ''} onchange="toggleGangSheetKeep('${escapeAttr(g.id)}', this.checked)" class="rounded border-slate-300" />
             </td>
             <td class="px-4 py-3">
-              ${g.status !== 'expired' ? `<a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">View full size</a>` : ''}
+              ${g.status !== 'expired' ? `<div class="flex items-center gap-3"><a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">View full size</a><a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" download="${escapeAttr(g.filename || 'gang-sheet.png')}" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Download</a></div>` : ''}
             </td>
           </tr>`;
         }).join('');
@@ -10729,6 +10729,7 @@
                 ${p.sent_at
                   ? `<button type="button" onclick="resendDesignProof('${escapeAttr(p.id)}', '${escapeAttr(p.order_id)}', null, 'proofs-dashboard-status')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Resend</button>`
                   : `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(p.order_id)}', null, 'proofs-dashboard-status')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Send now</button>`}
+                ${p.has_file ? `<a href="${API_DESIGN_PROOFS_URL}?view=${escapeAttr(p.id)}" download="${escapeAttr(p.filename || 'design-proof')}" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Download</a>` : ''}
                 <button type="button" onclick="archiveDesignProof('${escapeAttr(p.order_id)}')" title="Tuck this out of the main list without deleting it - restore any time from Archived" class="text-xs text-slate-500 hover:text-slate-700 font-semibold">Archive</button>
                 <button type="button" onclick="deleteDesignProofFromDashboard('${escapeAttr(p.order_id)}', '${escapeAttr(p.customer_name)}')" class="text-xs text-rose-600 hover:text-rose-800 font-semibold">Delete</button>
               </div>
@@ -11341,6 +11342,7 @@
               <div class="text-xs text-slate-400">${Math.round(g.width_mm)} × ${Math.round(g.height_mm)}mm · ${money(g.price)}</div>
               <div class="flex items-center gap-3 mt-1">
                 <a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">View full size</a>
+                <a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" download="${escapeAttr(g.filename || 'gang-sheet.png')}" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Download</a>
                 <label class="text-xs text-slate-500 flex items-center gap-1 cursor-pointer" title="Exempts this sheet from the 30-day auto-cleanup and from being removed if this order is ever deleted">
                   <input type="checkbox" ${g.keep_file ? 'checked' : ''} onchange="toggleGangSheetKeep('${escapeAttr(g.id)}', this.checked)" class="rounded border-slate-300" /> Keep file
                 </label>
