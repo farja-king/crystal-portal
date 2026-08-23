@@ -10,7 +10,7 @@ export async function onRequest(context) {
 
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Cache-Control": "no-store",
   };
 
@@ -18,14 +18,44 @@ export async function onRequest(context) {
   const json = (body, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-  if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
   if (!db) return json({ error: "Database isn't set up yet" }, 500);
+
+  // The dashboard's "new orders" popup (POST {action:"mark_seen"}) doesn't
+  // need R2 at all, so it's checked before the bucket guard below - no
+  // reason to block it just because file storage happens to be misconfigured.
+  if (request.method === "POST") {
+    try {
+      const data = await request.json();
+      if (data.action === "mark_seen") {
+        await db.prepare(
+          "UPDATE gang_sheet_uploads SET seen_by_staff = 1 WHERE status = 'attached' AND seen_by_staff = 0"
+        ).run();
+        return json({ success: true });
+      }
+      return json({ error: "Unknown action" }, 400);
+    } catch (err) {
+      return json({ error: err.message }, 500);
+    }
+  }
+
+  if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
   if (!bucket) {
     return json({ error: "File storage isn't set up yet - the DESIGN_FILES R2 bucket binding is missing from this Pages project." }, 500);
   }
 
   try {
     const url = new URL(request.url);
+
+    // Cheap COUNT for the dashboard's "you have N new orders" popup - counts
+    // distinct orders, not upload rows, since a checkout can attach more
+    // than one gang sheet to the same order (one popup per order, not one
+    // per sheet).
+    if (url.searchParams.get("count_new")) {
+      const row = await db.prepare(
+        "SELECT COUNT(DISTINCT order_id) AS n FROM gang_sheet_uploads WHERE status = 'attached' AND seen_by_staff = 0 AND order_id IS NOT NULL"
+      ).first();
+      return json({ count: (row && row.n) || 0 });
+    }
 
     // Streams the actual PNG - same pattern as design-files.js's ?view=.
     // gang_sheet_uploads has no content_type column (every upload is a PNG

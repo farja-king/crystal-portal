@@ -1716,6 +1716,20 @@
     </div>
   </div>
 
+  <!-- Dashboard "new DTF-Prep orders" popup - see checkNewGangSheetOrders()/
+       showNewGangSheetsPopup(). Single-button info dialog, not a Yes/No
+       decision, so it's its own small overlay rather than reusing
+       confirm-modal. -->
+  <div id="gang-sheet-popup" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
+      <p id="gang-sheet-popup-msg" class="text-sm text-slate-800 mb-5"></p>
+      <div class="flex justify-end gap-3">
+        <button type="button" onclick="dismissNewGangSheetsPopup(false)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Dismiss</button>
+        <button type="button" onclick="dismissNewGangSheetsPopup(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">View orders</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Reusable single-field text input overlay - see promptModal() - replaces
        the native browser prompt() (password setup, "send to which email"). -->
   <div id="prompt-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
@@ -11219,6 +11233,42 @@
       }
     }
 
+    // Dashboard "new orders" popup - fires once per admin page load (not on
+    // every Dashboard tab re-entry, since it's only wired at the bottom of
+    // this file next to the other one-time initial-load calls). Silent on
+    // any failure - a missed check is never worth interrupting the rest of
+    // the dashboard for.
+    async function checkNewGangSheetOrders() {
+      try {
+        const res = await fetch(API_GANG_SHEET_UPLOADS_URL + '?count_new=1', { cache: 'no-store' });
+        const data = await res.json();
+        if (res.ok && data.count > 0) showNewGangSheetsPopup(data.count);
+      } catch (e) {
+        // silent - non-critical
+      }
+    }
+
+    function showNewGangSheetsPopup(count) {
+      const modal = document.getElementById('gang-sheet-popup');
+      document.getElementById('gang-sheet-popup-msg').textContent =
+        `You have ${count} new DTF gang sheet order${count > 1 ? 's' : ''} - paid and ready for production.`;
+      modal.classList.remove('hidden');
+    }
+
+    async function dismissNewGangSheetsPopup(goToOrders) {
+      document.getElementById('gang-sheet-popup').classList.add('hidden');
+      try {
+        await fetch(API_GANG_SHEET_UPLOADS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'mark_seen' }),
+        });
+      } catch (e) {
+        // Same batch would just re-pop next load - not worth surfacing an
+        // error over for something this low-stakes.
+      }
+      if (goToOrders) switchTab('orders');
+    }
+
     async function uploadDesignProof(orderId, inputId, statusId, containerId) {
       inputId = inputId || ('proof-file-input-' + orderId);
       statusId = statusId || ('proof-upload-status-' + orderId);
@@ -13561,6 +13611,7 @@
 
     // Initial Load
     loadDashboard(); // the landing tab, so it needs its data immediately, not just on first click
+    checkNewGangSheetOrders(); // once per admin session load, not on every Dashboard tab re-entry
     loadQuotes();
     loadCustomers();
     loadFacets();
