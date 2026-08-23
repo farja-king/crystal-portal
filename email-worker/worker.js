@@ -268,6 +268,10 @@ export default {
       // reorder - see functions/api/reorder-reminders.js. Self-limiting
       // the same way as quote-followups (only sends once per order cycle).
       sweep("/api/reorder-reminders"),
+      // 30-day retention sweep for customer-uploaded DTF-Prep gang sheets -
+      // see functions/api/gang-sheet-cleanup.js. Self-throttled the same
+      // way as backup.js, safe to hit every 15 minutes.
+      sweep("/api/gang-sheet-cleanup"),
     ]));
   },
 };

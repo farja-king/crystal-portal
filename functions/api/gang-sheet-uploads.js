@@ -1,6 +1,7 @@
-// Staff-facing lookup for DTF-Prep gang sheets attached to an order - shows
-// the actual artwork on an invoice's detail view in admin.html. Normal
-// portal-password gate (no public exemption needed here, unlike
+// Staff-facing lookup for DTF-Prep gang sheets - the per-order thumbnail on
+// an invoice's detail view, and the "DTF Gang Sheets" dashboard (a sub-tab
+// of Design Proofs) showing every upload across every customer at a glance.
+// Normal portal-password gate (no public exemption needed here, unlike
 // gang-sheet-upload.js/gang-sheet-checkout.js, which are the customer-facing
 // side of this same data).
 export async function onRequest(context) {
@@ -10,7 +11,7 @@ export async function onRequest(context) {
 
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
     "Cache-Control": "no-store",
   };
 
@@ -20,16 +21,34 @@ export async function onRequest(context) {
 
   if (!db) return json({ error: "Database isn't set up yet" }, 500);
 
-  // The dashboard's "new orders" popup (POST {action:"mark_seen"}) doesn't
-  // need R2 at all, so it's checked before the bucket guard below - no
-  // reason to block it just because file storage happens to be misconfigured.
-  if (request.method === "POST") {
+  // keep_file - the "Keep file" toggle on the DTF Gang Sheets dashboard.
+  // Exempts an upload from the 30-day cleanup sweep (gang-sheet-cleanup.js)
+  // and, if its order is ever deleted, from being removed along with it
+  // (see deleteOrphanedGangSheetUploads in orders.js) - it's just detached
+  // instead. Guarded here too, not just in gang-sheet-upload.js, since this
+  // file is just as likely to be the first one hit on a cold deploy.
+  try {
+    await db.prepare(`ALTER TABLE gang_sheet_uploads ADD COLUMN keep_file INTEGER DEFAULT 0`).run();
+  } catch {
+    // already exists
+  }
+
+  // The dashboard's "new orders" popup (mark_seen) and the Keep file
+  // toggle (set_keep) don't need R2 at all, so they're handled before the
+  // bucket guard below - no reason to block them just because file storage
+  // happens to be misconfigured.
+  if (request.method === "POST" || request.method === "PUT") {
     try {
       const data = await request.json();
       if (data.action === "mark_seen") {
         await db.prepare(
           "UPDATE gang_sheet_uploads SET seen_by_staff = 1 WHERE status = 'attached' AND seen_by_staff = 0"
         ).run();
+        return json({ success: true });
+      }
+      if (data.action === "set_keep") {
+        if (!data.id) return json({ error: "id is required" }, 400);
+        await db.prepare("UPDATE gang_sheet_uploads SET keep_file = ? WHERE id = ?").bind(data.keep ? 1 : 0, data.id).run();
         return json({ success: true });
       }
       return json({ error: "Unknown action" }, 400);
@@ -74,10 +93,26 @@ export async function onRequest(context) {
       });
     }
 
+    // ?all=1 - the DTF Gang Sheets dashboard: every upload across every
+    // customer, newest first, joined to customer/order info for display.
+    // LEFT JOINs since a kept-but-detached upload (its order was deleted)
+    // or a not-yet-attached one still needs to show up here.
+    if (url.searchParams.get("all")) {
+      const { results } = await db.prepare(`
+        SELECT u.id, u.filename, u.width_mm, u.height_mm, u.price, u.status, u.keep_file, u.uploaded_at, u.order_id,
+               c.name AS customer_name, o.doc_type, o.invoice_number, o.quote_number
+        FROM gang_sheet_uploads u
+        LEFT JOIN customers c ON c.id = u.customer_id
+        LEFT JOIN orders o ON o.id = u.order_id
+        ORDER BY u.uploaded_at DESC
+      `).all();
+      return json(results);
+    }
+
     const orderId = url.searchParams.get("order_id");
     if (!orderId) return json({ error: "order_id is required" }, 400);
     const { results } = await db.prepare(`
-      SELECT id, filename, width_mm, height_mm, price, status, uploaded_at
+      SELECT id, filename, width_mm, height_mm, price, status, keep_file, uploaded_at
       FROM gang_sheet_uploads WHERE order_id = ? ORDER BY uploaded_at DESC
     `).bind(orderId).all();
     return json(results);

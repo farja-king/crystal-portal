@@ -1515,25 +1515,30 @@
     <section id="section-proofs" class="hidden">
       <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
-          <h2 class="text-2xl font-bold text-slate-900">Design Proofs</h2>
-          <p class="text-slate-500 text-sm">Every quote/invoice's latest mockup version, across every customer, in one place.</p>
+          <h2 class="text-2xl font-bold text-slate-900">Design Proofs & Gang Sheets</h2>
+          <p id="proofs-subview-desc" class="text-slate-500 text-sm">Every quote/invoice's latest mockup version, across every customer, in one place.</p>
         </div>
         <div class="flex items-center gap-2">
+          <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
+            <button id="proofs-subview-proofs-btn" onclick="switchProofsSubview('proofs')" class="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white">Design Proofs</button>
+            <button id="proofs-subview-gangsheets-btn" onclick="switchProofsSubview('gangsheets')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">DTF Gang Sheets</button>
+          </div>
           <select id="proofs-filter" onchange="loadProofsDashboard()" class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
             <option value="">All statuses</option>
             <option value="pending">Awaiting response</option>
             <option value="approved">Approved</option>
             <option value="declined">Declined</option>
           </select>
-          <button onclick="loadProofsDashboard()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+          <button id="proofs-subview-refresh-btn" onclick="loadProofsDashboard()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
-          <button onclick="openProofsArchive()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+          <button id="proofs-subview-archived-btn" onclick="openProofsArchive()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🗄 Archived
           </button>
         </div>
       </div>
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
+
+      <div id="proofs-subview-proofs" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
             <tr>
@@ -1548,6 +1553,32 @@
           </thead>
           <tbody id="proofs-dashboard-body">
             <tr><td colspan="7" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Every DTF-Prep gang sheet upload, across every customer, at a
+           glance - see loadGangSheetsDashboard()/functions/api/
+           gang-sheet-uploads.js's ?all=1. Keep file exempts one from the
+           30-day cleanup sweep and from being removed if its order is ever
+           deleted (see gang-sheet-cleanup.js / deleteOrphanedGangSheetUploads
+           in orders.js). -->
+      <div id="proofs-subview-gangsheets" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+            <tr>
+              <th class="text-left px-4 py-3">Image</th>
+              <th class="text-left px-4 py-3">Customer</th>
+              <th class="text-left px-4 py-3">Order</th>
+              <th class="text-left px-4 py-3">Size</th>
+              <th class="text-left px-4 py-3">Price</th>
+              <th class="text-left px-4 py-3">Uploaded</th>
+              <th class="text-left px-4 py-3" title="Exempts this sheet from the 30-day auto-cleanup and from being removed if its order is ever deleted">Keep file</th>
+              <th class="text-left px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="gangsheets-dashboard-body">
+            <tr><td colspan="8" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -2645,9 +2676,15 @@
       ADMIN_TABS.forEach((name) => {
         document.getElementById('section-' + name).classList.toggle('hidden', tab !== name);
         const isInbox = name === 'inbox';
-        document.getElementById('tab-' + name).className = tab === name
-          ? (isInbox ? active + ' relative' : active)
-          : idle;
+        const btnClass = tab === name ? (isInbox ? active + ' relative' : active) : idle;
+        // tab-quotes (the legacy "Quotes & Order Pipeline" nav button) is
+        // deliberately hidden in its own static class - see the comment
+        // where it's declared. This loop otherwise overwrites every tab
+        // button's className wholesale on every single switchTab() call
+        // (not just switching to "quotes"), which was silently stripping
+        // that "hidden" class off and leaving the button visible in the nav
+        // for the rest of the session, from the very first tab click.
+        document.getElementById('tab-' + name).className = name === 'quotes' ? btnClass + ' hidden' : btnClass;
       });
       // Every tab refetches its own data on every switch into it, not just
       // the first time - a second browser tab/session, or just time passing,
@@ -2669,7 +2706,7 @@
       }
       if (tab === 'inbox') loadInbox();
       if (tab === 'dashboard') loadDashboard();
-      if (tab === 'proofs') loadProofsDashboard();
+      if (tab === 'proofs') switchProofsSubview(proofsSubview);
       if (tab === 'backups') loadBackups();
       if (tab === 'trash') loadTrash();
     }
@@ -10578,6 +10615,83 @@
     // version, so there's a single place to see everything currently
     // awaiting a response (or find any version to resend) without already
     // knowing which quote it lives on.
+    let proofsSubview = 'proofs';
+    function switchProofsSubview(view) {
+      proofsSubview = view;
+      const active = 'px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white';
+      const idle = 'px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100';
+      document.getElementById('proofs-subview-proofs-btn').className = view === 'proofs' ? active : idle;
+      document.getElementById('proofs-subview-gangsheets-btn').className = view === 'gangsheets' ? active : idle;
+      document.getElementById('proofs-subview-proofs').classList.toggle('hidden', view !== 'proofs');
+      document.getElementById('proofs-subview-gangsheets').classList.toggle('hidden', view !== 'gangsheets');
+      // The status filter/Archived button only apply to Design Proofs -
+      // there's no equivalent concept (yet) on the gang sheets side.
+      document.getElementById('proofs-filter').classList.toggle('hidden', view !== 'proofs');
+      document.getElementById('proofs-subview-archived-btn').classList.toggle('hidden', view !== 'proofs');
+      document.getElementById('proofs-subview-desc').textContent = view === 'proofs'
+        ? "Every quote/invoice's latest mockup version, across every customer, in one place."
+        : 'Every DTF-Prep gang sheet upload, across every customer, in one place.';
+      if (view === 'proofs') loadProofsDashboard();
+      else loadGangSheetsDashboard();
+    }
+
+    async function loadGangSheetsDashboard() {
+      const tbody = document.getElementById('gangsheets-dashboard-body');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      try {
+        const res = await fetch(API_GANG_SHEET_UPLOADS_URL + '?all=1', { cache: 'no-store' });
+        const rows = await res.json();
+        if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-slate-400 text-sm">Nothing uploaded yet.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = rows.map((g) => {
+          const docNumber = g.doc_type === 'invoice' ? g.invoice_number : g.quote_number;
+          const orderCell = g.order_id
+            ? `<button type="button" onclick="viewOrder('${escapeAttr(g.order_id)}')" class="text-indigo-600 hover:text-indigo-800 font-semibold">${escapeHtml(docNumber || 'View')}</button>`
+            : '<span class="text-slate-400">Unattached</span>';
+          const statusNote = g.status === 'expired' ? '<div class="text-xs text-rose-500">Expired - file removed</div>' : '';
+          return `
+          <tr class="border-t border-slate-100">
+            <td class="px-4 py-3">
+              ${g.status === 'expired'
+                ? `<div class="w-12 h-12 flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300 text-[10px] text-center leading-tight">Removed</div>`
+                : `<a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank"><img src="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" class="w-12 h-12 object-contain rounded-lg border border-slate-200 bg-slate-50" /></a>`}
+            </td>
+            <td class="px-4 py-3 font-medium text-slate-900">${escapeHtml(g.customer_name || 'Unknown')}</td>
+            <td class="px-4 py-3">${orderCell}${statusNote}</td>
+            <td class="px-4 py-3 text-slate-500">${Math.round(g.width_mm)} × ${Math.round(g.height_mm)}mm</td>
+            <td class="px-4 py-3">${money(g.price)}</td>
+            <td class="px-4 py-3 text-slate-500">${escapeHtml(ukDate(g.uploaded_at))}</td>
+            <td class="px-4 py-3">
+              <input type="checkbox" ${g.keep_file ? 'checked' : ''} onchange="toggleGangSheetKeep('${escapeAttr(g.id)}', this.checked)" class="rounded border-slate-300" />
+            </td>
+            <td class="px-4 py-3">
+              ${g.status !== 'expired' ? `<a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">View full size</a>` : ''}
+            </td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-red-500 text-sm">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    async function toggleGangSheetKeep(id, keep) {
+      try {
+        const res = await fetch(API_GANG_SHEET_UPLOADS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_keep', id, keep }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not update');
+      } catch (e) {
+        showActionToast('⚠', e.message || 'Could not update Keep file.');
+        loadGangSheetsDashboard(); // resync the checkbox to whatever's actually stored
+      }
+    }
+
     async function loadProofsDashboard() {
       const tbody = document.getElementById('proofs-dashboard-body');
       if (!tbody) return;
@@ -11225,7 +11339,12 @@
             <div class="min-w-0 flex-1">
               <div class="text-sm font-medium text-slate-900">${escapeHtml(g.filename)}</div>
               <div class="text-xs text-slate-400">${Math.round(g.width_mm)} × ${Math.round(g.height_mm)}mm · ${money(g.price)}</div>
-              <a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1 inline-block">View full size</a>
+              <div class="flex items-center gap-3 mt-1">
+                <a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">View full size</a>
+                <label class="text-xs text-slate-500 flex items-center gap-1 cursor-pointer" title="Exempts this sheet from the 30-day auto-cleanup and from being removed if this order is ever deleted">
+                  <input type="checkbox" ${g.keep_file ? 'checked' : ''} onchange="toggleGangSheetKeep('${escapeAttr(g.id)}', this.checked)" class="rounded border-slate-300" /> Keep file
+                </label>
+              </div>
             </div>
           </div>`).join('');
       } catch (e) {

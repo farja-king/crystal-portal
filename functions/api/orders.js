@@ -1168,6 +1168,38 @@ export async function onRequest(context) {
       await db.prepare(`DELETE FROM production_steps WHERE order_id IN (${placeholders})`).bind(...orderIds).run();
     }
 
+    // Same cleanup again, for DTF-Prep gang sheets (gang_sheet_uploads,
+    // written by functions/api/gang-sheet-upload.js) - with one difference:
+    // a sheet marked keep_file (the "Keep file" toggle on the DTF Gang
+    // Sheets dashboard) survives the order being deleted rather than being
+    // removed with it - it's just detached (order_id cleared) so it still
+    // shows up there afterward, un-attached to anything.
+    async function deleteOrphanedGangSheetUploads(orderIds) {
+      if (!orderIds.length) return;
+      const placeholders = orderIds.map(() => "?").join(",");
+      let rows;
+      try {
+        ({ results: rows } = await db.prepare(
+          `SELECT id, r2_key, keep_file FROM gang_sheet_uploads WHERE order_id IN (${placeholders})`
+        ).bind(...orderIds).all());
+      } catch (e) {
+        return; // gang_sheet_uploads table doesn't exist yet - nothing to clean up
+      }
+      const toDelete = rows.filter((r) => !r.keep_file);
+      const toDetach = rows.filter((r) => r.keep_file);
+      if (env.DESIGN_FILES && toDelete.length) {
+        await Promise.all(toDelete.map((r) => env.DESIGN_FILES.delete(r.r2_key).catch(() => {})));
+      }
+      if (toDelete.length) {
+        const delPlaceholders = toDelete.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM gang_sheet_uploads WHERE id IN (${delPlaceholders})`).bind(...toDelete.map((r) => r.id)).run();
+      }
+      if (toDetach.length) {
+        const detachPlaceholders = toDetach.map(() => "?").join(",");
+        await db.prepare(`UPDATE gang_sheet_uploads SET order_id = NULL WHERE id IN (${detachPlaceholders})`).bind(...toDetach.map((r) => r.id)).run();
+      }
+    }
+
     // Deletes an order's own uploaded manual-invoice PDF (if it has one) -
     // separate from deleteOrphanedDesignProofs/deleteOrphanedProductionSteps
     // above since this is a single column on the order itself, not a
@@ -1245,6 +1277,7 @@ export async function onRequest(context) {
       async function permanentlyDeleteOrders(orderIds) {
         await deleteOrphanedDesignProofs(orderIds);
         await deleteOrphanedProductionSteps(orderIds);
+        await deleteOrphanedGangSheetUploads(orderIds);
         await deleteManualInvoicePdfs(orderIds);
         await deleteOrderPaymentsAndLogs(orderIds);
         for (const orderId of orderIds) await restoreStockForOrder(db, orderId, env, originUrl);
