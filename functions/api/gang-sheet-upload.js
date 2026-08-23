@@ -77,17 +77,102 @@ export async function onRequest(context) {
     const customerId = payload.customer_id;
 
     if (request.method === "GET") {
+      const url = new URL(request.url);
+
+      // ?view=<id> - streams the original file back, scoped to this
+      // customer's own rows only. Used by the Account page's Reorder
+      // button (pulls the original artwork back down to re-add to cart
+      // unedited - see DTF-Prep's cart.js) - separate from admin's own
+      // ?view= in gang-sheet-uploads.js, which is staff-only and unscoped.
+      if (url.searchParams.get("view")) {
+        const row = await db
+          .prepare("SELECT * FROM gang_sheet_uploads WHERE id = ? AND customer_id = ?")
+          .bind(url.searchParams.get("view"), customerId)
+          .first();
+        if (!row) return json({ error: "Not found" }, 404);
+        const obj = await bucket.get(row.r2_key);
+        if (!obj) return json({ error: "This file is no longer on our server - files are automatically removed 30 days after upload." }, 404);
+        return new Response(obj.body, {
+          headers: {
+            "Content-Type": (obj.httpMetadata && obj.httpMetadata.contentType) || "image/png",
+            "Cache-Control": "no-store",
+          },
+        });
+      }
+
       // Always scoped to the token's own customer_id - never a
       // caller-supplied one, so one customer can't page through another's
       // upload history by guessing/passing a different id.
+      //
+      // dispatched_at - the most recent time this upload's order had a
+      // "Ready for collection/dispatch" or "Order collected" production
+      // step (see production-steps.js) marked done. Deleting your own file
+      // is only allowed 15 days after that (see the "delete" action below)
+      // - production isn't necessarily finished the moment an order is
+      // paid, and deleting the artwork before it's actually been
+      // printed/dispatched would leave nothing to produce it from.
       const { results } = await db.prepare(`
-        SELECT id, filename, width_mm, height_mm, price, status, uploaded_at, attached_at
-        FROM gang_sheet_uploads WHERE customer_id = ? ORDER BY uploaded_at DESC
+        SELECT u.id, u.filename, u.width_mm, u.height_mm, u.price, u.status, u.uploaded_at, u.attached_at, u.order_id,
+               o.pay_token AS order_pay_token,
+               (
+                 SELECT MAX(completed_at) FROM production_steps ps
+                 WHERE ps.order_id = u.order_id AND ps.status = 'done'
+                   AND (ps.title LIKE '%dispatch%' OR ps.title LIKE '%collect%')
+               ) AS dispatched_at
+        FROM gang_sheet_uploads u
+        LEFT JOIN orders o ON o.id = u.order_id
+        WHERE u.customer_id = ? ORDER BY u.uploaded_at DESC
       `).bind(customerId).all();
-      return json(results);
+
+      const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
+      const rows = results.map((r) => ({
+        ...r,
+        can_delete: !!(r.dispatched_at && Date.now() - new Date(r.dispatched_at).getTime() >= FIFTEEN_DAYS_MS),
+      }));
+      return json(rows);
     }
 
     if (request.method === "POST") {
+      const contentType = request.headers.get("Content-Type") || "";
+
+      // JSON body -> an action on an existing row, not a new upload.
+      if (contentType.includes("application/json")) {
+        const data = await request.json();
+
+        if (data.action === "delete") {
+          if (!data.id) return json({ error: "id is required" }, 400);
+          const row = await db
+            .prepare("SELECT * FROM gang_sheet_uploads WHERE id = ? AND customer_id = ?")
+            .bind(data.id, customerId)
+            .first();
+          if (!row) return json({ error: "Not found" }, 404);
+
+          // Re-checked here, not trusted from the client - see the GET
+          // listing's dispatched_at/can_delete comment above for why.
+          const step = await db.prepare(`
+            SELECT MAX(completed_at) AS dispatched_at FROM production_steps
+            WHERE order_id = ? AND status = 'done' AND (title LIKE '%dispatch%' OR title LIKE '%collect%')
+          `).bind(row.order_id).first();
+          const dispatchedAt = step && step.dispatched_at;
+          const canDelete = !!(dispatchedAt && Date.now() - new Date(dispatchedAt).getTime() >= 15 * 24 * 60 * 60 * 1000);
+          if (!canDelete) {
+            return json({ error: "This file can't be deleted yet - it becomes deletable 15 days after your order is marked dispatched/collected." }, 403);
+          }
+
+          if (row.r2_key) {
+            try {
+              await bucket.delete(row.r2_key);
+            } catch {
+              // R2 object already gone - fine, still remove the DB row below.
+            }
+          }
+          await db.prepare("DELETE FROM gang_sheet_uploads WHERE id = ?").bind(data.id).run();
+          return json({ success: true });
+        }
+
+        return json({ error: "Unknown action" }, 400);
+      }
+
       const form = await request.formData();
       const file = form.get("file");
       if (!file || typeof file !== "object" || !("arrayBuffer" in file)) {
