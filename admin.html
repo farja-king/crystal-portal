@@ -2671,6 +2671,13 @@
     // Switch between Admin Tabs
     const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'stock', 'orders', 'inbox', 'proofs', 'backups', 'trash'];
     function switchTab(tab) {
+      // Keeps the URL in sync with whichever tab is open (replaceState, not
+      // a fresh history entry, so this doesn't fill up the back button)
+      // purely so a refresh - or the browser doing one on its own after
+      // being backgrounded a while - lands back where you were instead of
+      // always snapping back to Dashboard. See the matching hash read on
+      // initial load, right after "renderOrderLines()" below.
+      history.replaceState(null, '', '#' + tab);
       const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
       ADMIN_TABS.forEach((name) => {
@@ -13754,8 +13761,11 @@
 
     renderOrderLines();
 
-    // Initial Load
-    loadDashboard(); // the landing tab, so it needs its data immediately, not just on first click
+    // Initial Load — restore whichever tab was open before the refresh
+    // (switchTab() keeps location.hash in sync with the active tab), so a
+    // page reload doesn't always snap back to Dashboard even mid-work on
+    // another tab. Falls back to Dashboard for a plain/unrecognized URL.
+    switchTab(ADMIN_TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dashboard');
     checkNewGangSheetOrders(); // once per admin session load, not on every Dashboard tab re-entry
     loadQuotes();
     loadCustomers();
