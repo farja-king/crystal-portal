@@ -101,14 +101,14 @@ export async function onRequest(context) {
     }
     const orderId = created.id;
 
-    const shareRes = await fetch(`${origin}/api/orders`, {
+    const tokenRes = await fetch(`${origin}/api/orders`, {
       method: "PUT",
       headers: authHeaders,
-      body: JSON.stringify({ id: orderId, action: "mark_shared" }),
+      body: JSON.stringify({ id: orderId, action: "ensure_pay_token" }),
     });
-    const shared = await shareRes.json();
+    const shared = await tokenRes.json();
     const payToken = shared && shared.pay_token;
-    if (!shareRes.ok || !payToken) {
+    if (!tokenRes.ok || !payToken) {
       return json({ error: "Couldn't prepare payment for your order - please try again shortly." }, 502);
     }
 

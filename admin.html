@@ -10147,6 +10147,10 @@
           <p class="text-slate-700 text-sm">${escapeHtml(o.notes)}</p>
         </div>` : ''}
         <div class="py-4 border-b border-slate-200">
+          <p class="text-xs text-slate-500 font-medium mb-2">DTF Gang Sheets <span class="font-normal text-slate-400">(uploaded straight from a DTF-Prep checkout)</span></p>
+          <div id="order-gang-sheets">Loading…</div>
+        </div>
+        <div class="py-4 border-b border-slate-200">
           <div class="flex items-center justify-between mb-2">
             <p class="text-xs text-slate-500 font-medium">Design Proofs <span class="font-normal text-slate-400">(customer approves/declines by email, no login needed)</span></p>
             <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm cursor-pointer" title="Saved as a draft - nothing is sent to the customer until you email or save/update this quote, or hit Send now">
@@ -10163,6 +10167,7 @@
         </div>
       `;
       loadOrderCommHistory(id);
+      loadOrderGangSheets(id);
       loadOrderDesignProofs(id);
       loadProductionSteps(id);
       loadOrderTimeline(id);
@@ -10546,6 +10551,7 @@
     }
 
     const API_DESIGN_PROOFS_URL = '/api/design-proofs';
+    const API_GANG_SHEET_UPLOADS_URL = '/api/gang-sheet-uploads';
 
     function designProofStatusBadge(status, sentAt) {
       if (status === 'approved') return '<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">✓ Approved</span>';
@@ -11180,6 +11186,36 @@
           </div>`).join('');
       } catch (e) {
         if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load design proofs.</p>';
+      }
+    }
+
+    // DTF-Prep gang sheets checked out straight to this order (see
+    // functions/api/gang-sheet-checkout.js) - read-only here, nothing to
+    // attach/send, just the artwork the customer already paid for.
+    async function loadOrderGangSheets(orderId) {
+      const el = document.getElementById('order-gang-sheets');
+      if (!el) return;
+      try {
+        const res = await fetch(API_GANG_SHEET_UPLOADS_URL + '?order_id=' + encodeURIComponent(orderId), { cache: 'no-store' });
+        const rows = await res.json();
+        if (!el.isConnected) return;
+        if (!Array.isArray(rows) || !rows.length) {
+          el.innerHTML = '<p class="text-sm text-slate-400">No gang sheets attached.</p>';
+          return;
+        }
+        el.innerHTML = rows.map((g) => `
+          <div class="flex items-start gap-3 border-b border-slate-100 last:border-0 py-2">
+            <a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank">
+              <img src="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" class="w-14 h-14 object-contain rounded-lg border border-slate-200 shrink-0 bg-slate-50" />
+            </a>
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium text-slate-900">${escapeHtml(g.filename)}</div>
+              <div class="text-xs text-slate-400">${Math.round(g.width_mm)} × ${Math.round(g.height_mm)}mm · ${money(g.price)}</div>
+              <a href="${API_GANG_SHEET_UPLOADS_URL}?view=${escapeAttr(g.id)}" target="_blank" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1 inline-block">View full size</a>
+            </div>
+          </div>`).join('');
+      } catch (e) {
+        if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load gang sheets.</p>';
       }
     }
 
