@@ -115,6 +115,9 @@ export async function onRequest(context) {
   if (url.pathname === "/api/gang-sheet-checkout") {
     return pass("public-gang-sheet-checkout-token-checked-in-file");
   }
+  if (url.pathname === "/api/gang-sheet-pricing") {
+    return pass("public-gang-sheet-pricing-token-checked-in-file");
+  }
 
   // square-webhook.js - called by Square itself, never by a browser. There
   // is no session/API key to check here at all; the file's own HMAC
