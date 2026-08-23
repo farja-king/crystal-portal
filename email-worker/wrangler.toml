@@ -1,0 +1,46 @@
+# Deploy config for crystal-inbox-worker - see worker.js's own header
+# comment for what this Worker does and why it's separate from the
+# crystal-portal Pages project.
+#
+# Deploy with: cd email-worker && npx wrangler deploy --keep-vars
+# --keep-vars preserves the runtime vars/secrets already set in the
+# dashboard (NOTIFY_EMAIL_TO, PORTAL_API_KEY, PORTAL_ORIGIN, RESEND_API_KEY,
+# RESEND_FROM_EMAIL) - they're deliberately NOT declared here, so nobody
+# has to put secret values in a file that might get committed.
+#
+# workers_dev/preview_urls are deliberately left at their explicit `false`
+# below - a plain `wrangler deploy` without this file present silently
+# turns workers.dev back ON by default (a real thing that happened once),
+# and this Worker has no fetch handler to justify a public URL anyway.
+name = "crystal-inbox-worker"
+main = "worker.js"
+compatibility_date = "2025-05-23"
+workers_dev = false
+preview_urls = false
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "crystal-portal-db"
+database_id = "8af93eb8-353f-4c9a-be62-d60ee95cb85c"
+
+[[r2_buckets]]
+binding = "DESIGN_FILES"
+bucket_name = "crystal-portal-customer-designs"
