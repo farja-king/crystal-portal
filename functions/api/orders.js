@@ -891,6 +891,24 @@ export async function onRequest(context) {
       // email_sent_count (that still means "how many real emails", used by
       // send-email.js's isFirstSend/deposit-ask logic), so a later actual
       // email still correctly treats itself as the first real send.
+      // Mints pay_token without any of mark_shared's side effects (it
+      // shouldn't set email_sent_at or log "Shared via WhatsApp" - this is
+      // for the "Take Payment" button in admin.html, staff keying in a
+      // customer's card details themselves over the phone via Square's own
+      // hosted checkout page at /api/pay-by-card?token=..., nothing was
+      // actually sent to the customer). Only meaningful for an
+      // invoice - a quote has nothing to pay yet.
+      if (data.action === "ensure_pay_token") {
+        if (existing.doc_type !== "invoice") return json({ error: "Only invoices take payments" }, 400);
+        if (existing.paid_status === "paid") return json({ error: "This invoice is already paid" }, 409);
+        let payToken = existing.pay_token;
+        if (!payToken) {
+          payToken = crypto.randomUUID();
+          await db.prepare("UPDATE orders SET pay_token = ? WHERE id = ?").bind(payToken, existing.id).run();
+        }
+        return json({ success: true, pay_token: payToken });
+      }
+
       if (data.action === "mark_shared") {
         let acceptToken = existing.accept_token;
         let payToken = existing.pay_token;

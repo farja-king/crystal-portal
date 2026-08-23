@@ -9767,6 +9767,7 @@
           if (isInvoice) {
             if (o.paid_status !== 'paid') {
               actions.push(`<button onclick="openRecordPaymentModal('${escapeAttr(o.id)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Record Payment</button>`);
+              actions.push(`<button onclick="takePaymentOnOrder('${escapeAttr(o.id)}')" title="Opens Square's own payment page in a new tab - key in the customer's card details yourself while they read them out over the phone" class="bg-white border border-slate-300 hover:bg-slate-50 text-indigo-700 px-3 py-1 rounded text-xs font-semibold">💳 Take Payment</button>`);
               actions.push(`<button onclick="sendReminderNow('${escapeAttr(o.id)}')" title="Emails this customer a payment reminder right now, regardless of the automatic schedule" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold">Send reminder now</button>`);
               // Full opt-out from the automatic daily chase - distinct from
               // "Send reminder now" above, which still works while paused
@@ -12307,6 +12308,30 @@
       if (digits.startsWith('0')) digits = '44' + digits.slice(1);
       else if (!digits.startsWith('44')) digits = '44' + digits; // assume a bare UK number with no leading 0
       return digits;
+    }
+
+    // "Take Payment" - a MOTO (mail/telephone order) flow for a customer who
+    // wants to pay by card over the phone rather than being emailed a link.
+    // Reuses pay-by-card.js exactly as-is (same Square Payment Link it
+    // already builds for the customer-facing email link) - the only
+    // difference is who's on the keyboard. Opens in a new tab so the order
+    // list stays where it was; ensure_pay_token (orders.js) mints pay_token
+    // first if this invoice has never been shared/paid before.
+    async function takePaymentOnOrder(id) {
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, action: 'ensure_pay_token' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          showActionToast('⚠', data.error || 'Could not start a payment for this invoice.');
+          return;
+        }
+        window.open(`/api/pay-by-card?token=${data.pay_token}`, '_blank');
+      } catch (e) {
+        showActionToast('⚠', 'Could not start a payment for this invoice.');
+      }
     }
 
     // "Send via WhatsApp" - the other half of the Email button next to it.
