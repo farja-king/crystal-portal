@@ -60,6 +60,13 @@ export async function onRequest(context) {
       // emailed to them, and never regenerated after that, so the link
       // they're given stays good indefinitely rather than going stale.
       "portal_token TEXT",
+      // dtf_flat_sheet_price - a trade/bespoke customer's own fixed price
+      // for a DTF-Prep gang sheet, replacing the standard length-based rate
+      // entirely (any length up to the 600mm max costs this one figure).
+      // NULL means "no override, use standard pricing" - see gang-sheet-
+      // upload.js, where this is looked up and applied server-side so the
+      // discount can't be bypassed by an unauthenticated/tampered request.
+      "dtf_flat_sheet_price REAL",
     ]) {
       try {
         await db.prepare(`ALTER TABLE customers ADD COLUMN ${col}`).run();
@@ -247,7 +254,8 @@ export async function onRequest(context) {
         UPDATE customers
         SET name = ?, company = ?, email = ?, phone = ?, type = ?, discount_pct = ?, notes = ?,
             address_1 = ?, address_2 = ?, city = ?, county = ?, postcode = ?,
-            square_customer_id = ?, lifetime_spend = ?, transaction_count = ?, last_visit = ?
+            square_customer_id = ?, lifetime_spend = ?, transaction_count = ?, last_visit = ?,
+            dtf_flat_sheet_price = ?
         WHERE id = ?
       `).bind(
         data.name || "Unnamed",
@@ -266,6 +274,7 @@ export async function onRequest(context) {
         data.lifetime_spend ?? existing.lifetime_spend,
         data.transaction_count ?? existing.transaction_count,
         data.last_visit ?? existing.last_visit,
+        data.dtf_flat_sheet_price === "" || data.dtf_flat_sheet_price == null ? null : Number(data.dtf_flat_sheet_price),
         data.id
       ).run();
 

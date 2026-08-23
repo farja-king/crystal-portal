@@ -102,7 +102,17 @@ export async function onRequest(context) {
       const widthMm = Number(form.get("width_mm")) || null;
       const heightMm = Number(form.get("height_mm")) || 0;
       const upscaleCount = Math.max(0, parseInt(form.get("upscale_count"), 10) || 0);
-      const price = round2(Math.max(heightMm * RATE_PER_MM, MIN_CHARGE_GBP) + upscaleCount * UPSCALE_CHARGE_GBP);
+
+      // A trade/bespoke customer's own fixed sheet price (set on their
+      // customer record - see customers.js) replaces the standard
+      // length-based rate entirely, any length up to the max costs the same.
+      // Looked up here, not trusted from the client, for the same reason
+      // the standard price isn't: this is what actually gets charged.
+      const customerRow = await db.prepare("SELECT dtf_flat_sheet_price FROM customers WHERE id = ?").bind(customerId).first();
+      const flatPrice = customerRow && customerRow.dtf_flat_sheet_price != null ? Number(customerRow.dtf_flat_sheet_price) : null;
+      const price = round2(
+        (flatPrice != null ? flatPrice : Math.max(heightMm * RATE_PER_MM, MIN_CHARGE_GBP)) + upscaleCount * UPSCALE_CHARGE_GBP
+      );
       const filename = file.name || `gang-sheet-${id}.png`;
 
       await db.prepare(`
