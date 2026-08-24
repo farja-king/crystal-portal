@@ -13550,11 +13550,29 @@
               (item.decorations || []).forEach((d) => decorations.push({ ...d, qty: (Number(d.qty) || 1) * totalQty }));
             }
           }
+          // A decoration billed as its own catalog line ("DTF per 600mm",
+          // "Stitch Only £5.00") carries the real charge on the ITEM
+          // itself (item.line_total) - the decoration tag on it is priced
+          // £0, since there's no separate garment to add a surcharge on
+          // top of. Only falling back to d.price would count every one of
+          // those lines as £0 of revenue despite genuinely billing for it
+          // (this is what made DTF show 39 instances but ~£15 total, when
+          // one Vanessa Ridout invoice alone billed £70 of DTF-per-600mm
+          // lines) - line_total is used instead whenever every decoration
+          // on the line came through at £0, split across them by their
+          // share of the line's total instances so a mixed-method line
+          // (rare) doesn't all land on one method.
+          const explicitRevenue = decorations.reduce((sum, d) => sum + (Number(d.qty) || 1) * (Number(d.price) || 0), 0);
+          const useLineRevenue = explicitRevenue === 0 && Number(item.line_total) > 0 && decorations.length > 0;
+          const totalDqty = decorations.reduce((sum, d) => sum + (Number(d.qty) || 1), 0) || 1;
           decorations.forEach((d) => {
             const methodLabel = METHOD_LABELS[d.method] || d.method || 'Other';
             const dqty = Number(d.qty) || 1;
             decorationQty[methodLabel] = (decorationQty[methodLabel] || 0) + dqty;
-            decorationRevenue[methodLabel] = (decorationRevenue[methodLabel] || 0) + dqty * (Number(d.price) || 0);
+            const revenue = useLineRevenue
+              ? (Number(item.line_total) || 0) * (dqty / totalDqty)
+              : dqty * (Number(d.price) || 0);
+            decorationRevenue[methodLabel] = (decorationRevenue[methodLabel] || 0) + revenue;
           });
         });
       });
