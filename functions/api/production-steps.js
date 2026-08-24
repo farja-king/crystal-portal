@@ -90,7 +90,25 @@ export async function onRequest(context) {
     // wasn't anticipated (a custom one Martin typed in) still gets a
     // sensible fallback.
     let subject, heading, bodyHtml, ctaText, ctaUrl;
-    if (/collection|dispatch|ready/.test(lowerTitle)) {
+    // Checked before the "ready for collection" branch below on purpose -
+    // "collected" doesn't actually match that branch's /collection/ regex
+    // (collected/collection share a stem but not the substring), so this
+    // step fell through to the generic fallback further down, which reads
+    // "has reached the next stage: Order collected... we'll keep you
+    // updated as it progresses" - nonsensical once the order has already
+    // been picked up, since nothing more is coming. This only fires if
+    // Order Collected is completed through a path that calls this function
+    // directly (the bulk "mark step done" action, or the API itself) -
+    // completing it through the Production Tracker's own button normally
+    // goes through the review-request scheduler instead (see
+    // schedulePickupReview in admin.html), which has its own copy.
+    if (/collected|picked up/.test(lowerTitle)) {
+      subject = `Thanks for visiting! - ${docNumber}`;
+      heading = "Thanks for collecting your order! 🎉";
+      bodyHtml = `<p>Hi ${name},</p>
+        <p>Order <strong>${escapeHtml(docNumber)}</strong> has been collected - thanks for popping in!</p>
+        <p>If anything's not quite right with it, just let us know.</p>`;
+    } else if (/collection|dispatch|ready/.test(lowerTitle)) {
       subject = `Your order's ready! - ${docNumber}`;
       heading = "Your collection's ready! 🎉";
       bodyHtml = `<p>Hi ${name},</p>
