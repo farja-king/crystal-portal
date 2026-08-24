@@ -1793,6 +1793,24 @@
     </div>
   </div>
 
+  <!-- "New payments" popup - same seen_by_staff/mark_seen pattern as the
+       gang-sheet popup above, see checkNewPayments()/showNewPaymentsPopup()
+       in functions/api/payments.js. Polled on a timer (not just once per
+       page load, unlike the gang-sheet one) since a Square card payment can
+       land at any point during a session, not just before it starts, and
+       "I have no way of telling unless I double-check" was the whole point
+       of asking for this. -->
+  <div id="payment-popup" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
+      <h3 class="font-bold text-emerald-700 mb-2">💷 <span id="payment-popup-title"></span></h3>
+      <div id="payment-popup-msg" class="text-sm text-slate-800 mb-5 space-y-1"></div>
+      <div class="flex justify-end gap-3">
+        <button type="button" onclick="dismissNewPaymentsPopup(false)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Dismiss</button>
+        <button type="button" onclick="dismissNewPaymentsPopup(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">View invoices</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Reusable single-field text input overlay - see promptModal() - replaces
        the native browser prompt() (password setup, "send to which email"). -->
   <div id="prompt-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
@@ -11520,6 +11538,59 @@
       if (goToOrders) switchTab('orders');
     }
 
+    // "New payments" popup - unlike checkNewGangSheetOrders (once per page
+    // load), this is also polled on a timer below, since a Square card
+    // payment can land at any point during a session, not just before one
+    // starts. Skipped entirely while the popup's already showing, so a slow
+    // dismiss in flight can't get raced by the next poll re-opening it.
+    let paymentPopupOpen = false;
+    async function checkNewPayments() {
+      if (paymentPopupOpen) return;
+      try {
+        const res = await fetch(API_PAYMENTS_URL + '?new=1', { cache: 'no-store' });
+        const rows = await res.json();
+        if (res.ok && Array.isArray(rows) && rows.length) showNewPaymentsPopup(rows);
+      } catch (e) {
+        // silent - non-critical, next poll tries again
+      }
+    }
+
+    function showNewPaymentsPopup(rows) {
+      paymentPopupOpen = true;
+      const total = rows.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      document.getElementById('payment-popup-title').textContent =
+        rows.length === 1 ? 'New payment received' : `${rows.length} new payments received`;
+      // Caps the itemized list at 8 lines so a big backlog (the portal left
+      // closed over a weekend, say) still shows something readable rather
+      // than a wall of rows - the total above already covers the full
+      // picture either way.
+      const shown = rows.slice(0, 8);
+      const lines = shown.map((p) => {
+        const docNumber = p.invoice_number || p.quote_number || '';
+        const who = [p.customer_name, docNumber].filter(Boolean).join(' - ');
+        return `<div>${money(p.amount)}${who ? ' - ' + escapeHtml(who) : ''}${p.method ? ` <span class="text-slate-400">(${escapeHtml(p.method)})</span>` : ''}</div>`;
+      });
+      if (rows.length > shown.length) lines.push(`<div class="text-slate-400">…and ${rows.length - shown.length} more</div>`);
+      if (rows.length > 1) lines.unshift(`<div class="font-semibold">Total: ${money(total)}</div>`);
+      document.getElementById('payment-popup-msg').innerHTML = lines.join('');
+      document.getElementById('payment-popup').classList.remove('hidden');
+    }
+
+    async function dismissNewPaymentsPopup(goToOrders) {
+      paymentPopupOpen = false;
+      document.getElementById('payment-popup').classList.add('hidden');
+      try {
+        await fetch(API_PAYMENTS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'mark_seen' }),
+        });
+      } catch (e) {
+        // Same batch would just re-pop next check - not worth surfacing an
+        // error over for something this low-stakes.
+      }
+      if (goToOrders) switchTab('orders');
+    }
+
     async function uploadDesignProof(orderId, inputId, statusId, containerId) {
       inputId = inputId || ('proof-file-input-' + orderId);
       statusId = statusId || ('proof-upload-status-' + orderId);
@@ -13893,6 +13964,8 @@
     // regardless of which tab is currently open, same reasoning as the
     // Inbox/Quotes badge polls just above.
     setInterval(checkNewGangSheetOrders, 30000);
+    checkNewPayments();
+    setInterval(checkNewPayments, 30000); // same reasoning - a Square card payment can land at any time
     loadQuotes();
     loadCustomers();
     loadFacets();
