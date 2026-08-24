@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "crystal-portal",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8421"],
+      "port": 8421
+    }
+  ]
+}

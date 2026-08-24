@@ -16,19 +16,24 @@
       50% { opacity: 0.25; }
     }
     .stock-shortfall-flash { animation: stock-shortfall-flash 1s step-start infinite; }
+
+    /* Tab bar scrolls sideways on narrow screens instead of wrapping/
+       squashing - the buttons themselves get flex-shrink-0/whitespace-nowrap
+       from the active/idle class strings in switchTab(). */
+    .tab-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
   </style>
 </head>
 <body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
   
   <!-- Navigation Header -->
   <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50">
-    <div class="w-full px-6 py-4 flex justify-between items-center">
+    <div class="w-full px-3 sm:px-6 py-3 sm:py-4 flex flex-wrap justify-between items-center gap-3">
       <div class="flex items-center space-x-3">
-        <div class="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-lg">C</div>
-        <h1 class="text-xl font-bold tracking-wide">Crystal Embroidery <span class="text-indigo-400 font-normal">Back Office</span></h1>
+        <div class="w-8 h-8 bg-indigo-500 rounded-lg flex items-center justify-center font-bold text-lg flex-shrink-0">C</div>
+        <h1 class="text-base sm:text-xl font-bold tracking-wide">Crystal Embroidery <span class="hidden sm:inline text-indigo-400 font-normal">Back Office</span></h1>
       </div>
-      <div class="flex items-center gap-3">
-        <div class="flex space-x-2 bg-slate-800 p-1 rounded-lg">
+      <div class="flex items-center gap-3 w-full sm:w-auto order-3 sm:order-none">
+        <div class="tab-scroll flex space-x-2 bg-slate-800 p-1 rounded-lg overflow-x-auto max-w-full">
           <button id="tab-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition">
             📊 Dashboard
           </button>
@@ -82,7 +87,7 @@
 
   <!-- Shown only while the site is still unprotected -->
   <div id="auth-banner" class="hidden bg-amber-500 text-amber-950">
-    <div class="w-full px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+    <div class="w-full px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
       <p class="text-sm font-medium">
         ⚠️ This portal has no password yet - anyone with the link can see your cost prices and margins.
       </p>
@@ -93,7 +98,7 @@
   </div>
 
   <!-- Main Content Area -->
-  <main class="w-full px-6 py-8">
+  <main class="w-full px-3 sm:px-6 py-4 sm:py-8">
 
     <!-- DASHBOARD TAB -->
     <section id="section-dashboard">
@@ -204,7 +209,7 @@
 
     <!-- QUOTES TAB -->
     <section id="section-quotes" class="hidden">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Quotes & Order Pipeline</h2>
           <p class="text-slate-500 text-sm">Review incoming portal submissions and update order statuses.</p>
@@ -273,7 +278,7 @@
       </div>
 
       <!-- Quotes Table -->
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
@@ -297,14 +302,14 @@
 
     <!-- CUSTOMERS TAB -->
     <section id="section-customers" class="hidden">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Customer Directory</h2>
           <p class="text-slate-500 text-sm">Manage accounts, discounts, and contact details.</p>
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="refreshed-customers" class="text-xs text-slate-400"></div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap justify-end items-center gap-2">
           <button onclick="openAddCustomerForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Customer
           </button>
@@ -482,7 +487,7 @@
         </div>
       </div>
 
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
@@ -525,14 +530,14 @@
 
     <!-- GARMENT CATALOG TAB -->
     <section id="section-catalog" class="hidden">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Garments</h2>
           <p class="text-slate-500 text-sm">Supplier cost prices, your sell price, and the profit between them. Flat fees/services live on their own <a href="#" onclick="switchTab('services'); return false;" class="text-indigo-600 hover:underline">Services</a> tab.</p>
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="refreshed-catalog" class="text-xs text-slate-400"></div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap justify-end items-center gap-2">
           <button onclick="toggleAddProductForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Product
           </button>
@@ -790,14 +795,14 @@
          table under the hood - just tagged differently and shown here
          instead, so the two never need to be kept in sync by hand. -->
     <section id="section-services" class="hidden">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Services</h2>
           <p class="text-slate-500 text-sm">Flat fees and charges with no garment code - design setup, rush orders, and the like.</p>
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="refreshed-services" class="text-xs text-slate-400"></div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap justify-end items-center gap-2">
           <button onclick="toggleAddServiceForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Service
           </button>
@@ -853,7 +858,7 @@
         </button>
       </div>
 
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
@@ -878,14 +883,14 @@
     <!-- STOCK TAB - manual inventory, separate from the Garments/Services
          catalog (products.js) - see functions/api/stock.js for why. -->
     <section id="section-stock" class="hidden">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Stock</h2>
           <p class="text-slate-500 text-sm">What's physically on the shelf - PenCarrie, Uneek, or anything added by hand.</p>
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="refreshed-stock" class="text-xs text-slate-400"></div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap justify-end items-center gap-2">
           <button onclick="openAddStockItemForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + Add Stock Item
           </button>
@@ -932,7 +937,7 @@
           <div id="stock-bulk-variant-fields" class="flex flex-wrap items-end gap-2"></div>
         </div>
 
-        <div class="bg-white border border-slate-200 rounded-xl overflow-hidden mb-4 empty:hidden" id="stock-bulk-table-wrap">
+        <div class="bg-white border border-slate-200 rounded-xl overflow-hidden overflow-x-auto mb-4 empty:hidden" id="stock-bulk-table-wrap">
           <table class="w-full text-left border-collapse text-sm">
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
@@ -1077,7 +1082,7 @@
           </button>
         </div>
 
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
@@ -1119,14 +1124,14 @@
 
     <!-- QUOTES & INVOICES TAB -->
     <section id="section-orders" class="hidden">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Quotes & Invoices</h2>
           <p class="text-slate-500 text-sm">Build a garment quote and convert it to an invoice when it is confirmed.<br>No VAT is shown anywhere. Not VAT registered.</p>
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="ord-last-refreshed" class="text-xs text-slate-400"></div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap justify-end items-center gap-2">
           <button onclick="openNewOrderBuilder('quote')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + New Quote
           </button>
@@ -1432,7 +1437,7 @@
         </div>
 
         <!-- List -->
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
           <table class="w-full text-left">
             <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
               <tr>
@@ -1474,14 +1479,14 @@
 
     <!-- INBOX TAB -->
     <section id="section-inbox" class="hidden">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Inbox</h2>
           <p class="text-slate-500 text-sm">Mail sent to hello@embroidery.click - a copy lands here automatically. Sending, reading and deleting here don't touch your real mailbox.</p>
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="refreshed-inbox" class="text-xs text-slate-400"></div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap justify-end items-center gap-2">
           <button onclick="toggleInboxCompose()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + Compose
           </button>
@@ -1543,7 +1548,7 @@
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="refreshed-proofs" class="text-xs text-slate-400"></div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap justify-end items-center gap-2">
           <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
             <button id="proofs-subview-proofs-btn" onclick="switchProofsSubview('proofs')" class="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white">Design Proofs</button>
             <button id="proofs-subview-gangsheets-btn" onclick="switchProofsSubview('gangsheets')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">DTF Gang Sheets</button>
@@ -1652,7 +1657,7 @@
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="refreshed-backups" class="text-xs text-slate-400"></div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap justify-end items-center gap-2">
           <button onclick="loadBackups()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
@@ -1703,7 +1708,7 @@
          loadTrash(). Nothing here is gone until "Delete forever" is
          clicked, same mental model as a PC's Recycle Bin. -->
     <section id="section-trash" class="hidden">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Trash</h2>
           <p class="text-slate-500 text-sm">Anything deleted from anywhere in the portal - quotes, invoices, stock, garments, services, customers, design proofs. Stays here until you restore it or delete it forever.</p>
@@ -2003,7 +2008,7 @@
        opened from within it. See viewOrder()/closeOrderPanel(). -->
   <div id="order-view-edit-panel" class="hidden fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
     <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6">
-      <div class="flex justify-between items-center mb-6">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
         <h3 id="panel-title" class="text-lg font-bold text-slate-900">View Quote</h3>
         <button onclick="closeOrderPanel()" class="text-slate-500 hover:text-slate-700 text-2xl">✕</button>
       </div>
@@ -2742,8 +2747,8 @@
       // always snapping back to Dashboard. See the matching hash read on
       // initial load, right after "renderOrderLines()" below.
       history.replaceState(null, '', '#' + tab);
-      const active = 'px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
-      const idle = 'relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
+      const active = 'flex-shrink-0 whitespace-nowrap px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
+      const idle = 'relative flex-shrink-0 whitespace-nowrap px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
       ADMIN_TABS.forEach((name) => {
         document.getElementById('section-' + name).classList.toggle('hidden', tab !== name);
         const isInbox = name === 'inbox';
