@@ -41,19 +41,24 @@ export async function onRequest(context) {
   // digitization" would also match that regex and go out under the "Your
   // artwork's approved" wording, which would be wrong this early. Flip
   // either to notify: true only after checking that doesn't collide.
+  // Every step defaults to notify: false - ticking "done" on a step should
+  // never, by itself, be the thing that fires an email or (for "Order
+  // collected") pops open the review-request scheduler. Martin ticks the
+  // 📧 toggle on a step deliberately when he wants that; a default of true
+  // meant a plain "mark this done" click could quietly email the customer
+  // or open that popup with no separate opt-in moment. Only affects
+  // trackers seeded from now on - see the note above about existing ones.
   const DEFAULT_STEPS = [
     { title: "Invoice paid", notify: false },
     { title: "Artwork sent for digitization", notify: false },
     { title: "Garments ordered", notify: false },
-    { title: "Artwork approved", notify: true },
-    { title: "Ready for collection/dispatch", notify: true },
+    { title: "Artwork approved", notify: false },
+    { title: "Ready for collection/dispatch", notify: false },
     // notify here doesn't trigger a plain step email like the others - it
     // gates whether marking this step done opens the "Confirmed Pickup?"
     // review-request scheduling popup in admin.html at all (see
     // toggleStepDone/schedulePickupReview and functions/api/review-requests.js).
-    // Defaults on so new orders keep asking for a review unless Martin
-    // unticks it for a specific order.
-    { title: "Order collected", notify: true },
+    { title: "Order collected", notify: false },
   ];
 
   if (!bucket) {
