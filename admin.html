@@ -10530,7 +10530,7 @@
               <input type="text" value="${escapeAttr(s.title)}" onblur="saveStepTitle('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" class="flex-1 min-w-[8rem] text-sm bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 ${titleCls}" />
               <div class="flex items-center gap-1 shrink-0">
                 ${notifyToggle}
-                <button type="button" onclick="toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone}, '${escapeAttr(s.title)}', ${s.notify_customer ? 'true' : 'false'})" title="${isCollectedStep && !isDone ? (s.notify_customer ? 'Confirm pickup & schedule review request' : 'Confirm pickup (no review request - 📧 is off)') : isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">${isDone ? '↺' : '✓'}</button>
+                <button type="button" onclick="this.disabled = true; toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone}, '${escapeAttr(s.title)}', ${s.notify_customer ? 'true' : 'false'})" title="${isCollectedStep && !isDone ? (s.notify_customer ? 'Confirm pickup & schedule review request' : 'Confirm pickup (no review request - 📧 is off)') : isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold disabled:opacity-50">${isDone ? '↺' : '✓'}</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'up')" title="Move up" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▲</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'down')" title="Move down" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▼</button>
                 <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold cursor-pointer">
@@ -10609,6 +10609,7 @@
         loadOrders(); // keeps the main list's production badge in sync
       } catch (e) {
         showActionToast('⚠', 'Could not update step: ' + e.message);
+        loadProductionSteps(orderId); // re-renders the button enabled again - it was disabled on click, see the onclick above
       }
     }
 

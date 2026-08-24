@@ -491,7 +491,6 @@ export async function onRequest(context) {
       const notes = data.notes !== undefined ? String(data.notes).slice(0, 2000) : existing.notes;
       const status = data.status === "done" ? "done" : data.status === "pending" ? "pending" : existing.status;
       const notifyCustomer = data.notify_customer !== undefined ? (data.notify_customer ? 1 : 0) : existing.notify_customer;
-      const justCompleted = status === "done" && existing.status !== "done";
       const completedAt = status === "done"
         ? (existing.status === "done" ? existing.completed_at : new Date().toISOString())
         : null;
@@ -500,9 +499,23 @@ export async function onRequest(context) {
       // THIS completion", not "has this step ever emailed".
       let notifiedAt = status === "done" ? existing.notified_at : null;
 
-      await db.prepare(
-        "UPDATE production_steps SET title = ?, notes = ?, status = ?, notify_customer = ?, completed_at = ?, notified_at = ? WHERE id = ?"
+      // Completing a step is the one transition that has a side effect
+      // (the Activity Timeline entry, and the customer email below) - two
+      // requests racing to mark the same pending step done (a slow first
+      // click retried, two tabs open on the same order, etc: this is
+      // exactly what happened on INV-0032's "Invoice paid" step, logged
+      // twice ~2.5 minutes apart) would otherwise both read status as
+      // still 'pending' and both fire that side effect. The extra
+      // `AND status != 'done'` only applies on that specific transition,
+      // and `changes` then says whether THIS request was the one that
+      // actually flipped it - the loser still returns success (the row is
+      // correctly 'done' either way), it just doesn't log/notify again.
+      const isCompleting = status === "done" && existing.status !== "done";
+      const completionGuard = isCompleting ? " AND status != 'done'" : "";
+      const updateResult = await db.prepare(
+        `UPDATE production_steps SET title = ?, notes = ?, status = ?, notify_customer = ?, completed_at = ?, notified_at = ? WHERE id = ?${completionGuard}`
       ).bind(title, notes, status, notifyCustomer, completedAt, notifiedAt, data.id).run();
+      const justCompleted = isCompleting && (updateResult.meta ? updateResult.meta.changes > 0 : true);
       if (justCompleted) await logOrderEvent(db, existing.order_id, "production_step", `Production: ${title}`);
 
       let emailResult = null;
