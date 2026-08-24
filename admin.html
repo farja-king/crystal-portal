@@ -13683,7 +13683,7 @@
 
       const { garmentQty, decorationQty, decorationRevenue, monthCount } = computeTopLineAnalytics();
 
-      const topGarments = Object.entries(garmentQty).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const topGarments = Object.entries(garmentQty).sort((a, b) => b[1] - a[1]).slice(0, 10);
       dashBarList(garmentsEl, topGarments, (l) => l, '×');
 
       const topDecorations = Object.entries(decorationQty).sort((a, b) => b[1] - a[1]);
