@@ -102,17 +102,20 @@
           <h2 class="text-2xl font-bold text-slate-900">Dashboard</h2>
           <p class="text-slate-500 text-sm">How things are going - revenue, orders, and the pipeline, at a glance.</p>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
-            <button id="dash-preset-today" onclick="setDashboardRange('today')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Today</button>
-            <button id="dash-preset-week" onclick="setDashboardRange('week')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Week</button>
-            <button id="dash-preset-month" onclick="setDashboardRange('month')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Month</button>
-            <button id="dash-preset-year" onclick="setDashboardRange('year')" title="1 April - 31 March, the business's financial year - not the calendar year" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This FY</button>
-          </div>
-          <div class="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg shadow-sm px-2 py-1">
-            <input id="dash-from" type="date" onchange="setDashboardCustomRange()" class="text-xs border-0 focus:ring-0 p-1 text-slate-700" />
-            <span class="text-slate-300">–</span>
-            <input id="dash-to" type="date" onchange="setDashboardCustomRange()" class="text-xs border-0 focus:ring-0 p-1 text-slate-700" />
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-dashboard" class="text-xs text-slate-400"></div>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
+              <button id="dash-preset-today" onclick="setDashboardRange('today')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">Today</button>
+              <button id="dash-preset-week" onclick="setDashboardRange('week')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Week</button>
+              <button id="dash-preset-month" onclick="setDashboardRange('month')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This Month</button>
+              <button id="dash-preset-year" onclick="setDashboardRange('year')" title="1 April - 31 March, the business's financial year - not the calendar year" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">This FY</button>
+            </div>
+            <div class="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg shadow-sm px-2 py-1">
+              <input id="dash-from" type="date" onchange="setDashboardCustomRange()" class="text-xs border-0 focus:ring-0 p-1 text-slate-700" />
+              <span class="text-slate-300">–</span>
+              <input id="dash-to" type="date" onchange="setDashboardCustomRange()" class="text-xs border-0 focus:ring-0 p-1 text-slate-700" />
+            </div>
           </div>
         </div>
       </div>
@@ -299,7 +302,9 @@
           <h2 class="text-2xl font-bold text-slate-900">Customer Directory</h2>
           <p class="text-slate-500 text-sm">Manage accounts, discounts, and contact details.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-customers" class="text-xs text-slate-400"></div>
+          <div class="flex items-center gap-2">
           <button onclick="openAddCustomerForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Customer
           </button>
@@ -312,6 +317,7 @@
           <button onclick="loadCustomers()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🔄 Refresh Customers
           </button>
+          </div>
         </div>
       </div>
 
@@ -524,7 +530,9 @@
           <h2 class="text-2xl font-bold text-slate-900">Garments</h2>
           <p class="text-slate-500 text-sm">Supplier cost prices, your sell price, and the profit between them. Flat fees/services live on their own <a href="#" onclick="switchTab('services'); return false;" class="text-indigo-600 hover:underline">Services</a> tab.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-catalog" class="text-xs text-slate-400"></div>
+          <div class="flex items-center gap-2">
           <button onclick="toggleAddProductForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Product
           </button>
@@ -545,6 +553,7 @@
           <button onclick="loadCatalog(0)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🔄 Refresh Catalog
           </button>
+          </div>
         </div>
       </div>
       <p id="cat-sync-status" class="text-sm text-slate-500 mb-4 hidden"></p>
@@ -786,13 +795,16 @@
           <h2 class="text-2xl font-bold text-slate-900">Services</h2>
           <p class="text-slate-500 text-sm">Flat fees and charges with no garment code - design setup, rush orders, and the like.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-services" class="text-xs text-slate-400"></div>
+          <div class="flex items-center gap-2">
           <button onclick="toggleAddServiceForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             + Add Service
           </button>
           <button onclick="loadServices()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2">
             🔄 Refresh
           </button>
+          </div>
         </div>
       </div>
 
@@ -871,7 +883,9 @@
           <h2 class="text-2xl font-bold text-slate-900">Stock</h2>
           <p class="text-slate-500 text-sm">What's physically on the shelf - PenCarrie, Uneek, or anything added by hand.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-stock" class="text-xs text-slate-400"></div>
+          <div class="flex items-center gap-2">
           <button onclick="openAddStockItemForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + Add Stock Item
           </button>
@@ -884,6 +898,7 @@
           <button onclick="loadStock()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
+          </div>
         </div>
       </div>
 
@@ -1464,13 +1479,16 @@
           <h2 class="text-2xl font-bold text-slate-900">Inbox</h2>
           <p class="text-slate-500 text-sm">Mail sent to hello@embroidery.click - a copy lands here automatically. Sending, reading and deleting here don't touch your real mailbox.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-inbox" class="text-xs text-slate-400"></div>
+          <div class="flex items-center gap-2">
           <button onclick="toggleInboxCompose()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             + Compose
           </button>
           <button id="inbox-refresh-btn" onclick="loadInbox()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
+          </div>
         </div>
       </div>
 
@@ -1523,7 +1541,9 @@
           <h2 class="text-2xl font-bold text-slate-900">Design Proofs & Gang Sheets</h2>
           <p id="proofs-subview-desc" class="text-slate-500 text-sm">Every quote/invoice's latest mockup version, across every customer, in one place.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-proofs" class="text-xs text-slate-400"></div>
+          <div class="flex items-center gap-2">
           <div class="flex bg-white border border-slate-200 rounded-lg shadow-sm p-1 gap-1">
             <button id="proofs-subview-proofs-btn" onclick="switchProofsSubview('proofs')" class="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white">Design Proofs</button>
             <button id="proofs-subview-gangsheets-btn" onclick="switchProofsSubview('gangsheets')" class="px-3 py-1.5 rounded-md text-xs font-semibold text-slate-600 hover:bg-slate-100">DTF Gang Sheets</button>
@@ -1540,6 +1560,7 @@
           <button id="proofs-subview-archived-btn" onclick="openProofsArchive()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🗄 Archived
           </button>
+          </div>
         </div>
       </div>
 
@@ -1629,7 +1650,9 @@
           <h2 class="text-2xl font-bold text-slate-900">Backups</h2>
           <p class="text-slate-500 text-sm">Every customer, quote/invoice, payment and stored file, snapshotted automatically once a day.</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-backups" class="text-xs text-slate-400"></div>
+          <div class="flex items-center gap-2">
           <button onclick="loadBackups()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🔄 Refresh
           </button>
@@ -1639,6 +1662,7 @@
           <button onclick="cleanUpOldBackups()" title="Deletes every backup entry and its stored files except today's successful run - for clearing out a backlog of failed/superseded attempts, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🧹 Clean Up Old
           </button>
+          </div>
         </div>
       </div>
 
@@ -1684,9 +1708,12 @@
           <h2 class="text-2xl font-bold text-slate-900">Trash</h2>
           <p class="text-slate-500 text-sm">Anything deleted from anywhere in the portal - quotes, invoices, stock, garments, services, customers, design proofs. Stays here until you restore it or delete it forever.</p>
         </div>
-        <button onclick="loadTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-          🔄 Refresh
-        </button>
+        <div class="flex flex-col items-end gap-1">
+          <div id="refreshed-trash" class="text-xs text-slate-400"></div>
+          <button onclick="loadTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🔄 Refresh
+          </button>
+        </div>
       </div>
       <div id="trash-filter-tabs" class="flex flex-wrap gap-2 mb-4"></div>
 
@@ -2827,6 +2854,7 @@
         allCustomers = customers || [];
         selectedCustomerIds = new Set();
         filterCustomers();
+        stampRefreshed('refreshed-customers');
       } catch (err) {
         tbody.innerHTML = `<tr><td colspan="9" class="p-8 text-center text-red-500">Error loading customers: ${err.message}</td></tr>`;
       }
@@ -5155,6 +5183,17 @@
       return `${datePart} ${timePart}`;
     }
 
+    // Stamps a "Last refreshed: <date> <time>" note in the given element -
+    // one per tab's own header, same as Quotes & Invoices' ord-last-refreshed
+    // - called at the end of every tab's own load function so it's always
+    // obvious how current what's on screen actually is, whether that load
+    // came from switching into the tab, a manual Refresh click, or (on the
+    // tabs that have one) a silent background auto-refresh.
+    function stampRefreshed(id) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = `Last refreshed: ${ukDateTime(new Date().toISOString())}`;
+    }
+
     // Backs a shared <datalist> (see refreshCategorySuggestions) so every
     // manual "add" form's Category field - catalog, order-builder inline
     // add, customer price list, services - can suggest from categories that
@@ -5301,6 +5340,7 @@
         stockMovementsCache = {};
         renderLowStockBanner();
         filterStock();
+        stampRefreshed('refreshed-stock');
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
       }
@@ -6229,6 +6269,7 @@
         serviceEditingIds = new Set();
         renderServicesTable();
         refreshCategorySuggestions();
+        stampRefreshed('refreshed-services');
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load services: ' + escapeHtml(e.message) + '</td></tr>';
       }
@@ -6470,6 +6511,7 @@
         catalogTotal = data.total || 0;
         catalogVariantTotal = data.total_variants || 0;
         renderCatalogGroups(data.results || []);
+        stampRefreshed('refreshed-catalog');
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-red-500">Could not load catalog: ' + escapeHtml(e.message) + '</td></tr>';
       }
@@ -9757,8 +9799,7 @@
 
         renderOrdersTable();
         renderProductionCalendar();
-        const stamp = document.getElementById('ord-last-refreshed');
-        if (stamp) stamp.textContent = `Last refreshed: ${ukDateTime(new Date().toISOString())}`;
+        stampRefreshed('ord-last-refreshed');
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500">Could not load: ${escapeHtml(e.message)}</td></tr>`;
       }
@@ -10784,6 +10825,7 @@
         const res = await fetch(API_DESIGN_PROOFS_URL + '?all=1', { cache: 'no-store' });
         let rows = await res.json();
         if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
+        stampRefreshed('refreshed-proofs');
 
         const filter = document.getElementById('proofs-filter').value;
         if (filter) rows = rows.filter((p) => p.status === filter);
@@ -10957,6 +10999,7 @@
         if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
         backupsById = {};
         rows.forEach((b) => { backupsById[b.id] = b; });
+        stampRefreshed('refreshed-backups');
 
         if (!rows.length) {
           tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-slate-400 text-sm">No backups yet - click "Backup Now" to create the first one.</td></tr>';
@@ -11163,6 +11206,7 @@
 
         renderTrashFilterTabs();
         renderTrashTable();
+        stampRefreshed('refreshed-trash');
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-red-500">Could not load the trash: ' + escapeHtml(e.message) + '</td></tr>';
       }
@@ -12791,6 +12835,7 @@
         (rows || []).forEach((e) => { inboxById[e.id] = e; });
         renderInboxList(rows || []);
         updateInboxUnreadBadge(rows || []);
+        stampRefreshed('refreshed-inbox');
       } catch (e) {
         if (list) list.innerHTML = '<p class="p-4 text-center text-red-500 text-sm">Could not load inbox.</p>';
       } finally {
@@ -13273,6 +13318,7 @@
         return;
       }
       setDashboardRange(dashboardActivePreset || 'month');
+      stampRefreshed('refreshed-dashboard');
     }
 
     function toDateInputValue(d) {
