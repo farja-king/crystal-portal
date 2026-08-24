@@ -10,6 +10,7 @@
 // suppliers (a cost), not something charged to his customers.
 import { logOrderEvent, ensureOrderEventsTable } from "../_lib/order-events.js";
 import { deductStockForOrder, restoreStockForOrder } from "../_lib/stock-deduct.js";
+import { markInvoicePaidStepDone } from "../_lib/production-invoice-paid.js";
 
 // A new invoice restarts that customer's reorder-reminder clock - see
 // functions/api/reorder-reminders.js, which times its ~11-month nudge off
@@ -525,6 +526,7 @@ export async function onRequest(context) {
       await db.prepare(
         "UPDATE orders SET amount_paid = ?, paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
       ).bind(amountPaid, status, paidAt, orderId).run();
+      if (status === "paid") await markInvoicePaidStepDone(db, orderId);
       return { amount_paid: amountPaid, paid_status: status, paid_at: paidAt };
     }
 
