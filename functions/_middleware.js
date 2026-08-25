@@ -162,9 +162,23 @@ export async function onRequest(context) {
   if (token && (await isValid(token, cfg.secret))) return pass("authenticated");
 
   if (url.pathname.startsWith("/api/")) {
+    // Every individual endpoint sets its own CORS headers on its own
+    // responses, but this 401 is returned here in the middleware, before a
+    // cross-origin request (e.g. Crystal Quick) ever reaches that endpoint
+    // code - without CORS headers of its own, the browser reports this as
+    // an opaque "blocked by CORS policy" network failure instead of a 401
+    // the caller's own error handling could see and react to (redirecting
+    // back to its login screen on an expired/invalid token, same as it
+    // already does for a real 401 response body).
     return new Response(JSON.stringify({ error: "Not authenticated" }), {
       status: 401,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
     });
   }
 
