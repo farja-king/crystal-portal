@@ -11,6 +11,14 @@ export async function onRequest(context) {
   const headers = {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
+    // Cross-origin companion apps (e.g. Crystal Quick) log in here and use
+    // the "token" in the JSON response as a Bearer header on every other
+    // API call, rather than relying on the HttpOnly cookie set below (which
+    // a different origin can't read anyway) - see functions/_middleware.js
+    // tokenFrom(), which already accepts "Authorization: Bearer <token>".
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
 
   const json = (body, status = 200, extra = {}) =>
