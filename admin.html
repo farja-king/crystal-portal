@@ -2850,7 +2850,13 @@
         ]);
         const config = await configRes.json();
         const facets = await facetsRes.json();
-        const allCategories = (facets.categories || []).slice().sort();
+        // facets.categories is [{value, n}] (see products.js's facets
+        // query - value is the category name, n is how many products are
+        // in it), not a plain string array.
+        const allCategories = (facets.categories || [])
+          .map((c) => c.value)
+          .filter(Boolean)
+          .sort();
 
         // Home tiles: saved order first (only for keys we still recognise),
         // then any tile added in a later update that hasn't been saved yet.
