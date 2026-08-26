@@ -14,7 +14,11 @@ export async function onRequest(context) {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    // Authorization needed here too (same gap fixed on customers.js/
+    // payments.js for Crystal Quick) - without it, a cross-origin POST from
+    // Crystal Quick fails preflight before ever reaching this handler, so
+    // saving a quote/invoice there never actually emails the customer.
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
   };
