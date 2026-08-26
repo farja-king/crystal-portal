@@ -74,6 +74,9 @@
           <button id="tab-trash" onclick="switchTab('trash')" title="Anything deleted from anywhere in the portal lands here first, recoverable until you empty it yourself" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             🗑️ Trash
           </button>
+          <button id="tab-quickapp" onclick="switchTab('quickapp')" title="Controls the Crystal Quick mobile app's Home screen tiles and garment category order" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+            📱 Quick App
+          </button>
         </div>
         <button id="api-key-btn" onclick="generateApiKey()" title="Generate/reveal an API key - lets the crystal-inbox-worker call the portal's payment-reminder cron endpoint without the portal password" class="hidden text-sm text-slate-400 hover:text-white transition px-3 py-2">
           API Key
@@ -1770,6 +1773,41 @@
       </div>
     </section>
 
+    <!-- QUICK APP TAB - controls Crystal Quick (the mobile companion app,
+         crystal-quick.pages.dev) entirely from here: Home screen tile
+         order/visibility and garment category tile order/visibility in its
+         quote builder. Crystal Quick only ever reads this (GET
+         /api/quick-config); this tab is the only thing that writes it (PUT)
+         - see functions/api/quick-config.js. -->
+    <section id="section-quickapp" class="hidden">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Quick App</h2>
+          <p class="text-slate-500 text-sm">Controls what shows - and in what order - on the Crystal Quick mobile app. Changes apply the moment you save, no app update needed.</p>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <div id="quickapp-status" class="text-xs text-slate-400"></div>
+          <button onclick="saveQuickAppConfig()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            💾 Save Changes
+          </button>
+        </div>
+      </div>
+
+      <div class="grid gap-6 lg:grid-cols-2">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+          <h3 class="font-bold text-slate-900 mb-1">Home Screen Tiles</h3>
+          <p class="text-xs text-slate-500 mb-3">Order and visibility of the big tiles on the app's Home screen.</p>
+          <div id="quickapp-home-tiles"></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+          <h3 class="font-bold text-slate-900 mb-1">Garment Categories</h3>
+          <p class="text-xs text-slate-500 mb-3">Order and visibility of the category tiles (Polo, Hoodie, etc) in the New Quote screen. Untick to hide a category from the app entirely.</p>
+          <div id="quickapp-categories" class="max-h-[520px] overflow-y-auto pr-1"></div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- Reusable Yes/No confirm overlay - see confirmModal() - replaces the
@@ -2656,6 +2694,7 @@
     const API_CUSTOMERS_URL = '/api/customers';
     const API_STOCK_URL = '/api/stock';
     const API_SETTINGS_URL = '/api/settings';
+    const API_QUICK_CONFIG_URL = '/api/quick-config';
 
     // Pricing settings, fetched once from D1 and cached for the life of the page
     let cachedSettings = null;
@@ -2738,7 +2777,7 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'stock', 'orders', 'inbox', 'proofs', 'backups', 'trash'];
+    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'stock', 'orders', 'inbox', 'proofs', 'backups', 'trash', 'quickapp'];
     function switchTab(tab) {
       // Keeps the URL in sync with whichever tab is open (replaceState, not
       // a fresh history entry, so this doesn't fill up the back button)
@@ -2785,6 +2824,136 @@
       if (tab === 'proofs') switchProofsSubview(proofsSubview);
       if (tab === 'backups') loadBackups();
       if (tab === 'trash') loadTrash();
+      if (tab === 'quickapp') loadQuickApp();
+    }
+
+    // --- Quick App tab - see functions/api/quick-config.js. Crystal Quick
+    // (the mobile companion app) only ever GETs this; this tab is the only
+    // writer (PUT), so the mobile app's Home tile and garment category
+    // order/visibility are entirely set from here. ---
+    const QUICK_APP_HOME_TILES_DEFAULT = [
+      { key: 'new-quote', title: 'New Quote' },
+      { key: 'orders', title: 'Quotes & Invoices' },
+      { key: 'customers', title: 'Customers' },
+      { key: 'unpaid', title: 'Unpaid Invoices' },
+    ];
+    let quickAppHomeTiles = []; // [{key, title, hidden}]
+    let quickAppCategories = []; // [{name, hidden}]
+
+    async function loadQuickApp() {
+      const statusEl = document.getElementById('quickapp-status');
+      statusEl.textContent = 'Loading…';
+      try {
+        const [configRes, facetsRes] = await Promise.all([
+          fetch(API_QUICK_CONFIG_URL),
+          fetch(API_PRODUCTS_URL + '?facets=1&item_type=garment'),
+        ]);
+        const config = await configRes.json();
+        const facets = await facetsRes.json();
+        const allCategories = (facets.categories || []).slice().sort();
+
+        // Home tiles: saved order first (only for keys we still recognise),
+        // then any tile added in a later update that hasn't been saved yet.
+        const savedHome = (config && Array.isArray(config.home_tiles)) ? config.home_tiles : [];
+        const savedHomeByKey = Object.fromEntries(savedHome.map((t) => [t.key, t]));
+        const homeKeys = [
+          ...savedHome.map((t) => t.key).filter((k) => QUICK_APP_HOME_TILES_DEFAULT.some((d) => d.key === k)),
+          ...QUICK_APP_HOME_TILES_DEFAULT.map((d) => d.key).filter((k) => !savedHomeByKey[k]),
+        ];
+        quickAppHomeTiles = homeKeys.map((key) => ({
+          key,
+          title: QUICK_APP_HOME_TILES_DEFAULT.find((d) => d.key === key).title,
+          hidden: !!(savedHomeByKey[key] && savedHomeByKey[key].hidden),
+        }));
+
+        // Categories: saved order first (only for categories that still
+        // exist in the catalog), then any new category not yet ordered.
+        const savedOrder = (config && Array.isArray(config.category_order)) ? config.category_order : [];
+        const hiddenSet = new Set((config && Array.isArray(config.hidden_categories)) ? config.hidden_categories : []);
+        const orderedCats = [
+          ...savedOrder.filter((c) => allCategories.includes(c)),
+          ...allCategories.filter((c) => !savedOrder.includes(c)),
+        ];
+        quickAppCategories = orderedCats.map((name) => ({ name, hidden: hiddenSet.has(name) }));
+
+        renderQuickAppHomeTiles();
+        renderQuickAppCategories();
+        statusEl.textContent = config ? '' : 'No settings saved yet - showing defaults.';
+      } catch (e) {
+        statusEl.textContent = 'Could not load: ' + e.message;
+      }
+    }
+
+    function quickAppRow(label, hidden, onToggle, onUp, onDown, disableUp, disableDown) {
+      return `<div class="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+        <input type="checkbox" ${hidden ? '' : 'checked'} onchange="${onToggle}" class="rounded border-slate-300" />
+        <span class="flex-1 text-sm ${hidden ? 'text-slate-400 line-through' : 'text-slate-800'}">${escapeHtml(label)}</span>
+        <button type="button" onclick="${onUp}" ${disableUp ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↑</button>
+        <button type="button" onclick="${onDown}" ${disableDown ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↓</button>
+      </div>`;
+    }
+
+    function renderQuickAppHomeTiles() {
+      document.getElementById('quickapp-home-tiles').innerHTML = quickAppHomeTiles
+        .map((t, i) => quickAppRow(
+          t.title, t.hidden,
+          `toggleQuickAppHomeTile(${i})`, `moveQuickAppHomeTile(${i},-1)`, `moveQuickAppHomeTile(${i},1)`,
+          i === 0, i === quickAppHomeTiles.length - 1
+        ))
+        .join('');
+    }
+    function toggleQuickAppHomeTile(i) { quickAppHomeTiles[i].hidden = !quickAppHomeTiles[i].hidden; renderQuickAppHomeTiles(); }
+    function moveQuickAppHomeTile(i, dir) {
+      const j = i + dir;
+      if (j < 0 || j >= quickAppHomeTiles.length) return;
+      [quickAppHomeTiles[i], quickAppHomeTiles[j]] = [quickAppHomeTiles[j], quickAppHomeTiles[i]];
+      renderQuickAppHomeTiles();
+    }
+
+    function renderQuickAppCategories() {
+      const el = document.getElementById('quickapp-categories');
+      if (!quickAppCategories.length) {
+        el.innerHTML = '<p class="text-sm text-slate-400">No garment categories found in the catalog yet.</p>';
+        return;
+      }
+      el.innerHTML = quickAppCategories
+        .map((c, i) => quickAppRow(
+          c.name, c.hidden,
+          `toggleQuickAppCategory(${i})`, `moveQuickAppCategory(${i},-1)`, `moveQuickAppCategory(${i},1)`,
+          i === 0, i === quickAppCategories.length - 1
+        ))
+        .join('');
+    }
+    function toggleQuickAppCategory(i) { quickAppCategories[i].hidden = !quickAppCategories[i].hidden; renderQuickAppCategories(); }
+    function moveQuickAppCategory(i, dir) {
+      const j = i + dir;
+      if (j < 0 || j >= quickAppCategories.length) return;
+      [quickAppCategories[i], quickAppCategories[j]] = [quickAppCategories[j], quickAppCategories[i]];
+      renderQuickAppCategories();
+    }
+
+    async function saveQuickAppConfig() {
+      const statusEl = document.getElementById('quickapp-status');
+      statusEl.textContent = 'Saving…';
+      const payload = {
+        home_tiles: quickAppHomeTiles.map((t) => ({ key: t.key, hidden: t.hidden })),
+        category_order: quickAppCategories.map((c) => c.name),
+        hidden_categories: quickAppCategories.filter((c) => c.hidden).map((c) => c.name),
+      };
+      try {
+        const res = await fetch(API_QUICK_CONFIG_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+        statusEl.textContent = 'Saved ' + new Date().toLocaleTimeString('en-GB');
+        showActionToast('✓', 'Quick App settings saved.');
+      } catch (e) {
+        statusEl.textContent = '';
+        showActionToast('⚠', 'Could not save: ' + e.message);
+      }
     }
 
     // Cache of the last-loaded quotes, keyed by id, so Edit can prefill the form
