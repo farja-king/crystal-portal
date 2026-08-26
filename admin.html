@@ -3068,8 +3068,6 @@
           <input id="qa-newitem-title-${categoryId}" type="text" placeholder="Title" class="rounded border border-slate-300 px-2 py-1 text-xs md:col-span-2" />
           <input id="qa-newitem-price-${categoryId}" type="number" min="0" step="0.01" placeholder="Sell £" class="rounded border border-slate-300 px-2 py-1 text-xs" />
           <button type="button" onclick="quickAppAddItem('${categoryId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-semibold px-2 py-1">+ Add</button>
-          <input id="qa-newitem-colours-${categoryId}" type="text" placeholder="Colours (comma-separated)" class="rounded border border-slate-300 px-2 py-1 text-xs md:col-span-2" />
-          <input id="qa-newitem-sizes-${categoryId}" type="text" placeholder="Sizes (comma-separated)" class="rounded border border-slate-300 px-2 py-1 text-xs md:col-span-2" />
         </div>`;
     }
 
@@ -3082,29 +3080,28 @@
             <button type="button" onclick="saveQuickAppItemEdit('${it.id}')" class="text-xs font-semibold text-indigo-600">Save</button>
             <button type="button" onclick="quickAppItemEditingId = null; renderQuickAppCategories();" class="text-xs text-slate-500">Cancel</button>
           </div>
-          <input id="qa-item-colours-${it.id}" type="text" value="${escapeAttr((it.colours || []).join(', '))}" placeholder="Colours" class="rounded border border-slate-300 px-2 py-1 text-xs md:col-span-2" />
-          <input id="qa-item-sizes-${it.id}" type="text" value="${escapeAttr((it.sizes || []).join(', '))}" placeholder="Sizes" class="rounded border border-slate-300 px-2 py-1 text-xs md:col-span-2" />
         </div>`;
       }
-      const variants = [(it.colours || []).join('/'), (it.sizes || []).join('/')].filter(Boolean).join(' · ');
       return `<div class="flex items-center gap-2 py-1 text-xs">
-        <span class="flex-1 text-slate-700">${escapeHtml(it.title)}${variants ? ` <span class="text-slate-400">(${escapeHtml(variants)})</span>` : ''}</span>
+        <span class="flex-1 text-slate-700">${escapeHtml(it.title)}</span>
         <span class="text-slate-500">£${Number(it.sell_price || 0).toFixed(2)}</span>
         <button type="button" onclick="quickAppItemEditingId = '${it.id}'; renderQuickAppCategories();" class="text-slate-500 hover:text-indigo-600">✎</button>
         <button type="button" onclick="deleteQuickAppItem('${it.id}')" class="text-slate-500 hover:text-rose-600">🗑</button>
       </div>`;
     }
 
+    // Colour/size are no longer set here at all - the app now asks for
+    // colour as free text and a standard XS-4XL size at quote time, the
+    // same for every garment (see crystal-quick's quote.html), so an item
+    // in this catalog is just a title and a price.
     async function quickAppAddItem(categoryId) {
       const title = document.getElementById('qa-newitem-title-' + categoryId).value.trim();
       if (!title) { showActionToast('⚠', 'Title is required.'); return; }
       const sellRaw = document.getElementById('qa-newitem-price-' + categoryId).value;
-      const colours = document.getElementById('qa-newitem-colours-' + categoryId).value.split(',').map((s) => s.trim()).filter(Boolean);
-      const sizes = document.getElementById('qa-newitem-sizes-' + categoryId).value.split(',').map((s) => s.trim()).filter(Boolean);
       try {
         const res = await fetch(API_QUICK_ITEMS_URL, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ resource: 'item', category_id: categoryId, title, sell_price: sellRaw === '' ? 0 : Number(sellRaw), colours, sizes }),
+          body: JSON.stringify({ resource: 'item', category_id: categoryId, title, sell_price: sellRaw === '' ? 0 : Number(sellRaw) }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
@@ -3118,12 +3115,10 @@
     async function saveQuickAppItemEdit(id) {
       const title = document.getElementById('qa-item-title-' + id).value.trim();
       const sellRaw = document.getElementById('qa-item-price-' + id).value;
-      const colours = document.getElementById('qa-item-colours-' + id).value.split(',').map((s) => s.trim()).filter(Boolean);
-      const sizes = document.getElementById('qa-item-sizes-' + id).value.split(',').map((s) => s.trim()).filter(Boolean);
       try {
         const res = await fetch(API_QUICK_ITEMS_URL, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ resource: 'item', id, title, sell_price: sellRaw === '' ? 0 : Number(sellRaw), colours, sizes }),
+          body: JSON.stringify({ resource: 'item', id, title, sell_price: sellRaw === '' ? 0 : Number(sellRaw) }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
