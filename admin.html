@@ -2925,6 +2925,7 @@
           ...allCategories.filter((c) => !savedOrder.includes(c)),
         ];
         quickAppCategories = orderedCats.map((name) => ({ name, hidden: hiddenSet.has(name) }));
+        sortQuickAppCategoriesActiveFirst();
 
         renderQuickAppHomeTiles();
         renderQuickAppCategories();
@@ -2980,7 +2981,22 @@
         })
         .join('');
     }
-    function toggleQuickAppCategory(i) { quickAppCategories[i].hidden = !quickAppCategories[i].hidden; renderQuickAppCategories(); }
+    // Keeps active (visible) categories grouped above hidden ones, in each
+    // group's existing relative order - hidden ones sink to the bottom
+    // instead of being scattered wherever they happened to be reordered to.
+    // Doesn't affect the app itself (quote.html filters hidden categories
+    // out entirely before ordering), purely so this list is easier to work
+    // in as it grows.
+    function sortQuickAppCategoriesActiveFirst() {
+      const active = quickAppCategories.filter((c) => !c.hidden);
+      const hidden = quickAppCategories.filter((c) => c.hidden);
+      quickAppCategories = [...active, ...hidden];
+    }
+    function toggleQuickAppCategory(i) {
+      quickAppCategories[i].hidden = !quickAppCategories[i].hidden;
+      sortQuickAppCategoriesActiveFirst();
+      renderQuickAppCategories();
+    }
     function moveQuickAppCategory(i, dir) {
       const j = i + dir;
       if (j < 0 || j >= quickAppCategories.length) return;
