@@ -5,10 +5,16 @@
 // all - a genuinely independent system, not a view onto the same data.
 //
 // Two tables: quick_categories (name, order, hidden) and quick_items
-// (belongs to a category; title, colours[], sizes[], one sell price, order,
-// hidden). A garment here has ONE price regardless of which colour/size is
-// picked - if variant-specific pricing is ever needed this is the file to
-// extend, not products.js.
+// (title, colours[], sizes[], one sell price, order, hidden). A garment
+// here has ONE price regardless of which colour/size is picked - if
+// variant-specific pricing is ever needed this is the file to extend, not
+// products.js.
+//
+// category_id is '' (not NULL - simplest way to satisfy the NOT NULL
+// column without an ALTER TABLE migration) for a "standalone" item with no
+// category - it still shows as its own tile straight on the app's main
+// Garments screen, alongside the category tiles, for something that
+// doesn't need a whole category of its own.
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -95,16 +101,16 @@ export async function onRequest(context) {
         const id = crypto.randomUUID();
         const title = (data.title || "").trim();
         if (!title) return json({ error: "title is required" }, 400);
-        if (!data.category_id) return json({ error: "category_id is required" }, 400);
+        const categoryId = data.category_id || ""; // "" = standalone, no category
         const maxRow = await db.prepare(
           "SELECT MAX(sort_order) AS m FROM quick_items WHERE category_id = ?"
-        ).bind(data.category_id).first();
+        ).bind(categoryId).first();
         const sortOrder = (maxRow && maxRow.m !== null ? maxRow.m : -1) + 1;
         await db.prepare(`
           INSERT INTO quick_items (id, category_id, title, colours, sizes, sell_price, sort_order)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `).bind(
-          id, data.category_id, title,
+          id, categoryId, title,
           JSON.stringify(Array.isArray(data.colours) ? data.colours : []),
           JSON.stringify(Array.isArray(data.sizes) ? data.sizes : []),
           Number(data.sell_price) || 0,

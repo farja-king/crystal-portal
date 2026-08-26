@@ -1815,6 +1815,15 @@
 
         <div id="quickapp-categories"></div>
       </div>
+
+      <!-- Products with no category - shown as their own tile directly on
+           the app's main Garments screen, alongside the category tiles,
+           for something that doesn't need a whole category of its own. -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mt-6">
+        <h3 class="font-bold text-slate-900 mb-1">Standalone Products</h3>
+        <p class="text-xs text-slate-500 mb-3">Show up as their own tile on the main Garments screen, not inside any category.</p>
+        <div id="quickapp-standalone"></div>
+      </div>
     </section>
 
   </main>
@@ -2888,6 +2897,14 @@
       quickAppCategories = data.categories || [];
       quickAppItems = data.items || [];
       renderQuickAppCategories();
+      renderQuickAppStandalone();
+    }
+
+    // Standalone products (category_id === '') reuse the exact same item
+    // row/add-form markup a category's own expanded item list uses (see
+    // renderQuickAppItemsPanel) - '' just doubles as the "no category" id.
+    function renderQuickAppStandalone() {
+      document.getElementById('quickapp-standalone').innerHTML = renderQuickAppItemsPanel('');
     }
 
     function quickAppRow(label, hidden, onToggle, onUp, onDown, disableUp, disableDown) {
@@ -3078,14 +3095,14 @@
           <input id="qa-item-price-${it.id}" type="number" min="0" step="0.01" value="${it.sell_price ?? 0}" class="rounded border border-slate-300 px-2 py-1 text-xs" />
           <div class="flex gap-1">
             <button type="button" onclick="saveQuickAppItemEdit('${it.id}')" class="text-xs font-semibold text-indigo-600">Save</button>
-            <button type="button" onclick="quickAppItemEditingId = null; renderQuickAppCategories();" class="text-xs text-slate-500">Cancel</button>
+            <button type="button" onclick="quickAppItemEditingId = null; renderQuickAppCategories(); renderQuickAppStandalone();" class="text-xs text-slate-500">Cancel</button>
           </div>
         </div>`;
       }
       return `<div class="flex items-center gap-2 py-1 text-xs">
         <span class="flex-1 text-slate-700">${escapeHtml(it.title)}</span>
         <span class="text-slate-500">£${Number(it.sell_price || 0).toFixed(2)}</span>
-        <button type="button" onclick="quickAppItemEditingId = '${it.id}'; renderQuickAppCategories();" class="text-slate-500 hover:text-indigo-600">✎</button>
+        <button type="button" onclick="quickAppItemEditingId = '${it.id}'; renderQuickAppCategories(); renderQuickAppStandalone();" class="text-slate-500 hover:text-indigo-600">✎</button>
         <button type="button" onclick="deleteQuickAppItem('${it.id}')" class="text-slate-500 hover:text-rose-600">🗑</button>
       </div>`;
     }
