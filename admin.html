@@ -8443,6 +8443,14 @@
         cost_price: 0, vat_rate: 0.2,
         description: '',
         qty: 1,
+        // For "running tab" customers whose invoice/quote stays open while
+        // work gets added across several days - each line remembers the day
+        // it was actually added, not just the order's own created_at.
+        // Defaults to today but is an editable input in renderOrderLines()
+        // (updateLineDate) for backdating. Carried through unchanged by
+        // mapOrderItemsToBuilderLines() when an existing order is reopened,
+        // so only a genuinely new line ever gets today's date here.
+        date_added: new Date().toISOString().slice(0, 10),
         // Catalog rows are often a pricing tier, not one physical garment -
         // "All Colours" / "XS - XXL" covers a whole size run at one price.
         // breakdown is where the actual colour+size+qty per unit gets itemized.
@@ -8494,6 +8502,15 @@
       orderLines[idx].qty = Math.max(1, parseInt(value, 10) || 1);
       renderOrderTotals();
       updateLineTotalDisplay(idx);
+    }
+
+    // Backdating - a line normally gets today's date automatically
+    // (addOrderLine), but staff need to be able to correct it (e.g. adding
+    // yesterday's job to the tab a day late).
+    function updateOrderLineDate(idx, value) {
+      const line = orderLines[idx];
+      if (!line) return;
+      line.date_added = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : line.date_added;
     }
 
     function updateOrderLineDescription(idx, value) {
@@ -9327,7 +9344,13 @@
                 <span draggable="true" ondragstart="handleOrderLineDragStart(event, ${idx})" title="Drag to reorder" class="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 text-base leading-none select-none">⠿</span>
                 ${isCustomerSupplied ? "Customer's own garment" : 'Garment we supply'}
               </span>
-              <button type="button" onclick="removeOrderLine(${idx})" class="text-rose-500 hover:text-rose-700 text-sm">Remove line</button>
+              <span class="flex items-center gap-3">
+                <label class="flex items-center gap-1 text-xs text-slate-500" title="Day this line was added - shown on the printed/emailed document for running-tab customers billed across several dates">
+                  Added
+                  <input type="date" value="${line.date_added || ''}" onchange="updateOrderLineDate(${idx}, this.value)" class="rounded-md border border-slate-300 px-1.5 py-0.5 text-xs text-slate-700" />
+                </label>
+                <button type="button" onclick="removeOrderLine(${idx})" class="text-rose-500 hover:text-rose-700 text-sm">Remove line</button>
+              </span>
             </div>
             ${topRow}
             ${decorationsBlock}
@@ -9484,6 +9507,7 @@
           source: l.source, product_id: l.product_id, supplier_code: l.supplier_code,
           title: l.title, colour: l.colour, size: l.size, description: l.description,
           qty: l.qty, unit_price: l.unit_price, customer_item: !!l.customer_item,
+          date_added: l.date_added,
           breakdown: l.breakdown ? l.breakdown.map((b) => ({
             colour: b.colour, size: b.size, qty: b.qty,
             decorations: (b.decorations || []).map((d) => ({ method: d.method, placement: d.placement, price: d.price, qty: d.qty, notes: d.notes })),
@@ -9579,7 +9603,14 @@
     // Shared by editOrderInBuilder (loading an existing quote/invoice back
     // into the builder) and reorderOrder (prefilling a brand-new one from a
     // past order) - both need the exact same items->builder-lines shape.
-    function mapOrderItemsToBuilderLines(items) {
+    // freshDates: true for reorderOrder (a brand-new order prefilled from a
+    // past one - every line is "new" today, the old order's dates would be
+    // wrong here), false/omitted for editOrderInBuilder (a genuine edit of
+    // an existing order - each line keeps the day it was actually added,
+    // falling back to today only for a legacy item saved before this field
+    // existed).
+    function mapOrderItemsToBuilderLines(items, freshDates) {
+      const today = new Date().toISOString().slice(0, 10);
       return (items || []).map((item) => {
         const breakdown = (item.breakdown || []).map((b) => ({
           colour: b.colour || '', size: b.size || '', qty: b.qty || 1,
@@ -9604,6 +9635,7 @@
           unit_price: Number(item.unit_price) || 0,
           description: item.description || '',
           qty: item.qty || 1,
+          date_added: freshDates ? today : (/^\d{4}-\d{2}-\d{2}$/.test(item.date_added || '') ? item.date_added : today),
           breakdown,
           colourOptions: [], sizeOptions: [],
           decorations: (item.decorations || []).map((d) => ({
@@ -9748,7 +9780,7 @@
       openOrderBuilderModal();
       editingExistingOrderId = null;
 
-      orderLines = mapOrderItemsToBuilderLines(o.items);
+      orderLines = mapOrderItemsToBuilderLines(o.items, true);
       attachCostDataToOrderLines();
 
       document.getElementById('ord-doctype-toggle').classList.remove('hidden');
@@ -10634,7 +10666,10 @@
         const garmentSubtotal = Number(item.qty) * Number(item.unit_price);
         const decorationSubtotal = Number(item.line_total) - garmentSubtotal;
         return `<div class="border-b border-slate-100 pb-3 mb-3 last:border-0">
-          <div class="font-medium text-slate-900">${baseLabel}</div>
+          <div class="flex items-baseline justify-between gap-2">
+            <div class="font-medium text-slate-900">${baseLabel}</div>
+            ${item.date_added ? `<span class="text-xs text-slate-400 whitespace-nowrap">Added ${escapeHtml(ukDate(item.date_added))}</span>` : ''}
+          </div>
           ${detailLines}
           <div class="text-sm mt-1">Qty: ${item.qty} | £${Number(item.unit_price).toFixed(2)} each = £${garmentSubtotal.toFixed(2)}</div>
           ${decorationSubtotal > 0.001 ? `<div class="text-sm text-slate-500">+ Decoration: £${decorationSubtotal.toFixed(2)}</div>` : ''}
@@ -13028,7 +13063,8 @@
         const garmentSubtotal = Number(item.qty) * Number(item.unit_price);
         const decorationSubtotal = Number(item.line_total) - garmentSubtotal;
         const decorationTotalLine = decorationSubtotal > 0.001 ? `<div class="dec">+ Decoration: £${decorationSubtotal.toFixed(2)}</div>` : '';
-        return `<tr><td>${baseLabel}${detailLines}${decorationTotalLine}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
+        const dateLine = item.date_added ? `<div class="dec">Added ${escapeHtml(ukDate(item.date_added))}</div>` : '';
+        return `<tr><td>${baseLabel}${dateLine}${detailLines}${decorationTotalLine}</td><td>${item.qty}</td><td>£${Number(item.unit_price).toFixed(2)}</td><td>£${Number(item.line_total).toFixed(2)}</td></tr>`;
       }).join('');
 
       win.document.write(`

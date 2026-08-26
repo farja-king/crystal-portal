@@ -451,8 +451,16 @@ export async function onRequest(context) {
       const qty = Number(item.qty) || 0;
       const garmentTotal = qty * (Number(item.unit_price) || 0);
 
+      // Per-line date - the running-tab case (a customer whose order stays
+      // open while work gets added across several days before it's finally
+      // sent/finalized) needs this shown per item, not just the single
+      // Date: line for the document as a whole further up this email.
+      const dateLine = item.date_added
+        ? `<div style="font-size:12px;color:#94a3b8;margin-top:2px;">Added ${escapeHtml(ukDate(item.date_added))}</div>`
+        : "";
+
       const garmentRow = `<tr>
-        <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${baseLabel}${breakdownLines}</td>
+        <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${baseLabel}${dateLine}${breakdownLines}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${item.qty}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${money(item.unit_price)}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #e2e8f0;">${money(garmentTotal)}</td>

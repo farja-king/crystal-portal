@@ -226,6 +226,14 @@ export function buildOrderPdf(o, customerAddr) {
       doc.line(l, { x: COL_ITEM_X, size: 9, gap: 12 });
     });
 
+    // Per-line date - for a "running tab" order that stays open while work
+    // gets added across several days, this is what actually says which day
+    // each item was for; the single Date: line near the top is just when
+    // the document itself was created/last edited.
+    if (item.date_added) {
+      doc.line(`Added ${ukDate(item.date_added)}`, { x: COL_ITEM_X, size: 8, gray: 0.45, gap: 11 });
+    }
+
     itemBreakdownLines(item).forEach((l) => {
       wrapText(l, QTY_RIGHT - COL_ITEM_X - 18, 8).forEach((wl) => {
         doc.line(wl, { x: COL_ITEM_X + 8, size: 8, gray: 0.45, gap: 11 });

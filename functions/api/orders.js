@@ -113,6 +113,10 @@ export async function onRequest(context) {
     return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
   }
 
+  function todayIso() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
   function sanitizeDecoration(d) {
     return {
       method: String(d.method || "").slice(0, 40),
@@ -208,6 +212,19 @@ export async function onRequest(context) {
         // the simple qty-only line it started as, not a garment colour/size
         // grid that was never meaningful for it.
         customer_item: !!item.customer_item,
+        // For a "running tab" order that stays open while work gets added
+        // over several days/weeks - each line remembers the day it was
+        // actually added, not just the order's own created_at. admin.html
+        // stamps this itself when a line is first added (addOrderLine) and
+        // carries it unchanged on every later edit, so this is just a
+        // passthrough-with-fallback: only ever defaults to today here for
+        // an item that predates this field (an older saved quote/invoice,
+        // or a client that doesn't send it) rather than trying to infer
+        // "was this line just added in this edit" server-side - the PUT
+        // handler below has no old-vs-new distinction to work with (blind
+        // overwrite of the whole items array), so that has to be decided
+        // client-side before it ever gets here.
+        date_added: /^\d{4}-\d{2}-\d{2}$/.test(item.date_added || "") ? item.date_added : todayIso(),
       };
     });
 
