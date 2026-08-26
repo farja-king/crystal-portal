@@ -122,14 +122,29 @@ export async function onRequest(context) {
     // touches shared-catalog rows (customer_id IS NULL) - a customer's own
     // one-off Custom Price List items are a separate concern (see
     // functions/api/inbox.js's customer_id scoping) and were never shown on
-    // either the Garment Catalog or Services tab anyway. Idempotent - a
-    // second run finds nothing left to update.
-    await db.prepare(`
-      UPDATE products SET item_type = 'service'
-      WHERE (supplier_code IS NULL OR supplier_code = '')
-        AND (customer_id IS NULL OR customer_id = '')
-        AND item_type = 'garment'
-    `).run();
+    // either the Garment Catalog or Services tab anyway.
+    //
+    // Genuinely gated to run once now (schema_migrations marker below) -
+    // it used to just be a plain UPDATE with no guard, so despite being
+    // labelled "one-time" it silently ran on every single request forever,
+    // reclassifying any *newly added* code-less garment as a service too.
+    // Found live: Martin added a garment with no ref code (name/category/
+    // cost/sell filled in) and it vanished from the Garments tab - it had
+    // saved fine, just got flipped to a service by this on the very next
+    // page load.
+    await db.prepare(`CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)`).run();
+    const backfillDone = await db.prepare(
+      `SELECT 1 FROM schema_migrations WHERE id = 'products_backfill_service_item_type'`
+    ).first();
+    if (!backfillDone) {
+      await db.prepare(`
+        UPDATE products SET item_type = 'service'
+        WHERE (supplier_code IS NULL OR supplier_code = '')
+          AND (customer_id IS NULL OR customer_id = '')
+          AND item_type = 'garment'
+      `).run();
+      await db.prepare(`INSERT INTO schema_migrations (id) VALUES ('products_backfill_service_item_type')`).run();
+    }
 
     // 6k+ rows, so every list view is filtered/paged - these carry that load.
     await db.batch([
