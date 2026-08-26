@@ -494,6 +494,33 @@ export async function onRequest(context) {
         return json({ success: true });
       }
 
+      // Category rename/delete - added for the Quick App tab's category
+      // management (admin.html) so a category is one thing everywhere
+      // (Garments catalog and the Crystal Quick app both read the same
+      // products.category column) rather than a separate list to keep in
+      // sync. Shared-catalog rows only, same reasoning as apply_pricing
+      // below - a customer's own Custom Price List category is theirs.
+      if (data.rename_category) {
+        const { from, to } = data.rename_category;
+        if (!from || !to) return json({ error: "from and to are required" }, 400);
+        const res = await db.prepare(`
+          UPDATE products SET category = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE category = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL
+        `).bind(to, from).run();
+        return json({ success: true, updated: res.meta ? res.meta.changes : null });
+      }
+      // Doesn't delete the products themselves - just clears their category
+      // back to uncategorised, same as removing a category should mean
+      // "stop grouping these together", not "delete the garments".
+      if (data.delete_category) {
+        const name = data.delete_category;
+        const res = await db.prepare(`
+          UPDATE products SET category = '', updated_at = CURRENT_TIMESTAMP
+          WHERE category = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL
+        `).bind(name).run();
+        return json({ success: true, updated: res.meta ? res.meta.changes : null });
+      }
+
       // Bulk pricing: setting ~6.3k sell prices by hand is not realistic, so a
       // markup/margin can be applied across a filtered slice, or a fixed price
       // can be set on all filtered items (useful for "copy this price to all").

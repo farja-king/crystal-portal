@@ -1802,8 +1802,52 @@
 
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
           <h3 class="font-bold text-slate-900 mb-1">Garment Categories</h3>
-          <p class="text-xs text-slate-500 mb-3">Order and visibility of the category tiles (Polo, Hoodie, etc) in the New Quote screen. Untick to hide a category from the app entirely.</p>
-          <div id="quickapp-categories" class="max-h-[520px] overflow-y-auto pr-1"></div>
+          <p class="text-xs text-slate-500 mb-3">Order and visibility of the category tiles (Polo, Hoodie, etc) in the New Quote screen. Untick to hide a category from the app entirely. Rename/delete acts on the real Garments catalog too - one category system everywhere, not a separate list.</p>
+          <div id="quickapp-categories" class="max-h-[400px] overflow-y-auto pr-1"></div>
+        </div>
+      </div>
+
+      <!-- Add Garment - writes straight into the real Garments catalog
+           (functions/api/products.js, the same bulk {rows:[...]} import
+           path the supplier price-list import uses), so it shows up under
+           its category in both the Garments tab and the app automatically -
+           no separate "quick catalog" bucket. One row per colour x size
+           combination, all sharing an auto-generated code so they group as
+           one product with variants, same as a normal supplier item. -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mt-6">
+        <h3 class="font-bold text-slate-900 mb-1">Add Garment</h3>
+        <p class="text-xs text-slate-500 mb-3">Adds straight into the Garments catalog under the category you choose (existing or new) - it'll appear in both the Garments tab here and the app.</p>
+        <div class="grid gap-3 md:grid-cols-4">
+          <label class="text-sm md:col-span-2">
+            <span class="block font-medium text-slate-700 mb-1">Title</span>
+            <input id="quickapp-add-title" type="text" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm md:col-span-2">
+            <span class="block font-medium text-slate-700 mb-1">Category</span>
+            <input id="quickapp-add-category" type="text" list="category-suggestions" placeholder="Existing or new category" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Cost price (£)</span>
+            <input id="quickapp-add-cost" type="number" min="0" step="0.01" value="0" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm">
+            <span class="block font-medium text-slate-700 mb-1">Sell price (£)</span>
+            <input id="quickapp-add-sell" type="number" min="0" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm md:col-span-2">
+            <span class="block font-medium text-slate-700 mb-1">Colours <span class="font-normal text-slate-400">(comma-separated, optional)</span></span>
+            <input id="quickapp-add-colours" type="text" placeholder="Black, White, Navy" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+          <label class="text-sm md:col-span-2">
+            <span class="block font-medium text-slate-700 mb-1">Sizes <span class="font-normal text-slate-400">(comma-separated, optional)</span></span>
+            <input id="quickapp-add-sizes" type="text" placeholder="S, M, L, XL" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900" />
+          </label>
+        </div>
+        <div class="flex items-center gap-3 mt-3">
+          <button onclick="quickAppAddGarment()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            + Add Garment
+          </button>
+          <span id="quickapp-add-msg" class="text-xs text-slate-500"></span>
         </div>
       </div>
     </section>
@@ -2919,15 +2963,21 @@
     function renderQuickAppCategories() {
       const el = document.getElementById('quickapp-categories');
       if (!quickAppCategories.length) {
-        el.innerHTML = '<p class="text-sm text-slate-400">No garment categories found in the catalog yet.</p>';
+        el.innerHTML = '<p class="text-sm text-slate-400">No garment categories found in the catalog yet - add a garment below to create one.</p>';
         return;
       }
       el.innerHTML = quickAppCategories
-        .map((c, i) => quickAppRow(
-          c.name, c.hidden,
-          `toggleQuickAppCategory(${i})`, `moveQuickAppCategory(${i},-1)`, `moveQuickAppCategory(${i},1)`,
-          i === 0, i === quickAppCategories.length - 1
-        ))
+        .map((c, i) => {
+          const hidden = c.hidden;
+          return `<div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0">
+            <input type="checkbox" ${hidden ? '' : 'checked'} onchange="toggleQuickAppCategory(${i})" class="rounded border-slate-300" />
+            <span class="flex-1 text-sm ${hidden ? 'text-slate-400 line-through' : 'text-slate-800'}">${escapeHtml(c.name)}</span>
+            <button type="button" onclick="renameQuickAppCategory(${i})" title="Rename" class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 text-xs">✎</button>
+            <button type="button" onclick="deleteQuickAppCategory(${i})" title="Delete category" class="w-7 h-7 rounded-full border border-rose-200 text-rose-600 text-xs">🗑</button>
+            <button type="button" onclick="moveQuickAppCategory(${i},-1)" ${i === 0 ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↑</button>
+            <button type="button" onclick="moveQuickAppCategory(${i},1)" ${i === quickAppCategories.length - 1 ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↓</button>
+          </div>`;
+        })
         .join('');
     }
     function toggleQuickAppCategory(i) { quickAppCategories[i].hidden = !quickAppCategories[i].hidden; renderQuickAppCategories(); }
@@ -2936,6 +2986,102 @@
       if (j < 0 || j >= quickAppCategories.length) return;
       [quickAppCategories[i], quickAppCategories[j]] = [quickAppCategories[j], quickAppCategories[i]];
       renderQuickAppCategories();
+    }
+
+    // Rename/delete act on the real products.category column (see the PUT
+    // rename_category/delete_category actions in products.js), not just
+    // this tab's own saved order - so the Garments catalog and the app
+    // both stay one system, matching Martin's "no catalog within a
+    // catalog" direction.
+    async function renameQuickAppCategory(i) {
+      const oldName = quickAppCategories[i].name;
+      const newName = await promptModal(`Rename "${oldName}" to:`, oldName);
+      if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rename_category: { from: oldName, to: newName.trim() } }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        showActionToast('✓', `Renamed "${oldName}" to "${newName.trim()}" (${data.updated || 0} product${data.updated === 1 ? '' : 's'}).`);
+        loadQuickApp();
+      } catch (e) {
+        showActionToast('⚠', 'Could not rename: ' + e.message);
+      }
+    }
+    async function deleteQuickAppCategory(i) {
+      const name = quickAppCategories[i].name;
+      const ok = await confirmModal(`Delete the "${name}" category? Its products aren't deleted - they just become uncategorised, same as any garment with no category set.`);
+      if (!ok) return;
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ delete_category: name }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        showActionToast('✓', `Deleted "${name}" (${data.updated || 0} product${data.updated === 1 ? '' : 's'} uncategorised).`);
+        loadQuickApp();
+      } catch (e) {
+        showActionToast('⚠', 'Could not delete: ' + e.message);
+      }
+    }
+
+    // Adds one row per colour x size combination straight into the shared
+    // Garments catalog (same bulk {rows:[...]} path the supplier price-list
+    // import uses), all sharing an auto-generated code so they group as one
+    // product with variants - see functions/api/products.js.
+    async function quickAppAddGarment() {
+      const msgEl = document.getElementById('quickapp-add-msg');
+      const title = document.getElementById('quickapp-add-title').value.trim();
+      const category = document.getElementById('quickapp-add-category').value.trim();
+      if (!title) { msgEl.className = 'text-xs text-rose-600'; msgEl.textContent = 'Title is required.'; return; }
+
+      const cost = Number(document.getElementById('quickapp-add-cost').value) || 0;
+      const sellRaw = document.getElementById('quickapp-add-sell').value;
+      const sell = sellRaw === '' ? null : Number(sellRaw);
+      const colours = document.getElementById('quickapp-add-colours').value.split(',').map((s) => s.trim()).filter(Boolean);
+      const sizes = document.getElementById('quickapp-add-sizes').value.split(',').map((s) => s.trim()).filter(Boolean);
+
+      let variantPairs = [];
+      if (colours.length && sizes.length) {
+        for (const c of colours) for (const s of sizes) variantPairs.push({ colour: c, size: s });
+      } else if (colours.length) {
+        variantPairs = colours.map((c) => ({ colour: c, size: '' }));
+      } else if (sizes.length) {
+        variantPairs = sizes.map((s) => ({ colour: '', size: s }));
+      } else {
+        variantPairs = [{ colour: '', size: '' }];
+      }
+
+      const code = 'QA-' + Date.now().toString(36).toUpperCase();
+      const rows = variantPairs.map((v) => ({
+        id: crypto.randomUUID(),
+        supplier: 'Manual', supplier_code: code, supplier_ref: '', brand: '',
+        title, colour: v.colour, size: v.size, category,
+        cost_price: cost, sell_price: sell, vat_rate: 0.2,
+      }));
+
+      msgEl.className = 'text-xs text-slate-500';
+      msgEl.textContent = 'Saving…';
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        msgEl.className = 'text-xs text-emerald-600';
+        msgEl.textContent = `Added "${title}" (${rows.length} variant${rows.length === 1 ? '' : 's'}) under "${category || 'Uncategorised'}".`;
+        ['quickapp-add-title', 'quickapp-add-category', 'quickapp-add-colours', 'quickapp-add-sizes'].forEach((id) => (document.getElementById(id).value = ''));
+        document.getElementById('quickapp-add-cost').value = '0';
+        document.getElementById('quickapp-add-sell').value = '';
+        loadQuickApp();
+      } catch (e) {
+        msgEl.className = 'text-xs text-rose-600';
+        msgEl.textContent = 'Could not save: ' + e.message;
+      }
     }
 
     async function saveQuickAppConfig() {
