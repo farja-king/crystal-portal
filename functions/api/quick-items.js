@@ -113,7 +113,7 @@ export async function onRequest(context) {
           id, categoryId, title,
           JSON.stringify(Array.isArray(data.colours) ? data.colours : []),
           JSON.stringify(Array.isArray(data.sizes) ? data.sizes : []),
-          Number(data.sell_price) || 0,
+          priceOrNull(data.sell_price),
           sortOrder
         ).run();
         return json({ success: true, id });
@@ -149,7 +149,7 @@ export async function onRequest(context) {
           data.title !== undefined ? data.title.trim() : existing.title,
           data.colours !== undefined ? JSON.stringify(data.colours) : existing.colours,
           data.sizes !== undefined ? JSON.stringify(data.sizes) : existing.sizes,
-          data.sell_price !== undefined ? Number(data.sell_price) || 0 : existing.sell_price,
+          data.sell_price !== undefined ? priceOrNull(data.sell_price) : existing.sell_price,
           data.sort_order !== undefined ? data.sort_order : existing.sort_order,
           data.hidden !== undefined ? (data.hidden ? 1 : 0) : existing.hidden,
           data.id
@@ -187,6 +187,16 @@ export async function onRequest(context) {
   } catch (err) {
     return json({ error: err.message }, 500);
   }
+}
+
+// A blank price means "decide at time of sale" - a genuine misc/one-off
+// item, not free (£0). Stored as NULL, not coerced to 0, so quote.html can
+// tell the two apart and prompt for a price when the item's actually
+// added to a quote.
+function priceOrNull(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return isFinite(n) ? n : null;
 }
 
 function parseItem(row) {
