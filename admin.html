@@ -1801,7 +1801,10 @@
         </div>
 
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-          <h3 class="font-bold text-slate-900 mb-1">Garment Categories</h3>
+          <div class="flex items-center justify-between mb-1">
+            <h3 class="font-bold text-slate-900">Garment Categories</h3>
+            <button type="button" onclick="showAllQuickAppCategories()" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Show all</button>
+          </div>
           <p class="text-xs text-slate-500 mb-3">Order and visibility of the category tiles (Polo, Hoodie, etc) in the New Quote screen. Untick to hide a category from the app entirely. Rename/delete acts on the real Garments catalog too - one category system everywhere, not a separate list.</p>
           <div id="quickapp-categories" class="max-h-[400px] overflow-y-auto pr-1"></div>
         </div>
@@ -2971,8 +2974,8 @@
         .map((c, i) => {
           const hidden = c.hidden;
           return `<div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0">
-            <input type="checkbox" ${hidden ? '' : 'checked'} onchange="toggleQuickAppCategory(${i})" class="rounded border-slate-300" />
-            <span class="flex-1 text-sm ${hidden ? 'text-slate-400 line-through' : 'text-slate-800'}">${escapeHtml(c.name)}</span>
+            <input type="checkbox" ${hidden ? '' : 'checked'} onchange="toggleQuickAppCategory(${i})" title="Ticked = visible in the app. Untick to hide." class="rounded border-slate-300" />
+            <span class="flex-1 text-sm ${hidden ? 'text-slate-400 line-through' : 'text-slate-800'}">${escapeHtml(c.name)}${hidden ? ' <span class="text-[10px] font-normal not-italic">(hidden)</span>' : ''}</span>
             <button type="button" onclick="renameQuickAppCategory(${i})" title="Rename" class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 text-xs">✎</button>
             <button type="button" onclick="deleteQuickAppCategory(${i})" title="Delete category" class="w-7 h-7 rounded-full border border-rose-200 text-rose-600 text-xs">🗑</button>
             <button type="button" onclick="moveQuickAppCategory(${i},-1)" ${i === 0 ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↑</button>
@@ -2996,6 +2999,15 @@
       quickAppCategories[i].hidden = !quickAppCategories[i].hidden;
       sortQuickAppCategoriesActiveFirst();
       renderQuickAppCategories();
+    }
+    // Recovery button - if every category ends up hidden (e.g. from a
+    // config saved while a display bug was making every row look/act
+    // identical), this gets back to a usable state in one click instead of
+    // ticking each one by hand. Still needs Save Changes to persist.
+    function showAllQuickAppCategories() {
+      quickAppCategories.forEach((c) => { c.hidden = false; });
+      renderQuickAppCategories();
+      showActionToast('✓', 'All categories shown - click Save Changes to make it stick.');
     }
     function moveQuickAppCategory(i, dir) {
       const j = i + dir;
