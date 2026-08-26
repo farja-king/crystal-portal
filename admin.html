@@ -2964,6 +2964,13 @@
       renderQuickAppHomeTiles();
     }
 
+    // Which category (by name) is currently expanded to show its products,
+    // the products.js group_by_code=1 result for it, and which single
+    // variant row (by id) is mid-edit - see toggleQuickAppCategoryItems.
+    let quickAppExpandedCategory = null;
+    let quickAppCategoryItems = [];
+    let quickAppItemEditingId = null;
+
     function renderQuickAppCategories() {
       const el = document.getElementById('quickapp-categories');
       if (!quickAppCategories.length) {
@@ -2973,16 +2980,115 @@
       el.innerHTML = quickAppCategories
         .map((c, i) => {
           const hidden = c.hidden;
-          return `<div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0">
-            <input type="checkbox" ${hidden ? '' : 'checked'} onchange="toggleQuickAppCategory(${i})" title="Ticked = visible in the app. Untick to hide." class="rounded border-slate-300" />
-            <span class="flex-1 text-sm ${hidden ? 'text-slate-400 line-through' : 'text-slate-800'}">${escapeHtml(c.name)}${hidden ? ' <span class="text-[10px] font-normal not-italic">(hidden)</span>' : ''}</span>
-            <button type="button" onclick="renameQuickAppCategory(${i})" title="Rename" class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 text-xs">✎</button>
-            <button type="button" onclick="deleteQuickAppCategory(${i})" title="Delete category" class="w-7 h-7 rounded-full border border-rose-200 text-rose-600 text-xs">🗑</button>
-            <button type="button" onclick="moveQuickAppCategory(${i},-1)" ${i === 0 ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↑</button>
-            <button type="button" onclick="moveQuickAppCategory(${i},1)" ${i === quickAppCategories.length - 1 ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↓</button>
+          const expanded = quickAppExpandedCategory === c.name;
+          return `<div class="border-b border-slate-100 last:border-0">
+            <div class="flex items-center gap-2 py-2">
+              <input type="checkbox" ${hidden ? '' : 'checked'} onchange="toggleQuickAppCategory(${i})" title="Ticked = visible in the app. Untick to hide." class="rounded border-slate-300" />
+              <span class="flex-1 text-sm ${hidden ? 'text-slate-400 line-through' : 'text-slate-800'}">${escapeHtml(c.name)}${hidden ? ' <span class="text-[10px] font-normal not-italic">(hidden)</span>' : ''}</span>
+              <button type="button" onclick="toggleQuickAppCategoryItems('${toAttrToken(c.name)}')" title="View/edit items in this category" class="w-7 h-7 rounded-full border ${expanded ? 'border-indigo-400 text-indigo-600 bg-indigo-50' : 'border-slate-300 text-slate-600'} text-xs">👁</button>
+              <button type="button" onclick="renameQuickAppCategory(${i})" title="Rename" class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 text-xs">✎</button>
+              <button type="button" onclick="deleteQuickAppCategory(${i})" title="Delete category" class="w-7 h-7 rounded-full border border-rose-200 text-rose-600 text-xs">🗑</button>
+              <button type="button" onclick="moveQuickAppCategory(${i},-1)" ${i === 0 ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↑</button>
+              <button type="button" onclick="moveQuickAppCategory(${i},1)" ${i === quickAppCategories.length - 1 ? 'disabled' : ''} class="w-7 h-7 rounded-full border border-slate-300 text-slate-600 disabled:opacity-30">↓</button>
+            </div>
+            ${expanded ? `<div class="pb-3 pl-2">${renderQuickAppCategoryItemsPanel(c.name)}</div>` : ''}
           </div>`;
         })
         .join('');
+    }
+
+    async function toggleQuickAppCategoryItems(nameToken) {
+      const name = fromAttrToken(nameToken);
+      if (quickAppExpandedCategory === name) {
+        quickAppExpandedCategory = null;
+        renderQuickAppCategories();
+        return;
+      }
+      quickAppExpandedCategory = name;
+      quickAppItemEditingId = null;
+      await loadQuickAppCategoryItems(name);
+    }
+
+    async function loadQuickAppCategoryItems(name) {
+      quickAppCategoryItems = null; // null = still loading, [] = loaded and empty
+      renderQuickAppCategories();
+      try {
+        const res = await fetch(API_PRODUCTS_URL + '?category=' + encodeURIComponent(name) + '&item_type=garment&group_by_code=1');
+        const data = await res.json();
+        quickAppCategoryItems = data.results || [];
+      } catch (e) {
+        quickAppCategoryItems = [];
+      }
+      if (quickAppExpandedCategory === name) renderQuickAppCategories();
+    }
+
+    function renderQuickAppCategoryItemsPanel(name) {
+      if (quickAppExpandedCategory !== name) return '';
+      if (quickAppCategoryItems === null) return '<p class="text-xs text-slate-400 py-2">Loading items…</p>';
+      if (!quickAppCategoryItems.length) return '<p class="text-xs text-slate-400 py-2">No garments in this category yet.</p>';
+      return quickAppCategoryItems
+        .map((group) => `
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-2 mb-2">
+            <div class="text-xs font-semibold text-slate-700 mb-1">${escapeHtml(group.title)} <span class="font-normal text-slate-400">(${escapeHtml(group.supplier_code || 'no code')})</span></div>
+            ${group.variants.map((v) => renderQuickAppItemRow(v)).join('')}
+          </div>
+        `)
+        .join('');
+    }
+
+    function renderQuickAppItemRow(v) {
+      if (quickAppItemEditingId === v.id) {
+        return `<div class="flex flex-wrap items-center gap-1 py-1">
+          <input id="qa-item-colour-${v.id}" type="text" value="${escapeAttr(v.colour || '')}" placeholder="Colour" class="w-24 rounded border border-slate-300 px-2 py-1 text-xs" />
+          <input id="qa-item-size-${v.id}" type="text" value="${escapeAttr(v.size || '')}" placeholder="Size" class="w-16 rounded border border-slate-300 px-2 py-1 text-xs" />
+          <input id="qa-item-sell-${v.id}" type="number" step="0.01" min="0" value="${v.sell_price ?? ''}" placeholder="Sell £" class="w-20 rounded border border-slate-300 px-2 py-1 text-xs" />
+          <button type="button" onclick="saveQuickAppItemEdit('${v.id}')" class="text-xs font-semibold text-indigo-600">Save</button>
+          <button type="button" onclick="quickAppItemEditingId = null; renderQuickAppCategories();" class="text-xs text-slate-500">Cancel</button>
+        </div>`;
+      }
+      const variant = [v.colour, v.size].filter(Boolean).join(' / ') || '-';
+      return `<div class="flex items-center gap-2 py-1 text-xs">
+        <span class="flex-1 text-slate-700">${escapeHtml(variant)}</span>
+        <span class="text-slate-500">£${Number(v.sell_price || 0).toFixed(2)}</span>
+        <button type="button" onclick="quickAppItemEditingId = '${v.id}'; renderQuickAppCategories();" class="text-slate-500 hover:text-indigo-600">✎</button>
+        <button type="button" onclick="deleteQuickAppItem('${v.id}')" class="text-slate-500 hover:text-rose-600">🗑</button>
+      </div>`;
+    }
+
+    async function saveQuickAppItemEdit(id) {
+      const colour = document.getElementById('qa-item-colour-' + id).value.trim();
+      const size = document.getElementById('qa-item-size-' + id).value.trim();
+      const sellRaw = document.getElementById('qa-item-sell-' + id).value;
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, colour, size, sell_price: sellRaw === '' ? null : Number(sellRaw) }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        quickAppItemEditingId = null;
+        showActionToast('✓', 'Saved.');
+        await loadQuickAppCategoryItems(quickAppExpandedCategory);
+      } catch (e) {
+        showActionToast('⚠', 'Could not save: ' + e.message);
+      }
+    }
+
+    async function deleteQuickAppItem(id) {
+      const ok = await confirmModal('Delete this variant? This removes it from the Garments catalog entirely, not just from the app.');
+      if (!ok) return;
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        showActionToast('✓', 'Deleted.');
+        await loadQuickAppCategoryItems(quickAppExpandedCategory);
+      } catch (e) {
+        showActionToast('⚠', 'Could not delete: ' + e.message);
+      }
     }
     // Keeps active (visible) categories grouped above hidden ones, in each
     // group's existing relative order - hidden ones sink to the bottom
