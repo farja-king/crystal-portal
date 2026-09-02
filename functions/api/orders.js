@@ -1322,6 +1322,18 @@ export async function onRequest(context) {
         await db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).bind(...orderIds).run();
       }
 
+      // "Empty Trash" - permanently deletes every trashed quote/invoice in
+      // one request rather than the Trash tab looping one DELETE per
+      // selected row client-side. Reuses the exact same cleanup as a normal
+      // permanent delete, just scoped to "everything currently trashed"
+      // instead of an explicit id list.
+      if (data.purge_all_trash && data.confirm) {
+        const { results: trashed } = await db.prepare("SELECT id FROM orders WHERE deleted_at IS NOT NULL").all();
+        const trashedIds = trashed.map((r) => r.id);
+        if (trashedIds.length) await permanentlyDeleteOrders(trashedIds);
+        return json({ success: true, purged: trashedIds.length });
+      }
+
       if (Array.isArray(ids) && ids.length) {
         if (permanent) {
           await permanentlyDeleteOrders(ids);

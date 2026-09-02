@@ -287,7 +287,37 @@ export async function onRequest(context) {
     // permanent:true is explicitly sent (from the trash view's own "Delete
     // forever", or the deliberate cleanup pass this whole thing exists for).
     if (request.method === "DELETE") {
-      const { id, permanent } = await request.json();
+      const data = await request.json();
+      const { id, permanent } = data;
+      // "Empty Trash" - permanently deletes every trashed customer in one
+      // request. Same R2 cleanup as the single-customer permanent delete
+      // below, just gathered across every trashed row first. See
+      // products.js/orders.js/stock.js's own purge_all_trash for why this
+      // exists - the Trash tab's per-row bulk delete loops one request per
+      // selected row client-side.
+      if (data.purge_all_trash && data.confirm) {
+        const { results: trashedCustomers } = await db.prepare(
+          "SELECT id FROM customers WHERE deleted_at IS NOT NULL"
+        ).all();
+        const trashedIds = trashedCustomers.map((r) => r.id);
+        if (trashedIds.length && env.DESIGN_FILES) {
+          try {
+            const placeholders = trashedIds.map(() => "?").join(",");
+            const { results: files } = await db.prepare(
+              `SELECT r2_key FROM design_files WHERE customer_id IN (${placeholders})`
+            ).bind(...trashedIds).all();
+            await Promise.all(files.map((f) => env.DESIGN_FILES.delete(f.r2_key).catch(() => {})));
+            await db.prepare(`DELETE FROM design_files WHERE customer_id IN (${placeholders})`).bind(...trashedIds).run();
+          } catch (e) {
+            // design_files table doesn't exist yet - nothing to clean up
+          }
+        }
+        if (trashedIds.length) {
+          const placeholders = trashedIds.map(() => "?").join(",");
+          await db.prepare(`DELETE FROM customers WHERE id IN (${placeholders})`).bind(...trashedIds).run();
+        }
+        return new Response(JSON.stringify({ success: true, purged: trashedIds.length }), { headers: corsHeaders });
+      }
       if (permanent) {
         // Their design file backups (functions/api/design-files.js) are
         // scoped to this customer_id and nothing else references them -

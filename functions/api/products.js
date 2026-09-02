@@ -686,6 +686,17 @@ export async function onRequest(context) {
         }
         return json({ success: true });
       }
+      // "Empty Trash" - a real bulk-import rollback (see the comment on
+      // `?trash=1 ... LIMIT 500` above) can leave thousands of trashed rows
+      // behind. The Trash tab's per-row bulk delete only ever handles what's
+      // currently selected/loaded (max 500 at a time, one DELETE request per
+      // row from the browser) - useless at that scale. This wipes every
+      // trashed product in a single query instead, same confirm-flag pattern
+      // as the supplier/reset_prices wipes below.
+      if (data.purge_all_trash && data.confirm) {
+        const res = await db.prepare("DELETE FROM products WHERE deleted_at IS NOT NULL").run();
+        return json({ success: true, purged: res.meta ? res.meta.changes : null });
+      }
       // Clearing a supplier is how a bad import gets rolled back.
       if (data.supplier && data.confirm) {
         const res = await db.prepare("DELETE FROM products WHERE supplier = ?").bind(data.supplier).run();

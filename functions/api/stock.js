@@ -329,6 +329,18 @@ export async function onRequest(context) {
 
     if (request.method === "DELETE") {
       const data = await request.json();
+      // "Empty Trash" - permanently deletes every trashed stock item in one
+      // request, same reasoning as products.js/orders.js/customers.js's own
+      // purge_all_trash - the Trash tab's per-row bulk delete loops one
+      // request per selected row client-side, unusable once trash grows
+      // past a handful of items.
+      if (data.purge_all_trash && data.confirm) {
+        await db.prepare(
+          "DELETE FROM stock_movements WHERE stock_item_id IN (SELECT id FROM stock_items WHERE deleted_at IS NOT NULL)"
+        ).run();
+        const res = await db.prepare("DELETE FROM stock_items WHERE deleted_at IS NOT NULL").run();
+        return json({ success: true, purged: res.meta ? res.meta.changes : null });
+      }
       if (!data.id) return json({ error: "id is required" }, 400);
       if (data.permanent) {
         await db.prepare("DELETE FROM stock_movements WHERE stock_item_id = ?").bind(data.id).run();

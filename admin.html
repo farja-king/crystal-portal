@@ -1718,9 +1718,19 @@
         </div>
         <div class="flex flex-col items-end gap-1">
           <div id="refreshed-trash" class="text-xs text-slate-400"></div>
-          <button onclick="loadTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            🔄 Refresh
-          </button>
+          <div class="flex gap-2">
+            <!-- Wipes every category server-side in one request each -
+                 see emptyTrash(). The per-row "Delete selected" bulk action
+                 above only ever handles what's currently ticked/loaded
+                 (garments alone can run into the thousands after a catalog
+                 re-import), so this is the actual "clean slate" button. -->
+            <button onclick="emptyTrash()" title="Permanently delete everything in Trash, across every category" class="bg-white border border-rose-300 hover:bg-rose-50 text-rose-600 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              🗑️ Empty Trash
+            </button>
+            <button onclick="loadTrash()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+              🔄 Refresh
+            </button>
+          </div>
         </div>
       </div>
       <div id="trash-filter-tabs" class="flex flex-wrap gap-2 mb-4"></div>
@@ -11994,11 +12004,18 @@
     async function bulkPermanentlyDeleteFromTrash() {
       const keys = [...selectedTrashKeys];
       if (!keys.length) return;
-      const names = keys.map((key) => {
+      // Listing every single name breaks down once more than a handful are
+      // selected (a bulk-import rollback can select hundreds) - the joined
+      // string became long enough to make the confirm dialog itself
+      // unreadable/unusable. Cap the preview and just say how many more.
+      const allNames = keys.map((key) => {
         const entry = trashRowsById[key];
         return entry ? TRASH_TYPES[entry.type].title(entry.row) : key;
-      }).join(', ');
-      if (!(await confirmModal(`Permanently delete ${keys.length} item(s)?\n\n${names}\n\nThis cannot be undone - there is no further recovery after this.`))) return;
+      });
+      const PREVIEW_MAX = 15;
+      const namesPreview = allNames.slice(0, PREVIEW_MAX).join(', ')
+        + (allNames.length > PREVIEW_MAX ? `, and ${allNames.length - PREVIEW_MAX} more` : '');
+      if (!(await confirmModal(`Permanently delete ${keys.length} item(s)?\n\n${namesPreview}\n\nThis cannot be undone - there is no further recovery after this.`))) return;
 
       let failed = 0;
       for (const key of keys) {
@@ -12019,6 +12036,49 @@
       loadTrash();
       if (failed) showActionToast('⚠', `${failed} item(s) could not be deleted.`);
       else showActionToast('✓', `${keys.length} item(s) permanently deleted.`);
+    }
+
+    // The real "clean slate" action - wipes every trashed row in every
+    // category in one request each (see purge_all_trash on orders.js/
+    // products.js/stock.js/customers.js/design-proofs.js), rather than the
+    // per-row bulk delete above, which loops one HTTP request per selected
+    // row and only ever covers what's currently ticked/loaded - useless
+    // once a category's trash runs into the hundreds or thousands (a
+    // catalog re-import can leave thousands of old garment rows behind).
+    async function emptyTrash() {
+      if (!(await confirmModal('Permanently delete EVERYTHING in Trash - all quotes/invoices, stock, garments/services, customers and design proofs currently trashed?\n\nThis cannot be undone - there is no further recovery after this.'))) return;
+
+      const targets = [
+        { label: 'quotes/invoices', url: API_ORDERS_URL },
+        { label: 'stock items', url: API_STOCK_URL },
+        { label: 'garments/services', url: API_PRODUCTS_URL },
+        { label: 'customers', url: API_CUSTOMERS_URL },
+        { label: 'design proofs', url: API_DESIGN_PROOFS_URL },
+      ];
+      const results = await Promise.all(targets.map(async (t) => {
+        try {
+          const res = await fetch(t.url, {
+            method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ purge_all_trash: true, confirm: true }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+          return { ...t, purged: data.purged || 0, ok: true };
+        } catch (e) {
+          return { ...t, ok: false };
+        }
+      }));
+
+      selectedTrashKeys = new Set();
+      loadTrash();
+
+      const failedLabels = results.filter((r) => !r.ok).map((r) => r.label);
+      const totalPurged = results.reduce((sum, r) => sum + (r.purged || 0), 0);
+      if (failedLabels.length) {
+        showActionToast('⚠', `Trash emptied for most categories, but ${failedLabels.join(', ')} failed - try again.`);
+      } else {
+        showActionToast('✓', `Trash emptied - ${totalPurged} item(s) permanently deleted.`);
+      }
     }
 
     // Full version history for one quote/invoice's design proof(s) - v1, v2,

@@ -612,6 +612,23 @@ export async function onRequest(context) {
         return json({ success: true, purged: orphaned.length });
       }
 
+      // "Empty Trash" - permanently deletes every trashed proof (not just
+      // orphaned ones) in one request, mirroring purge_orphaned above. See
+      // products.js/orders.js/stock.js/customers.js's own purge_all_trash -
+      // the Trash tab's per-row bulk delete loops one request per selected
+      // row client-side.
+      if (data.purge_all_trash && data.confirm) {
+        const { results: trashed } = await db.prepare(
+          "SELECT id, r2_key FROM design_proofs WHERE deleted_at IS NOT NULL"
+        ).all();
+        if (!trashed.length) return json({ success: true, purged: 0 });
+        await Promise.all(trashed.filter((p) => p.r2_key).map((p) => bucket.delete(p.r2_key).catch(() => {})));
+        const ids = trashed.map((p) => p.id);
+        const placeholders = ids.map(() => "?").join(",");
+        await db.prepare(`DELETE FROM design_proofs WHERE id IN (${placeholders})`).bind(...ids).run();
+        return json({ success: true, purged: trashed.length });
+      }
+
       // Deleting from the Design Proofs dashboard row deletes every version
       // on that order at once (data.order_id), not just the latest one the
       // row represents - same reasoning as archive/unarchive above, so an
