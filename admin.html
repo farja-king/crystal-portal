@@ -173,7 +173,7 @@
               <tr class="border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
                 <th class="py-2 pr-4">Invoice</th>
                 <th class="py-2 pr-4">Customer</th>
-                <th class="py-2 pr-4">Due date</th>
+                <th class="py-2 pr-4" title="The invoice's own due date, or - if it has none, e.g. a manual invoice - the date it was invoiced">Due / invoice date</th>
                 <th class="py-2 pr-4">Days overdue</th>
                 <th class="py-2 pr-4">Balance</th>
                 <th class="py-2 pr-4">Reminders</th>
@@ -14134,7 +14134,15 @@
     // like the reminder emails already send individually. Deliberately
     // ignores the Dashboard's date-range picker above (it's always "the
     // current picture", the same as a real aged-debtors report would be) -
-    // due_date is what ages, not created_at.
+    // due_date is what ages when it's set.
+    //
+    // A manual invoice (functions/api/manual-invoice.js - e.g. Karl
+    // Sports', invoiced elsewhere and just uploaded here) can be saved
+    // with no due date typed in at all, since that field is optional
+    // there. This used to skip such an invoice out of the report entirely
+    // ("can't age it, skip rather than guess") - Martin wants it counted
+    // regardless, aged from when it was actually invoiced instead. So:
+    // due_date if set, else invoiced_at, else created_at.
     function dashAgedBuckets() {
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const buckets = [
@@ -14149,11 +14157,13 @@
         if (o.doc_type !== 'invoice' || o.paid_status === 'paid') return;
         const balance = Number(o.total || 0) - Number(o.amount_paid || 0);
         if (balance <= 0.004) return;
-        if (!o.due_date) return; // no due date set - can't age it, skip rather than guess
-        const due = new Date(o.due_date); due.setHours(0, 0, 0, 0);
-        const daysOverdue = Math.round((today - due) / 86400000);
+        const usedDueDate = !!o.due_date;
+        const agingFrom = o.due_date || o.invoiced_at || o.created_at;
+        if (!agingFrom) return; // no due date AND no invoice date at all - shouldn't happen, nothing to age from
+        const ref = new Date(agingFrom); ref.setHours(0, 0, 0, 0);
+        const daysOverdue = Math.round((today - ref) / 86400000);
         const bucket = buckets.find((b) => daysOverdue >= b.min && daysOverdue <= b.max);
-        rows.push({ order: o, balance, daysOverdue, bucketKey: bucket ? bucket.key : 'b4' });
+        rows.push({ order: o, balance, daysOverdue, bucketKey: bucket ? bucket.key : 'b4', agingFrom, usedDueDate });
       });
       return { buckets, rows };
     }
@@ -14193,7 +14203,7 @@
         return `<tr>
           <td class="py-2 pr-4 font-medium text-slate-900">${escapeHtml(o.invoice_number || '')}</td>
           <td class="py-2 pr-4">${escapeHtml(o.customer_name || '')}</td>
-          <td class="py-2 pr-4">${escapeHtml(ukDate(o.due_date))}</td>
+          <td class="py-2 pr-4">${escapeHtml(ukDate(r.agingFrom))}${r.usedDueDate ? '' : ' <span class="text-slate-400 text-xs">(invoice date)</span>'}</td>
           <td class="py-2 pr-4 ${r.daysOverdue > 0 ? 'text-rose-600 font-semibold' : 'text-slate-500'}">${r.daysOverdue > 0 ? r.daysOverdue + ' days' : 'Not yet due'}</td>
           <td class="py-2 pr-4 font-semibold">${money(r.balance)}</td>
           <td class="py-2 pr-4 text-xs">${o.reminder_paused ? '<span class="text-slate-400">🔕 Paused</span>' : '<span class="text-slate-500">Active</span>'}</td>
