@@ -258,6 +258,21 @@ export function buildOrderPdf(o, customerAddr) {
         doc.line(l, { x: COL_ITEM_X + 8, size: 8.5, gray: 0.35, gap: 10 });
       });
     });
+
+    // Per-line discount - separate from the order-level Discount row in
+    // the totals card further down. item.line_total (what actually rolls
+    // up into the order subtotal) is already net of this, so nothing else
+    // needs adjusting - it's purely an added disclosure row.
+    if (item.discount_amount > 0.001) {
+      const discStr = "-" + money(item.discount_amount);
+      doc.row(
+        [
+          { x: COL_ITEM_X + 8, text: "Discount", size: 8.5, gray: 0.35 },
+          { x: numericRightX(discStr, 8.5, RIGHT_EDGE), text: discStr, size: 8.5, gray: 0.35 },
+        ],
+        { gap: 11 }
+      );
+    }
     doc.gap(3);
   });
 

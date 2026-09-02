@@ -473,7 +473,15 @@ export async function onRequest(context) {
         <td style="padding:6px 4px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569;">${money(d.unitPrice * d.qty)}</td>
       </tr>`).join("");
 
-      return garmentRow + decorationRows;
+      // Per-line discount - separate from the order-level Discount line
+      // further down. item.line_total (what rolls up into the order
+      // subtotal) is already net of this, so it's purely a disclosure row.
+      const lineDiscountRow = item.discount_amount > 0.001
+        ? `<tr><td colspan="3" style="padding:6px 4px 6px 16px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569;">Discount</td>
+             <td style="padding:6px 4px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#475569;">-${money(item.discount_amount)}</td></tr>`
+        : "";
+
+      return garmentRow + decorationRows + lineDiscountRow;
     }).join("");
 
     const discountLine = o.discount_amount ? `Discount: -${money(o.discount_amount)}` : "";

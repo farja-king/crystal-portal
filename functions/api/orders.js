@@ -193,6 +193,21 @@ export async function onRequest(context) {
         lineTotal = round2(qty * (unitPrice + decorationTotal));
       }
 
+      // Per-line discount - separate from the order-level discount_pct/
+      // discount_flat above (which still applies on top of the already-
+      // discounted subtotal, same as before). Martin wanted to knock money
+      // off one specific garment/service line, not always the whole order.
+      // Applied against this line's own gross total (garment + decoration,
+      // the `lineTotal` just computed above) - discount_amount is what
+      // every render surface (admin.html, document-pdf.js, send-email.js)
+      // needs to reconcile Qty×Unit + Decoration - Discount = Total on the
+      // line, same as the order-level discount already reconciles against
+      // the order subtotal.
+      const line_discount_pct = Math.min(100, Math.max(0, Number(item.discount_pct) || 0));
+      const line_discount_flat = Math.max(0, Number(item.discount_flat) || 0);
+      const line_discount_amount = round2(lineTotal * (line_discount_pct / 100) + line_discount_flat);
+      const netLineTotal = Math.max(0, round2(lineTotal - line_discount_amount));
+
       return {
         source,
         product_id: item.product_id || null,
@@ -205,7 +220,10 @@ export async function onRequest(context) {
         unit_price: unitPrice,
         breakdown,
         decorations,
-        line_total: lineTotal,
+        discount_pct: line_discount_pct,
+        discount_flat: line_discount_flat,
+        discount_amount: line_discount_amount,
+        line_total: netLineTotal,
         // Marks a line picked from a customer's own saved price list (see
         // products.customer_id) rather than the shared garment catalog -
         // carried through so re-opening this quote in the builder renders
