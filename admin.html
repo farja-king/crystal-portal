@@ -2385,6 +2385,22 @@
           <div id="cv-catalog-picker-results" class="mb-2 max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-lg empty:border-0"></div>
           <div id="cv-catalog-picker-variants" class="hidden">
             <p id="cv-catalog-picker-product-name" class="text-sm font-semibold text-slate-800 mb-2"></p>
+            <!-- Same action row as the bottom one below the tier list -
+                 several price tiers, each expandable into its own
+                 colour/size rows, can run well past a screen's height, and
+                 scrolling all the way down just to hit Add/Cancel after
+                 picking was the actual complaint this duplicates to fix.
+                 Both rows call the exact same functions and both message
+                 <p>s share the .cv-catalog-picker-msg class (kept in sync
+                 by setCvCatalogPickerMsg()) rather than an id, since an id
+                 must be unique in the DOM. -->
+            <div class="flex gap-2 items-center mb-3">
+              <button type="button" onclick="addCvCatalogPickerVariants()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+                Add selected to this customer
+              </button>
+              <button type="button" onclick="toggleCvCatalogPicker()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Cancel</button>
+              <p class="cv-catalog-picker-msg text-xs text-red-600"></p>
+            </div>
             <!-- One block per price tier (a catalog code can have more than
                  one, e.g. standard sizes vs a 3XL-4XL surcharge tier) - pick
                  the exact colour(s) and size(s) actually being bought for
@@ -2398,7 +2414,7 @@
                 Add selected to this customer
               </button>
               <button type="button" onclick="toggleCvCatalogPicker()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">Cancel</button>
-              <p id="cv-catalog-picker-msg" class="text-xs text-red-600"></p>
+              <p class="cv-catalog-picker-msg text-xs text-red-600"></p>
             </div>
           </div>
         </div>
@@ -4692,14 +4708,25 @@
     // loadCvCatalogPickerVariants below).
     let cvCatalogPickerSearchGroups = [];
 
+    // Mirrors a message onto both the top and bottom "Add selected to this
+    // customer" rows (see the duplicated action row in the modal markup) -
+    // there are two of these <p>s now, sharing a class rather than an id
+    // since an id has to be unique, so any status message has to go out to
+    // both directly instead of a single getElementById.
+    function setCvCatalogPickerMsg(text, cls) {
+      document.querySelectorAll('.cv-catalog-picker-msg').forEach((el) => {
+        el.textContent = text;
+        if (cls !== undefined) el.className = cls;
+      });
+    }
+
     async function loadCvCatalogPickerVariants(groupIndex) {
       const wrap = document.getElementById('cv-catalog-picker-variants');
       const tiersEl = document.getElementById('cv-catalog-picker-tiers');
-      const msg = document.getElementById('cv-catalog-picker-msg');
       const group = cvCatalogPickerSearchGroups[groupIndex];
       if (!group) return;
       const code = group.supplier_code;
-      msg.textContent = '';
+      setCvCatalogPickerMsg('');
       wrap.classList.remove('hidden');
       tiersEl.innerHTML = '<p class="p-3 text-center text-slate-400 text-sm">Loading…</p>';
       document.getElementById('cv-catalog-picker-results').innerHTML = '';
@@ -4836,7 +4863,6 @@
     }
 
     async function addCvCatalogPickerVariants() {
-      const msg = document.getElementById('cv-catalog-picker-msg');
       if (!cvCatalogCustomerId) return;
 
       const noColourSizeData = !cvCatalogPickerColourOptions.length && !cvCatalogPickerSizeOptions.length;
@@ -4856,10 +4882,9 @@
         });
       });
 
-      if (!toAdd.length) { msg.textContent = 'Choose at least one colour and size to add.'; return; }
+      if (!toAdd.length) { setCvCatalogPickerMsg('Choose at least one colour and size to add.', 'cv-catalog-picker-msg text-xs text-red-600'); return; }
 
-      msg.className = 'text-xs text-slate-500';
-      msg.textContent = 'Adding…';
+      setCvCatalogPickerMsg('Adding…', 'cv-catalog-picker-msg text-xs text-slate-500');
 
       let failed = 0;
       for (const item of toAdd) {
@@ -4890,8 +4915,10 @@
         }
       }
 
-      msg.className = failed ? 'text-xs text-red-600' : 'text-xs text-emerald-600';
-      msg.textContent = failed ? `${failed} of ${toAdd.length} could not be added.` : `Added ${toAdd.length} item(s) to this customer's price list.`;
+      setCvCatalogPickerMsg(
+        failed ? `${failed} of ${toAdd.length} could not be added.` : `Added ${toAdd.length} item(s) to this customer's price list.`,
+        failed ? 'cv-catalog-picker-msg text-xs text-red-600' : 'cv-catalog-picker-msg text-xs text-emerald-600'
+      );
       loadCustomerCatalogItems(cvCatalogCustomerId);
       if (!failed) setTimeout(() => { toggleCvCatalogPicker(); }, 900);
     }
