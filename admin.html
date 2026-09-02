@@ -2202,6 +2202,36 @@
         </label>
       </div>
 
+      <!-- Only offered when creating a brand-new invoice (hidden for quotes,
+           and explicitly hidden again in editOrderInBuilder - marking an
+           EXISTING invoice paid already has its own Record Payment button,
+           this is purely a shortcut for one that's already settled, e.g.
+           cash in hand, at the moment of creating it). Checking this records
+           a real payment for the full total right after save - see
+           saveOrder()'s POST branch - same as opening Record Payment
+           straight after, just without the extra round trip. -->
+      <div id="ord-already-paid-field" class="hidden mb-4 max-w-2xl border border-slate-200 rounded-lg p-3 bg-slate-50">
+        <label class="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+          <input type="checkbox" id="ord-already-paid" onchange="toggleOrdAlreadyPaidFields()" class="rounded border-slate-300">
+          Already paid - mark as paid on save
+        </label>
+        <div id="ord-already-paid-fields" class="hidden grid grid-cols-2 gap-3 mt-2">
+          <label class="text-sm block">
+            <span class="block font-medium text-slate-700 mb-1">Paid on</span>
+            <input type="date" id="ord-paid-date" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+          </label>
+          <label class="text-sm block">
+            <span class="block font-medium text-slate-700 mb-1">Method</span>
+            <select id="ord-paid-method" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900">
+              <option>Bank Transfer</option>
+              <option>Cash</option>
+              <option>Card</option>
+              <option>Other</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
       <label class="text-sm block mb-4">
         <span class="flex items-center justify-between mb-1">
           <span class="font-medium text-slate-700">Notes</span>
@@ -9507,6 +9537,18 @@
       // still a quote (see followup_interval_days in quote-followups.js).
       // Once converted to an invoice there's nothing left to "follow up on".
       document.getElementById('ord-followup-interval-field').classList.toggle('hidden', type === 'invoice');
+      // "Already paid" shortcut - only makes sense for a brand-new invoice
+      // (editOrderInBuilder hides this again explicitly for an existing
+      // one, which already has its own Record Payment button instead).
+      document.getElementById('ord-already-paid-field').classList.toggle('hidden', type === 'quote');
+    }
+
+    function toggleOrdAlreadyPaidFields() {
+      const checked = document.getElementById('ord-already-paid').checked;
+      document.getElementById('ord-already-paid-fields').classList.toggle('hidden', !checked);
+      if (checked && !document.getElementById('ord-paid-date').value) {
+        document.getElementById('ord-paid-date').value = new Date().toISOString().slice(0, 10);
+      }
     }
 
     async function saveOrder() {
@@ -9515,6 +9557,13 @@
       const customer = customersById[customerId];
       if (!customer) { msg.className = 'text-sm mt-3 text-red-600'; msg.textContent = 'Select a customer first.'; return; }
       if (!orderLines.length) { msg.className = 'text-sm mt-3 text-red-600'; msg.textContent = 'Add at least one garment line.'; return; }
+
+      // Read before anything below resets these fields - see the POST
+      // branch further down, which fires a real record_payment PUT for the
+      // full total right after this invoice is created.
+      const markAlreadyPaid = newOrderDocType === 'invoice' && !editingExistingOrderId && document.getElementById('ord-already-paid').checked;
+      const alreadyPaidDate = document.getElementById('ord-paid-date').value;
+      const alreadyPaidMethod = document.getElementById('ord-paid-method').value;
 
       const payload = {
         customer_id: customer.id,
@@ -9585,6 +9634,10 @@
           document.getElementById('ord-production-due-date').value = '';
           document.getElementById('ord-reminder-interval').value = '';
           document.getElementById('ord-followup-interval').value = '';
+          document.getElementById('ord-already-paid').checked = false;
+          document.getElementById('ord-already-paid-fields').classList.add('hidden');
+          document.getElementById('ord-paid-date').value = '';
+          document.getElementById('ord-paid-method').value = 'Bank Transfer';
           document.getElementById('ord-customer').value = '';
           renderOrderCustomerPicker();
           document.getElementById('ord-discount').value = 0;
@@ -9608,6 +9661,32 @@
           // instead of making Martin go find this document again afterward
           // just to attach one. See openNewQuoteProofModal.
           openNewQuoteProofModal(data.id, docNumber, customer.name, savedDocType);
+
+          // "Already paid" shortcut - a real record_payment for the full
+          // total, same action the Record Payment modal itself uses, just
+          // fired immediately instead of making Martin open that separately
+          // right after creating an invoice that's already settled (e.g.
+          // cash taken on collection). Best-effort: the invoice itself is
+          // already saved either way, a failed payment call here just means
+          // recording it manually afterward instead of losing the invoice.
+          if (markAlreadyPaid) {
+            try {
+              const payRes = await fetch(API_ORDERS_URL, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  id: data.id, action: 'record_payment',
+                  amount: data.total,
+                  method: alreadyPaidMethod,
+                  received_at: alreadyPaidDate ? new Date(alreadyPaidDate).toISOString() : new Date().toISOString(),
+                }),
+              });
+              const payData = await payRes.json();
+              if (!payRes.ok || !payData.success) throw new Error(payData.error || 'Payment failed');
+              showActionToast('✓', `${docNumber} marked as paid.`);
+            } catch (e) {
+              showActionToast('⚠', `${docNumber} saved, but marking it paid failed - record the payment manually.`);
+            }
+          }
         }
         loadOrders();
         // If this quote/invoice was edited from inside a customer's profile
@@ -9761,6 +9840,13 @@
       document.getElementById('ord-production-due-date').value = o.production_due_date || '';
       document.getElementById('ord-reminder-interval').value = o.reminder_interval_days || '';
       document.getElementById('ord-followup-interval').value = o.followup_interval_days || '';
+      // Not offered for an existing invoice - it already has its own
+      // Record Payment button, and there's no "on save" moment here to
+      // hang this shortcut off (saveOrder()'s PUT branch never touches
+      // payments at all).
+      document.getElementById('ord-already-paid-field').classList.add('hidden');
+      document.getElementById('ord-already-paid').checked = false;
+      document.getElementById('ord-already-paid-fields').classList.add('hidden');
       document.getElementById('ord-status').value = o.status || 'draft';
       document.getElementById('ord-status-field').classList.remove('hidden');
       document.getElementById('ord-save-btn').textContent = '💾 Update ' + (o.doc_type === 'invoice' ? 'Invoice' : 'Quote');
@@ -9867,6 +9953,10 @@
       document.getElementById('ord-production-due-date').value = '';
       document.getElementById('ord-reminder-interval').value = '';
       document.getElementById('ord-followup-interval').value = '';
+      document.getElementById('ord-already-paid').checked = false;
+      document.getElementById('ord-already-paid-fields').classList.add('hidden');
+      document.getElementById('ord-paid-date').value = '';
+      document.getElementById('ord-paid-method').value = 'Bank Transfer';
       orderCustomerItems = [];
       orderCustomerName = '';
       orderLineOpenVariantPicker = null;
