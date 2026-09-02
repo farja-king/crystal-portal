@@ -146,7 +146,16 @@ export async function onRequest(context) {
       await db.prepare(`INSERT INTO schema_migrations (id) VALUES ('products_backfill_service_item_type')`).run();
     }
 
-    // 6k+ rows, so every list view is filtered/paged - these carry that load.
+    // 98k+ rows now, so every list view is filtered/paged - these carry that
+    // load. idx_products_browse specifically backs the Garment Catalog's
+    // main browse query (WHERE deleted_at IS NULL [AND item_type = ?] ...
+    // GROUP BY supplier_code ORDER BY MIN(supplier), supplier_code LIMIT ?
+    // OFFSET ?, see the "no code/id/customer_id" branch in the GET handler
+    // below) - lets that be a cheap index walk that stops after `limit`
+    // rows instead of a full-table scan+sort. This is what actually blew
+    // through the D1 free plan's 5M rows_read/day limit: every catalog page
+    // turn used to pull every matching row (up to the whole 98k-row table)
+    // into the Worker and paginate in JS.
     await db.batch([
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_code ON products (supplier_code)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_supplier ON products (supplier)"),
@@ -154,6 +163,7 @@ export async function onRequest(context) {
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_brand ON products (brand)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_customer ON products (customer_id)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_deleted ON products (deleted_at)"),
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_products_browse ON products (deleted_at, item_type, supplier, supplier_code)"),
     ]);
 
     // Audit trail for sell_price, added after a sync-job bug silently
@@ -332,9 +342,95 @@ export async function onRequest(context) {
         : Math.min(Math.max(parseInt(p.get("limit") || "50", 10) || 50, 1), 500);
       const offset = Math.max(parseInt(p.get("offset") || "0", 10) || 0, 0);
 
-      // Size needs a garment-aware sort (XS..8XL, not alphabetical - see
-      // sizeRank), which SQL can't express, so the matching rows are pulled
-      // in full, sorted in JS, then paginated by slicing.
+      // A code/id lookup or a customer's own price list is already narrow
+      // (bounded by that exact filter, never the whole shared catalog), so
+      // the original fetch-everything-then-sort-in-JS approach stays as-is
+      // here - it's needed anyway for the garment-aware size sort (see
+      // sizeRank) that SQL can't express, and at this scale it's cheap.
+      //
+      // The general catalog browse (no code/id/customer_id - the Garment
+      // Catalog tab's main view) is the expensive case: it can match the
+      // *entire* shared catalog (98k+ rows in production), and pulling
+      // every matching row into the Worker on every single page turn just
+      // to slice out 50 is what exceeded the D1 free plan's daily
+      // rows_read limit. That path paginates in SQL instead (LIMIT/OFFSET,
+      // backed by idx_products_browse above) so a page only ever reads
+      // the rows it actually needs - the size-aware sort still happens in
+      // JS, just against that one page's rows, not the whole table.
+      if (!code && !idParam && !customerId) {
+        if (p.get("group_by_code")) {
+          // Page of *codes* first (cheap - an index walk that stops after
+          // `limit`), then the full rows for just those codes (bounded by
+          // however many variants those ~50 codes have, not the table size).
+          const codeRows = await db.prepare(
+            `SELECT supplier_code FROM products ${clause} GROUP BY supplier_code ORDER BY MIN(supplier), supplier_code LIMIT ? OFFSET ?`
+          ).bind(...binds, limit, offset).all();
+          const pageCodes = codeRows.results.map((r) => r.supplier_code);
+
+          let pagedGroups = [];
+          if (pageCodes.length) {
+            const codePlaceholders = pageCodes.map(() => "?").join(",");
+            const { results: pageRows } = await db.prepare(
+              `SELECT * FROM products ${clause} AND supplier_code IN (${codePlaceholders}) ORDER BY supplier, supplier_code, colour`
+            ).bind(...binds, ...pageCodes).all();
+            pageRows.sort(compareProducts);
+
+            const indexByCode = new Map();
+            for (const row of pageRows) {
+              let idx = indexByCode.get(row.supplier_code);
+              if (idx === undefined) {
+                idx = pagedGroups.length;
+                indexByCode.set(row.supplier_code, idx);
+                pagedGroups.push({
+                  supplier_code: row.supplier_code,
+                  supplier: row.supplier,
+                  brand: row.brand,
+                  title: row.title,
+                  category: row.category,
+                  variants: [],
+                });
+              }
+              pagedGroups[idx].variants.push(row);
+            }
+            // Variant rows within a code can come back in any order the IN
+            // (...) query happens to return groups in - re-sort the GROUPS
+            // themselves back into the paginated code order.
+            pagedGroups.sort((a, b) => pageCodes.indexOf(a.supplier_code) - pageCodes.indexOf(b.supplier_code));
+          }
+
+          // The exact total (codes + variant rows) only gets recomputed on
+          // the first page of a given filter - it can't change mid-browse,
+          // and a COUNT/GROUP BY still has to examine every matching row
+          // regardless of indexing (that's the one part of this that stays
+          // proportional to the filtered set size). admin.html's
+          // loadCatalog() remembers the last known total and keeps showing
+          // it on later pages of the same search instead of asking again.
+          let total = null, total_variants = null;
+          if (offset === 0) {
+            const totals = await db.prepare(
+              `SELECT COUNT(DISTINCT supplier_code) AS codes, COUNT(*) AS variants FROM products ${clause}`
+            ).bind(...binds).first();
+            total = totals ? totals.codes : 0;
+            total_variants = totals ? totals.variants : 0;
+          }
+
+          return json({ total, total_variants, limit, offset, results: pagedGroups });
+        }
+        // Ungrouped broad browse (group_by_code not requested) falls through
+        // to the same fetch-everything path as the narrow lookups below -
+        // tried applying the same SQL-level LIMIT/OFFSET here too, but
+        // proved out (against a local synthetic dataset, verifying every
+        // page against the old algorithm) that it can shift which exact
+        // rows land on which page right at a colour boundary, since SQL's
+        // ORDER BY supplier, supplier_code, colour doesn't include the
+        // size-rank tiebreak (see sizeRank) - LIMIT applied before that
+        // tiebreak can cut a tied group differently than sorting first
+        // would. Not worth that correctness risk here: this path isn't
+        // what exceeded the D1 quota (loadCatalog always sends
+        // group_by_code=1), so it stays on the safe, already-correct
+        // original behavior.
+      }
+
       const { results: allMatches } = await db.prepare(
         `SELECT * FROM products ${clause} ORDER BY supplier, supplier_code, colour`
       ).bind(...binds).all();
@@ -342,10 +438,12 @@ export async function onRequest(context) {
       allMatches.sort(compareProducts);
 
       // ?group_by_code=1 -> collapse variant rows into one entry per product
-      // code, so 6k+ rows can browse as a few hundred collapsible groups in
-      // the Garment Catalog UI instead of one long flat list. Pagination
-      // then counts codes, not variant rows - total_variants carries the row
-      // count separately, since bulk-pricing scope messages still need it.
+      // code, so a big result set can browse as far fewer collapsible
+      // groups in the Garment Catalog UI instead of one long flat list.
+      // Pagination then counts codes, not variant rows - total_variants
+      // carries the row count separately, since bulk-pricing scope messages
+      // still need it. (Only reached here for a code/id/customer_id-scoped
+      // request - the broad, unscoped browse is handled above instead.)
       if (p.get("group_by_code")) {
         const groups = [];
         const indexByCode = new Map();

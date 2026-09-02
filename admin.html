@@ -6975,8 +6975,15 @@
         const res = await fetch(API_PRODUCTS_URL + '?' + params.toString(), { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
-        catalogTotal = data.total || 0;
-        catalogVariantTotal = data.total_variants || 0;
+        // products.js only recomputes the exact total on the first page of
+        // a given filter (offset 0) - a COUNT/GROUP BY still has to scan
+        // every matching row no matter how the page itself is indexed, and
+        // asking for it again on every page turn was a big part of what
+        // exceeded the D1 daily rows_read limit. data.total/total_variants
+        // come back null on later pages - keep showing the total already
+        // known from page 1 of this same search instead of zeroing it out.
+        if (data.total !== null && data.total !== undefined) catalogTotal = data.total;
+        if (data.total_variants !== null && data.total_variants !== undefined) catalogVariantTotal = data.total_variants;
         renderCatalogGroups(data.results || []);
         stampRefreshed('refreshed-catalog');
       } catch (e) {
