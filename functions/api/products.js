@@ -147,15 +147,24 @@ export async function onRequest(context) {
     }
 
     // 98k+ rows now, so every list view is filtered/paged - these carry that
-    // load. idx_products_browse specifically backs the Garment Catalog's
-    // main browse query (WHERE deleted_at IS NULL [AND item_type = ?] ...
-    // GROUP BY supplier_code ORDER BY MIN(supplier), supplier_code LIMIT ?
-    // OFFSET ?, see the "no code/id/customer_id" branch in the GET handler
-    // below) - lets that be a cheap index walk that stops after `limit`
-    // rows instead of a full-table scan+sort. This is what actually blew
-    // through the D1 free plan's 5M rows_read/day limit: every catalog page
-    // turn used to pull every matching row (up to the whole 98k-row table)
-    // into the Worker and paginate in JS.
+    // load. idx_products_code_browse specifically backs the Garment
+    // Catalog's main browse query (SELECT DISTINCT supplier_code FROM
+    // products WHERE deleted_at IS NULL [AND item_type = ?] ... ORDER BY
+    // supplier_code LIMIT ? OFFSET ?, see the "no code/id/customer_id"
+    // branch in the GET handler below) - confirmed via EXPLAIN QUERY PLAN
+    // against production that this needs no temp b-tree at all with this
+    // index (a plain index walk that stops after `limit`), unlike
+    // idx_products_browse below (kept for supplier-scoped queries), whose
+    // supplier-then-code column order forces a temp b-tree for the GROUP
+    // BY/ORDER BY this query needs when nothing pins one specific supplier.
+    // This whole area is what blew through the D1 free plan's 5M
+    // rows_read/day limit: every catalog page turn used to pull every
+    // matching row (up to the whole 98k-row table) into the Worker and
+    // paginate in JS - and the first attempt at fixing it (the GROUP BY/
+    // MIN(supplier) version idx_products_browse was built for) measured
+    // *worse* than that (200k+ rows_read per page) once actually checked
+    // with EXPLAIN QUERY PLAN against live data, not just tested for
+    // correctness against a local synthetic dataset.
     await db.batch([
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_code ON products (supplier_code)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_supplier ON products (supplier)"),
@@ -164,6 +173,7 @@ export async function onRequest(context) {
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_customer ON products (customer_id)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_deleted ON products (deleted_at)"),
       db.prepare("CREATE INDEX IF NOT EXISTS idx_products_browse ON products (deleted_at, item_type, supplier, supplier_code)"),
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_products_code_browse ON products (deleted_at, item_type, supplier_code)"),
     ]);
 
     // Audit trail for sell_price, added after a sync-job bug silently
@@ -362,8 +372,26 @@ export async function onRequest(context) {
           // Page of *codes* first (cheap - an index walk that stops after
           // `limit`), then the full rows for just those codes (bounded by
           // however many variants those ~50 codes have, not the table size).
+          //
+          // Ordered by supplier_code alone, NOT supplier-then-code like the
+          // rest of this file - verified directly against production via
+          // EXPLAIN QUERY PLAN that `GROUP BY supplier_code ORDER BY
+          // MIN(supplier), supplier_code` (the first version of this fix)
+          // forces two separate temp b-trees (one for the GROUP BY, one for
+          // the ORDER BY, since grouping by code and ordering by an
+          // aggregate over supplier can't both be satisfied by walking the
+          // same index) - it measured at 200k+ rows_read, actually *worse*
+          // than the original unbounded query. `SELECT DISTINCT
+          // supplier_code ... ORDER BY supplier_code` against
+          // idx_products_code_browse (deleted_at, item_type, supplier_code)
+          // needs no temp b-tree at all - confirmed via the same tool at
+          // ~1,350 rows_read for a first page, ~6,400 for a keyword search.
+          // Trade-off: codes from different suppliers now interleave
+          // alphabetically instead of clustering by supplier - filtering by
+          // a specific supplier (already an available facet) still browses
+          // that supplier's own range together, same as before.
           const codeRows = await db.prepare(
-            `SELECT supplier_code FROM products ${clause} GROUP BY supplier_code ORDER BY MIN(supplier), supplier_code LIMIT ? OFFSET ?`
+            `SELECT DISTINCT supplier_code FROM products ${clause} ORDER BY supplier_code LIMIT ? OFFSET ?`
           ).bind(...binds, limit, offset).all();
           const pageCodes = codeRows.results.map((r) => r.supplier_code);
 
