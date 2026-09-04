@@ -356,13 +356,33 @@ export async function onRequest(context) {
       // Only fall back to the old CDN-filename-guessing/HEAD-check dance
       // for catalog rows that predate that import (or a code the import
       // hasn't covered yet).
-      const dbColourRows = await db.prepare(
-        "SELECT DISTINCT colour, colour_code, image_url FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL AND image_url IS NOT NULL AND image_url <> ''"
-      ).bind(code).all();
+      // Since the catalog consolidation (see products.js's file header),
+      // this code's colour/size rows live inside one row's `variant_data`
+      // JSON, not as separate physical rows - DISTINCT colour/colour_code/
+      // image_url columns would only ever see the row's single "default
+      // tier" now. Fetch the row and expand its tiers instead, deduping by
+      // colour name the same way the old DISTINCT query did.
+      const catalogRow = await db.prepare(
+        "SELECT * FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL LIMIT 1"
+      ).bind(code).first();
+      let dbColourRows = [];
+      if (catalogRow) {
+        let tiers = null;
+        try { tiers = JSON.parse(catalogRow.variant_data || "[]"); } catch { tiers = null; }
+        if (!Array.isArray(tiers) || !tiers.length) {
+          tiers = [{ colour: catalogRow.colour || "", colour_code: catalogRow.colour_code || "", image_url: catalogRow.image_url || "" }];
+        }
+        const seenColourNames = new Set();
+        for (const t of tiers) {
+          if (!t.image_url || seenColourNames.has(t.colour)) continue;
+          seenColourNames.add(t.colour);
+          dbColourRows.push({ colour: t.colour, colour_code: t.colour_code || "", image_url: t.image_url });
+        }
+      }
 
-      if (dbColourRows.results && dbColourRows.results.length) {
+      if (dbColourRows.length) {
         IMG_BASE = "";
-        colours = dbColourRows.results.map((r) => ({ name: r.colour, code: r.colour_code || "", file: r.image_url, resolved: true }));
+        colours = dbColourRows.map((r) => ({ name: r.colour, code: r.colour_code || "", file: r.image_url, resolved: true }));
         resolvedColours = colours;
       } else {
         IMG_BASE = `https://www.fullcollection.com/storage/phoenix/2026/Phoenix%20All%20Images/${encodeURIComponent(brand)}/Product%20Images/${code}/ProductCarouselMain/`;

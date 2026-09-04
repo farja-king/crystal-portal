@@ -301,25 +301,45 @@ export async function onRequest(context) {
             changed_at TEXT DEFAULT CURRENT_TIMESTAMP
           )
         `).run();
-        const { results: matches } = await db.prepare(`
-          SELECT id, sell_price FROM products
-          WHERE supplier_code = ? AND colour = ? AND size = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL
-        `).bind(resolvedSupplierCode, resolvedColour, resolvedSize).all();
-        if (matches.length) {
-          const roundedSale = Math.round(resolvedSale * 100) / 100;
-          await db.batch(matches.map((m) =>
-            db.prepare(`
-              UPDATE products SET sell_price = ?, profit = ROUND(? - cost_price * (1 + vat_rate), 2), updated_at = CURRENT_TIMESTAMP
+        // Since the catalog consolidation (see products.js's file header),
+        // this code is ONE physical row whose colour/size tiers live inside
+        // `variant_data` JSON - the row's own colour/size columns only hold
+        // its "default tier". Resolve the matching TIER inside variant_data
+        // rather than matching (and overwriting) the row's flat columns,
+        // same read-modify-write approach products.js's own PUT uses.
+        const catalogRow = await db.prepare(`
+          SELECT * FROM products WHERE supplier_code = ? AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL
+        `).bind(resolvedSupplierCode).first();
+        if (catalogRow) {
+          let tiers = null;
+          try { tiers = JSON.parse(catalogRow.variant_data || "[]"); } catch { tiers = null; }
+          if (!Array.isArray(tiers) || !tiers.length) {
+            tiers = [{ id: catalogRow.id, colour: catalogRow.colour || "", size: catalogRow.size || "", cost_price: catalogRow.cost_price, sell_price: catalogRow.sell_price, vat_rate: catalogRow.vat_rate, colour_code: catalogRow.colour_code || "", image_url: catalogRow.image_url || "" }];
+          }
+          const idx = tiers.findIndex((t) => (t.colour || "") === resolvedColour && (t.size || "") === resolvedSize);
+          if (idx !== -1) {
+            const roundedSale = Math.round(resolvedSale * 100) / 100;
+            const oldSell = tiers[idx].sell_price ?? null;
+            const tierVat = tiers[idx].vat_rate ?? catalogRow.vat_rate ?? 0.2;
+            tiers[idx] = { ...tiers[idx], sell_price: roundedSale };
+            const defaultTier = tiers[0];
+            const defaultProfit = defaultTier.sell_price === null || defaultTier.sell_price === undefined
+              ? null
+              : Math.round((Number(defaultTier.sell_price) - Number(defaultTier.cost_price || 0) * (1 + (Number(defaultTier.vat_rate ?? catalogRow.vat_rate ?? 0.2))) + Number.EPSILON) * 100) / 100;
+            await db.prepare(`
+              UPDATE products SET variant_data = ?, colour = ?, size = ?, cost_price = ?, vat_rate = ?, sell_price = ?, profit = ?, updated_at = CURRENT_TIMESTAMP
               WHERE id = ?
-            `).bind(roundedSale, roundedSale, m.id)
-          ));
-          const historyRows = matches.filter((m) => m.sell_price !== roundedSale);
-          if (historyRows.length) {
-            const stmt = db.prepare(`
-              INSERT INTO product_price_history (id, product_id, supplier_code, customer_id, old_sell_price, new_sell_price, source)
-              VALUES (?, ?, ?, NULL, ?, ?, 'stock_edit')
-            `);
-            await db.batch(historyRows.map((m) => stmt.bind(crypto.randomUUID(), m.id, resolvedSupplierCode, m.sell_price, roundedSale)));
+            `).bind(
+              JSON.stringify(tiers), defaultTier.colour, defaultTier.size, defaultTier.cost_price, defaultTier.vat_rate,
+              defaultTier.sell_price, defaultProfit, catalogRow.id
+            ).run();
+
+            if (oldSell !== roundedSale) {
+              await db.prepare(`
+                INSERT INTO product_price_history (id, product_id, supplier_code, customer_id, old_sell_price, new_sell_price, source)
+                VALUES (?, ?, ?, NULL, ?, ?, 'stock_edit')
+              `).bind(crypto.randomUUID(), tiers[idx].id, resolvedSupplierCode, oldSell, roundedSale).run();
+            }
           }
         }
       }

@@ -12056,7 +12056,7 @@
       try {
         const res = await fetch(spec.url, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: entry.row.id, restore: true }),
+          body: JSON.stringify(trashRestoreBody(entry)),
         });
         if (!res.ok) throw new Error((await res.json()).error || 'Restore failed');
         showActionToast('✓', `${typeof spec.label === 'function' ? spec.label(entry.row) : spec.label} restored.`);
@@ -12064,6 +12064,18 @@
       } catch (e) {
         showActionToast('⚠', 'Could not restore: ' + e.message);
       }
+    }
+
+    // A trashed 'product' entry always goes through restore_variant_into_code
+    // instead of the generic {restore:true} - products.js resolves whether
+    // it's an old-format single-colour/size row (folds it into its code's
+    // active consolidated row, fully automatic - see that endpoint's own
+    // comment) or already a whole consolidated code (falls through to a
+    // plain restore). Every other trash type is unaffected by the catalog
+    // consolidation and keeps using the plain restore.
+    function trashRestoreBody(entry) {
+      if (entry.type === 'product') return { action: 'restore_variant_into_code', id: entry.row.id };
+      return { id: entry.row.id, restore: true };
     }
 
     async function permanentlyDeleteFromTrash(rowKey) {
@@ -12134,7 +12146,7 @@
         try {
           const res = await fetch(spec.url, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: entry.row.id, restore: true }),
+            body: JSON.stringify(trashRestoreBody(entry)),
           });
           if (!res.ok) throw new Error();
         } catch (e) {

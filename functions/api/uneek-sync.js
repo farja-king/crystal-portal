@@ -42,8 +42,20 @@ export async function onRequest(context) {
   };
 
   try {
-    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'"]) {
+    for (const col of ["available_colours TEXT DEFAULT '[]'", "available_sizes TEXT DEFAULT '[]'", "variant_data TEXT DEFAULT '[]'"]) {
       try { await db.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run(); } catch { /* already exists */ }
+    }
+    // Guarded here too - same defensive duplication as pencarrie-import.js.
+    await db.prepare(`CREATE TABLE IF NOT EXISTS product_variant_index (variant_id TEXT PRIMARY KEY, product_id TEXT NOT NULL)`).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_variant_index_product ON product_variant_index (product_id)`).run();
+
+    function parseTiers(row) {
+      let tiers = null;
+      try { tiers = JSON.parse(row.variant_data || "[]"); } catch { tiers = null; }
+      if (!Array.isArray(tiers) || !tiers.length) {
+        return [{ id: row.id, colour: row.colour || "", size: row.size || "", sell_price: row.sell_price ?? null }];
+      }
+      return tiers;
     }
 
     // fetchUneekRawText() already unwraps Uneek's double-encoding (see
@@ -101,35 +113,92 @@ export async function onRequest(context) {
 
     if (!productRows.length) return json({ error: "No usable rows after parsing Uneek response" }, 502);
 
-    const stmt = db.prepare(`
-      INSERT INTO products (
-        id, supplier, supplier_code, supplier_ref, brand, title, colour, size,
-        category, cost_price, surcharge_category, vat_rate, sell_price, profit, active, updated_at
-      ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, '', ?, NULL, NULL, 1, CURRENT_TIMESTAMP)
-      ON CONFLICT(id) DO UPDATE SET
-        supplier = excluded.supplier,
-        supplier_code = excluded.supplier_code,
-        brand = excluded.brand,
-        title = excluded.title,
-        colour = excluded.colour,
-        size = excluded.size,
-        category = excluded.category,
-        cost_price = excluded.cost_price,
-        vat_rate = excluded.vat_rate,
-        active = excluded.active,
-        profit = CASE WHEN products.sell_price IS NULL THEN NULL ELSE ROUND(products.sell_price - excluded.cost_price, 2) END,
-        updated_at = CURRENT_TIMESTAMP
-    `);
+    // Consolidated write path (see products.js's file header) - one physical
+    // row per code, tiers merged into its variant_data, instead of one
+    // physical row per exact colour+size. Existing tiers keep whatever
+    // sell_price is already on them (this sync only ever supplies cost, so
+    // there's nothing to "preserve vs overwrite" for a brand-new tier -
+    // it simply starts unpriced, same as before).
+    const codes = [...new Set(productRows.map((r) => r.supplier_code))];
+    const productIdByCode = new Map(); // code -> id of the code's active consolidated row (if any)
+    const existingTierMap = new Map(); // tier id -> current tier object
 
-    const batch = productRows.map((r) => stmt.bind(
-      r.id, r.supplier, r.supplier_code, r.brand, r.title, r.colour, r.size, r.category, r.cost_price, r.vat_rate
-    ));
+    const IN_CHUNK = 50;
+    for (let i = 0; i < codes.length; i += IN_CHUNK) {
+      const chunkCodes = codes.slice(i, i + IN_CHUNK);
+      const placeholders = chunkCodes.map(() => "?").join(",");
+      const { results } = await db.prepare(
+        `SELECT * FROM products WHERE UPPER(supplier_code) IN (${placeholders}) AND id LIKE 'uneek-%' AND (customer_id IS NULL OR customer_id = '') AND deleted_at IS NULL`
+      ).bind(...chunkCodes.map((c) => c.toUpperCase())).all();
+      for (const row of results) {
+        productIdByCode.set(row.supplier_code, row.id);
+        for (const t of parseTiers(row)) existingTierMap.set(t.id, t);
+      }
+    }
+
+    const tiersByCode = new Map();
+    for (const r of productRows) {
+      const existing = existingTierMap.get(r.id);
+      const tier = {
+        id: r.id, colour: r.colour, size: r.size, cost_price: r.cost_price, vat_rate: r.vat_rate,
+        sell_price: existing ? (existing.sell_price ?? null) : null,
+        colour_code: existing ? (existing.colour_code || "") : "",
+        image_url: existing ? (existing.image_url || "") : "",
+      };
+      if (!tiersByCode.has(r.supplier_code)) tiersByCode.set(r.supplier_code, { brand: r.brand, title: r.title, category: r.category, tiers: [] });
+      tiersByCode.get(r.supplier_code).tiers.push(tier);
+    }
+
+    const pending = [];
+    let imported = 0;
+    for (const [code, group] of tiersByCode) {
+      const existingProductId = productIdByCode.get(code);
+      let mergedTiers, targetRowId;
+      if (existingProductId) {
+        const row = await db.prepare("SELECT * FROM products WHERE id = ?").bind(existingProductId).first();
+        const byId = new Map(parseTiers(row).map((t) => [t.id, t]));
+        for (const t of group.tiers) byId.set(t.id, t);
+        mergedTiers = [...byId.values()];
+        targetRowId = existingProductId;
+      } else {
+        mergedTiers = group.tiers;
+        targetRowId = group.tiers[0].id;
+      }
+      imported += group.tiers.length;
+
+      const defaultTier = mergedTiers[0];
+      if (existingProductId) {
+        pending.push(db.prepare(`
+          UPDATE products SET supplier = 'UNEEK', brand = ?, title = ?, category = ?, variant_data = ?,
+            colour = ?, size = ?, cost_price = ?, vat_rate = ?, sell_price = ?, profit = ?, active = 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(
+          group.brand, group.title, group.category, JSON.stringify(mergedTiers),
+          defaultTier.colour, defaultTier.size, defaultTier.cost_price, defaultTier.vat_rate, defaultTier.sell_price,
+          profitOf(defaultTier.sell_price, defaultTier.cost_price, defaultTier.vat_rate), targetRowId
+        ));
+      } else {
+        pending.push(db.prepare(`
+          INSERT INTO products (
+            id, supplier, supplier_code, supplier_ref, brand, title, colour, size,
+            category, cost_price, surcharge_category, vat_rate, sell_price, profit, active, variant_data, updated_at
+          ) VALUES (?, 'UNEEK', ?, '', ?, ?, ?, ?, ?, ?, '', ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
+        `).bind(
+          targetRowId, code, group.brand, group.title, defaultTier.colour, defaultTier.size,
+          group.category, defaultTier.cost_price, defaultTier.vat_rate, defaultTier.sell_price,
+          profitOf(defaultTier.sell_price, defaultTier.cost_price, defaultTier.vat_rate), JSON.stringify(mergedTiers)
+        ));
+      }
+      for (const t of group.tiers) {
+        pending.push(db.prepare(
+          `INSERT INTO product_variant_index (variant_id, product_id) VALUES (?, ?) ON CONFLICT(variant_id) DO UPDATE SET product_id = excluded.product_id`
+        ).bind(t.id, targetRowId));
+      }
+    }
 
     const CHUNK_SIZE = 50;
-    let imported = 0;
-    for (let i = 0; i < batch.length; i += CHUNK_SIZE) {
-      await db.batch(batch.slice(i, i + CHUNK_SIZE));
-      imported += Math.min(CHUNK_SIZE, batch.length - i);
+    for (let i = 0; i < pending.length; i += CHUNK_SIZE) {
+      await db.batch(pending.slice(i, i + CHUNK_SIZE));
     }
 
     // Fill available_colours/available_sizes the same way import-colours-sizes.js does.
@@ -137,9 +206,9 @@ export async function onRequest(context) {
       UPDATE products SET available_colours = ?, available_sizes = ?, updated_at = CURRENT_TIMESTAMP
       WHERE UPPER(supplier_code) = UPPER(?)
     `);
-    const codes = [...new Set([...Object.keys(colourByCode), ...Object.keys(sizeByCode)])];
-    for (let i = 0; i < codes.length; i += CHUNK_SIZE) {
-      const chunk = codes.slice(i, i + CHUNK_SIZE);
+    const facetCodes = [...new Set([...Object.keys(colourByCode), ...Object.keys(sizeByCode)])];
+    for (let i = 0; i < facetCodes.length; i += CHUNK_SIZE) {
+      const chunk = facetCodes.slice(i, i + CHUNK_SIZE);
       await db.batch(chunk.map((code) => colourStmt.bind(
         JSON.stringify([...(colourByCode[code] || [])]),
         JSON.stringify([...(sizeByCode[code] || [])]),
@@ -150,7 +219,7 @@ export async function onRequest(context) {
     return json({
       success: true,
       imported,
-      codes: codes.length,
+      codes: facetCodes.length,
     });
   } catch (err) {
     return json({ error: err.message }, 500);
