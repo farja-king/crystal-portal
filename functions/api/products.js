@@ -219,6 +219,19 @@ export async function onRequest(context) {
 
       // ?trash=1 -> only soft-deleted products, for the universal Trash tab.
       if (p.get("trash")) {
+        // ?trash=1&q=<term> - finds a specific trashed item by code/title/
+        // colour/brand. Needed once trash holds tens of thousands of rows
+        // (see the bulk unpriced-garment trim this was added for) - without
+        // it, the plain most-recent-500 view below has no way to surface
+        // one specific item a customer's asked for again, buried among
+        // everything else that's been trashed.
+        const trashQ = (p.get("q") || "").trim();
+        if (trashQ) {
+          const { results } = await db.prepare(
+            "SELECT * FROM products WHERE deleted_at IS NOT NULL AND (supplier_code LIKE ?1 OR title LIKE ?1 OR colour LIKE ?1 OR brand LIKE ?1) ORDER BY deleted_at DESC LIMIT 100"
+          ).bind(`%${trashQ}%`).all();
+          return json({ results });
+        }
         const { results } = await db.prepare(
           "SELECT * FROM products WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 500"
         ).all();

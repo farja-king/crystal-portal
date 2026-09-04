@@ -1733,6 +1733,15 @@
           </div>
         </div>
       </div>
+      <!-- Trashed garments alone can run into the tens of thousands (see
+           the bulk unpriced-item trim this was built for) - the plain
+           list below only ever shows the most recent 500, with no way to
+           locate one specific item among the rest. This searches
+           products.js's trash directly (?trash=1&q=) rather than filtering
+           whatever's already loaded client-side. -->
+      <div class="mb-4">
+        <input type="text" id="trash-product-search" placeholder="🔍 Find a trashed garment/service by code, title, brand or colour…" oninput="searchTrashProducts(this.value)" class="w-full max-w-md rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900" />
+      </div>
       <div id="trash-filter-tabs" class="flex flex-wrap gap-2 mb-4"></div>
 
       <!-- Bulk actions - same tick-rows-then-act pattern as Stock/Customers/
@@ -11921,6 +11930,8 @@
       const tbody = document.getElementById('trash-table-body');
       tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">Loading…</td></tr>';
       trashRowsById = {};
+      const searchInput = document.getElementById('trash-product-search');
+      if (searchInput) searchInput.value = '';
       try {
         const [orders, stock, products, customers, proofs] = await Promise.all([
           fetch(API_ORDERS_URL + '?trash=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
@@ -11944,6 +11955,36 @@
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-red-500">Could not load the trash: ' + escapeHtml(e.message) + '</td></tr>';
       }
+    }
+
+    let trashProductSearchTimer = null;
+    // Finds one specific trashed garment/service among tens of thousands -
+    // hits products.js's own ?trash=1&q= search rather than the plain
+    // most-recent-500 list loadTrash() already fetched, and swaps just the
+    // 'product' entries in trashAllEntries for the matches (orders/stock/
+    // customers/proofs stay exactly as already loaded - trash for those is
+    // small enough that the plain list is already fine).
+    function searchTrashProducts(raw) {
+      clearTimeout(trashProductSearchTimer);
+      const term = raw.trim();
+      trashProductSearchTimer = setTimeout(async () => {
+        try {
+          const url = term
+            ? API_PRODUCTS_URL + '?trash=1&q=' + encodeURIComponent(term)
+            : API_PRODUCTS_URL + '?trash=1';
+          const res = await fetch(url, { cache: 'no-store' });
+          const data = await res.json();
+          const products = Array.isArray(data.results) ? data.results : [];
+          trashAllEntries = [
+            ...trashAllEntries.filter((e) => e.type !== 'product'),
+            ...products.map((r) => ({ type: 'product', row: r })),
+          ].sort((a, b) => (b.row.deleted_at || '').localeCompare(a.row.deleted_at || ''));
+          renderTrashFilterTabs();
+          renderTrashTable();
+        } catch (e) {
+          showActionToast('⚠', 'Could not search trash: ' + e.message);
+        }
+      }, 300);
     }
 
     function renderTrashFilterTabs() {
