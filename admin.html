@@ -10190,17 +10190,38 @@
     // directly with no popup, same as unticking a plain checkbox used to.
     let pickupScheduleOrderId = null;
     let pickupScheduleStepId = null;
+    // true when this modal was opened via the "Send Review Request
+    // Manually" button (openManualReviewRequest) rather than by marking
+    // "Order collected" done - skips touching the production step at all,
+    // and tells the server (data.manual) to send even if this customer's
+    // review_requested opt-out is set, since a deliberate manual ask isn't
+    // the spam that flag exists to prevent.
+    let pickupScheduleManual = false;
 
     function closePickupScheduleModal() {
       pickupScheduleOrderId = null;
       pickupScheduleStepId = null;
+      pickupScheduleManual = false;
       document.getElementById('pickup-schedule-modal').classList.add('hidden');
+    }
+
+    // Lets staff send a review request outside the normal "mark Order
+    // collected done" flow - most importantly, when this customer's
+    // review_requested opt-out is blocking the automatic ask but there's a
+    // genuine reason to ask again (or ask once for an order that was
+    // already marked collected before this feature existed).
+    function openManualReviewRequest(orderId) {
+      pickupScheduleOrderId = orderId;
+      pickupScheduleStepId = null;
+      pickupScheduleManual = true;
+      document.getElementById('pickup-schedule-modal').classList.remove('hidden');
     }
 
     async function schedulePickupReview(preset) {
       const orderId = pickupScheduleOrderId;
       const stepId = pickupScheduleStepId;
-      if (!orderId || !stepId) return;
+      const manual = pickupScheduleManual;
+      if (!orderId || (!manual && !stepId)) return;
       const now = new Date();
       let sendAt;
       if (preset === 'now') {
@@ -10230,20 +10251,24 @@
         // step-update instead of - or as well as - the actual review
         // request below. This step's only real customer touchpoint is that
         // review request, never the generic per-step notification.
-        const stepRes = await fetch(API_PRODUCTION_STEPS_URL, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: stepId, status: 'done', notify_customer: false }),
-        });
-        // Previously unchecked - a failure here (network blip, stale
-        // session, whatever) used to pass silently straight through to the
-        // review-request call below, which could still succeed on its own
-        // and show a success toast even though the step itself was never
-        // actually marked done - exactly the "ticked it, got a success
-        // message, but it's still showing unticked" symptom this was
-        // reported as.
-        if (!stepRes.ok) {
-          const stepData = await stepRes.json().catch(() => ({}));
-          throw new Error(stepData.error || 'Could not mark the step done');
+        // Skipped entirely for a manual send (openManualReviewRequest) -
+        // there's no step to mark, the order may already be long collected.
+        if (!manual) {
+          const stepRes = await fetch(API_PRODUCTION_STEPS_URL, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: stepId, status: 'done', notify_customer: false }),
+          });
+          // Previously unchecked - a failure here (network blip, stale
+          // session, whatever) used to pass silently straight through to the
+          // review-request call below, which could still succeed on its own
+          // and show a success toast even though the step itself was never
+          // actually marked done - exactly the "ticked it, got a success
+          // message, but it's still showing unticked" symptom this was
+          // reported as.
+          if (!stepRes.ok) {
+            const stepData = await stepRes.json().catch(() => ({}));
+            throw new Error(stepData.error || 'Could not mark the step done');
+          }
         }
         const res = await fetch('/api/review-requests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -10251,7 +10276,9 @@
           // browser's own clock reading - the server then uses its own
           // clock, so a client clock that's even slightly fast can never
           // make an immediate send look like it's still in the future.
-          body: JSON.stringify({ action: 'confirm_pickup', id: orderId, send_at: preset === 'now' ? undefined : sendAt.toISOString() }),
+          // manual: true tells the server to send even if this customer's
+          // review_requested opt-out is set (see confirm_pickup).
+          body: JSON.stringify({ action: 'confirm_pickup', id: orderId, manual, send_at: preset === 'now' ? undefined : sendAt.toISOString() }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
@@ -10266,6 +10293,7 @@
       } finally {
         pickupScheduleOrderId = null;
         pickupScheduleStepId = null;
+        pickupScheduleManual = false;
         loadProductionSteps(orderId);
         loadOrders();
       }
@@ -10280,7 +10308,11 @@
       try {
         const res = await fetch('/api/review-requests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'confirm_pickup', id: orderId }), // no send_at - see the 'now' preset above for why
+          // manual: true - this is staff explicitly forcing an *already-
+          // scheduled* send out early, not the automatic ask, so the
+          // review_requested opt-out shouldn't block it (it was allowed to
+          // be scheduled in the first place, before any opt-out changed).
+          body: JSON.stringify({ action: 'confirm_pickup', id: orderId, manual: true }), // no send_at - see the 'now' preset above for why
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
@@ -11140,24 +11172,43 @@
           ? '<div class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold shrink-0">●</div>'
           : '<div class="w-6 h-6 rounded-full border-2 border-slate-300 shrink-0"></div>';
         const titleCls = isDone ? 'text-slate-400 line-through' : isCurrent ? 'text-slate-900 font-semibold' : 'text-slate-500';
+        // Whether THIS CUSTOMER (not just this order) has already been
+        // asked for a review anywhere - see customers.review_requested /
+        // review-requests.js's confirm_pickup guard. Blocks the automatic
+        // ask (this step's own 📧 toggle) but not a deliberate manual send.
+        const customer = order && order.customer_id ? customersById[order.customer_id] : null;
+        const alreadyAsked = isCollectedStep && !!(customer && customer.review_requested);
         // For every other step this just controls the generic "email the
         // customer when marked done" notice. For "Order collected" it
         // controls whether marking done opens the review-request popup at
         // all (see toggleStepDone) - unticked, done just marks the pickup
         // with no customer email, same as any other step with notify off.
+        // Disabled once alreadyAsked is set - ticking it wouldn't do
+        // anything anyway (the server refuses), so it's greyed out here
+        // rather than left looking like a live control.
         const notifyToggle = `
-                <label title="${isCollectedStep ? 'Ask the customer for a review when this step is marked done' : 'Email the customer automatically when this step is marked done'}" class="flex items-center gap-1 text-xs text-slate-500 px-1">
-                  <input type="checkbox" ${s.notify_customer ? 'checked' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
+                <label title="${alreadyAsked ? "Already asked this customer for a review - won't ask again automatically" : isCollectedStep ? 'Ask the customer for a review when this step is marked done' : 'Email the customer automatically when this step is marked done'}" class="flex items-center gap-1 text-xs ${alreadyAsked ? 'text-slate-300' : 'text-slate-500'} px-1">
+                  <input type="checkbox" ${s.notify_customer && !alreadyAsked ? 'checked' : ''} ${alreadyAsked ? 'disabled' : ''} onchange="saveStepNotify('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
                   📧
                 </label>`;
+        // "Already asked" opt-out - customer-level (see customers.js's
+        // set_review_requested), shown only on the Collected step, right
+        // next to the toggle that would otherwise auto-send one.
+        const optOutToggle = isCollectedStep && customer ? `
+                <label title="Tick once this customer has been asked for a review (any way, not just this portal) - stops the automatic ask firing again on a later order too. A deliberate manual send (below) still works regardless." class="flex items-center gap-1 text-xs text-slate-500 px-1 border-l border-slate-200 ml-1 pl-2">
+                  <input type="checkbox" ${customer.review_requested ? 'checked' : ''} onchange="setCustomerReviewOptOut('${escapeAttr(customer.id)}', '${escapeAttr(orderId)}', this.checked)" class="rounded border-slate-300" />
+                  Already asked
+                </label>` : '';
         const pickupStatusHtml = isCollectedStep && order
-          ? (order.review_email_sent_at
-              ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Review request sent ${escapeHtml(ukDate(order.review_email_sent_at))}</div>`
-              : order.review_email_scheduled_at
-              ? `<div class="text-xs text-sky-600 mt-0.5">🕐 Review request due ${escapeHtml(new Date(order.review_email_scheduled_at).toLocaleString('en-GB'))}
-                  <button type="button" onclick="sendPickupReviewNow('${escapeAttr(orderId)}')" class="ml-1 text-indigo-600 hover:text-indigo-800 font-semibold underline">Send now</button>
-                </div>`
-              : '')
+          ? `${order.review_email_sent_at
+                ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Review request sent ${escapeHtml(ukDate(order.review_email_sent_at))}</div>`
+                : order.review_email_scheduled_at
+                ? `<div class="text-xs text-sky-600 mt-0.5">🕐 Review request due ${escapeHtml(new Date(order.review_email_scheduled_at).toLocaleString('en-GB'))}
+                    <button type="button" onclick="sendPickupReviewNow('${escapeAttr(orderId)}')" class="ml-1 text-indigo-600 hover:text-indigo-800 font-semibold underline">Send now</button>
+                  </div>`
+                : ''}
+              ${alreadyAsked ? `<div class="text-xs text-slate-400 mt-0.5">🚫 Already asked - automatic request off for this customer</div>` : ''}
+              <button type="button" onclick="openManualReviewRequest('${escapeAttr(orderId)}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-0.5">✉️ Send Review Request Manually</button>`
           : '';
         const imagesHtml = (s.images || []).map((img) => `
           <div class="relative inline-block mr-2 mb-2">
@@ -11176,7 +11227,8 @@
               <input type="text" value="${escapeAttr(s.title)}" onblur="saveStepTitle('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" class="flex-1 min-w-[8rem] text-sm bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 ${titleCls}" />
               <div class="flex items-center gap-1 shrink-0">
                 ${notifyToggle}
-                <button type="button" onclick="this.disabled = true; toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone}, '${escapeAttr(s.title)}', ${s.notify_customer ? 'true' : 'false'})" title="${isCollectedStep && !isDone ? (s.notify_customer ? 'Confirm pickup & schedule review request' : 'Confirm pickup (no review request - 📧 is off)') : isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold disabled:opacity-50">${isDone ? '↺' : '✓'}</button>
+                ${optOutToggle}
+                <button type="button" onclick="this.disabled = true; toggleStepDone('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', ${isDone}, '${escapeAttr(s.title)}', ${s.notify_customer && !alreadyAsked ? 'true' : 'false'})" title="${isCollectedStep && !isDone ? (alreadyAsked ? 'Confirm pickup (already asked this customer for a review)' : s.notify_customer ? 'Confirm pickup & schedule review request' : 'Confirm pickup (no review request - 📧 is off)') : isDone ? 'Reopen' : 'Mark done'}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold disabled:opacity-50">${isDone ? '↺' : '✓'}</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'up')" title="Move up" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▲</button>
                 <button type="button" onclick="moveStep('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', 'down')" title="Move down" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold">▼</button>
                 <label class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded font-semibold cursor-pointer">
@@ -11225,6 +11277,7 @@
       if (isCollectedStep && !wasDone && notifyCustomer) {
         pickupScheduleStepId = id;
         pickupScheduleOrderId = orderId;
+        pickupScheduleManual = false;
         document.getElementById('pickup-schedule-modal').classList.remove('hidden');
         return;
       }
@@ -11301,6 +11354,25 @@
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, notify_customer: notifyCustomer }),
         });
+      } catch (e) {
+        showActionToast('⚠', 'Could not save: ' + e.message);
+      }
+    }
+
+    // "Already asked" opt-out - customer-level (see customers.js's
+    // set_review_requested / review-requests.js's confirm_pickup guard).
+    // Updates the local customersById cache directly rather than a full
+    // reload, so the Collected step's toggle/button states flip immediately.
+    async function setCustomerReviewOptOut(customerId, orderId, checked) {
+      try {
+        const res = await fetch(API_CUSTOMERS_URL, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: customerId, action: 'set_review_requested', review_requested: checked }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        if (customersById[customerId]) customersById[customerId].review_requested = checked ? 1 : 0;
+        loadProductionSteps(orderId);
       } catch (e) {
         showActionToast('⚠', 'Could not save: ' + e.message);
       }

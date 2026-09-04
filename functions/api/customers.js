@@ -67,6 +67,15 @@ export async function onRequest(context) {
       // upload.js, where this is looked up and applied server-side so the
       // discount can't be bypassed by an unauthenticated/tampered request.
       "dtf_flat_sheet_price REAL",
+      // review_requested - staff-ticked "we've already asked this customer
+      // for a Google review" (any channel, not just this portal), so the
+      // automatic ask that fires off the Production Tracker's "Order
+      // collected" step doesn't ask the same customer again on a later
+      // order too. Deliberately customer-level, not per-order - see
+      // review-requests.js's confirm_pickup, which refuses to schedule/send
+      // while this is set unless the request is explicitly marked manual
+      // (the "Send Review Request Manually" override in admin.html).
+      "review_requested INTEGER DEFAULT 0",
     ]) {
       try {
         await db.prepare(`ALTER TABLE customers ADD COLUMN ${col}`).run();
@@ -248,6 +257,17 @@ export async function onRequest(context) {
           await db.prepare("UPDATE customers SET portal_token = ? WHERE id = ?").bind(portalToken, data.id).run();
         }
         return new Response(JSON.stringify({ success: true, portal_token: portalToken }), { headers: corsHeaders });
+      }
+
+      // "Already asked (this customer) for a review" toggle - the Production
+      // Tracker's "Order collected" step in admin.html. Its own narrow
+      // action, same reasoning as ensure_portal_token above: the main PUT
+      // below is a full-record replace (every field has to be resent or it
+      // gets blanked/defaulted), and this toggle is fired from a checkbox
+      // that only ever has the customer's id and the new boolean to hand.
+      if (data.action === "set_review_requested") {
+        await db.prepare("UPDATE customers SET review_requested = ? WHERE id = ?").bind(data.review_requested ? 1 : 0, data.id).run();
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       }
 
       await db.prepare(`

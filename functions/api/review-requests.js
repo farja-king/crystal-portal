@@ -47,6 +47,15 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    // customers.review_requested - this file is the one that actually reads
+    // it (the anti-spam check in confirm_pickup below), so it needs its own
+    // guard here too rather than relying on customers.js having already run
+    // - same reasoning as portal_token's guard duplicated across files.
+    try {
+      await db.prepare(`ALTER TABLE customers ADD COLUMN review_requested INTEGER DEFAULT 0`).run();
+    } catch {
+      // already exists
+    }
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS email_log (
         id TEXT PRIMARY KEY,
@@ -107,6 +116,19 @@ export async function onRequest(context) {
       if (!data.id) return json({ error: "id is required" }, 400);
       const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(data.id).first();
       if (!order) return json({ error: "Order not found" }, 404);
+
+      // Anti-spam: a customer with any order already flagged
+      // customers.review_requested has already been asked (any channel,
+      // not just this one) - refuse another automatic ask so they don't
+      // get chased across every order they place. data.manual (admin.html's
+      // "Send Review Request Manually" button, a deliberate override) skips
+      // this check entirely - staff asking again on purpose is not spam.
+      if (order.customer_id && !data.manual) {
+        const customer = await db.prepare("SELECT review_requested FROM customers WHERE id = ?").bind(order.customer_id).first();
+        if (customer && customer.review_requested) {
+          return json({ error: "This customer has already been asked for a review - use 'Send Review Request Manually' to ask again anyway." }, 409);
+        }
+      }
 
       const sendAt = data.send_at ? new Date(data.send_at) : new Date();
       if (isNaN(sendAt.getTime())) return json({ error: "Invalid send_at" }, 400);
