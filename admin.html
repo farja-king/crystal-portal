@@ -2883,7 +2883,11 @@
       // moment than remembering to hit each tab's own Refresh button.
       if (tab === 'quotes') loadQuotes();
       if (tab === 'customers') loadCustomers();
-      if (tab === 'catalog') loadCatalog(0);
+      // loadFacets() here (not after every single edit inside the tab - see
+      // saveSellPrice's comment) keeps the filter counts fresh on every
+      // natural "arriving at this tab" moment without paying its ~390k-row
+      // cost on every keystroke.
+      if (tab === 'catalog') { loadCatalog(0); loadFacets(); }
       if (tab === 'services') loadServices();
       if (tab === 'stock') loadStock();
       if (tab === 'orders') {
@@ -5760,8 +5764,9 @@
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
 
         toggleAddProductForm();
+        // No loadFacets() - see saveSellPrice's comment. Adding one product
+        // doesn't need an immediate ~390k-row recount.
         loadCatalog(0);
-        loadFacets();
       } catch (e) {
         msg.className = 'text-xs text-red-600 md:col-span-4';
         msg.textContent = 'Could not save: ' + e.message;
@@ -7666,9 +7671,19 @@
           btn.onclick = () => applyPriceToAllFiltered(Number(raw));
         }
 
-        // refresh the row so profit/margin reflect what was actually stored
+        // refresh the row so profit/margin reflect what was actually stored.
+        // Deliberately NOT loadFacets() here - this fires on every single
+        // price field losing focus (the single most routine action in this
+        // whole tab), and facets recomputes 4 aggregate counts by scanning
+        // every matching row (~390k rows_read per call against the current
+        // ~98k-row catalog - confirmed directly against production) -
+        // pricing up even a handful of items could burn through the D1
+        // daily quota on this alone. The supplier/brand/category/priced
+        // counts go very slightly stale until the next natural refresh
+        // (switching filters, changing tabs, or a genuine bulk action
+        // below still calls it) - self-correcting, and far cheaper than
+        // re-scanning the catalog after every keystroke.
         await loadCatalog(catalogOffset);
-        loadFacets();
       } catch (e) {
         input.classList.add('border-red-400');
         showActionToast('⚠', 'Could not save that sell price: ' + e.message);
@@ -7924,8 +7939,8 @@
           }),
         });
         catalogEditingIds.delete(id);
+        // No loadFacets() - see saveSellPrice's comment.
         await loadCatalog(catalogOffset);
-        loadFacets();
       } catch (e) {
         showActionToast('⚠', 'Could not save changes: ' + e.message);
       }
@@ -7938,8 +7953,8 @@
         await fetch(API_PRODUCTS_URL, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
         });
+        // No loadFacets() - see saveSellPrice's comment.
         await loadCatalog(catalogOffset);
-        loadFacets();
       } catch (e) {
         showActionToast('⚠', 'Could not delete: ' + e.message);
       }
