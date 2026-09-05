@@ -49,6 +49,9 @@ export async function onRequest(context) {
       sent_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
+  for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT", "body_html TEXT", "kind TEXT", "step_id TEXT"]) {
+    try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+  }
 
   const { order_id, payment_id } = await request.json();
   if (!order_id || !payment_id) return json({ error: "order_id and payment_id required" }, 400);
@@ -93,8 +96,8 @@ export async function onRequest(context) {
     const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
 
     await db.prepare(
-      "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-    ).bind(crypto.randomUUID(), order_id, to, subject, resendEmailId).run();
+      "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, ?, ?, ?, ?, ?, 'receipt')"
+    ).bind(crypto.randomUUID(), order_id, to, subject, resendEmailId, html).run();
     await db.prepare(
       "UPDATE payments SET receipt_sent_at = CURRENT_TIMESTAMP WHERE id = ?"
     ).bind(payment_id).run();

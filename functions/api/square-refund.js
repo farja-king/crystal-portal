@@ -155,9 +155,12 @@ export async function onRequest(context) {
         if (res.ok) {
           try {
             const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
+            for (const col of ["body_html TEXT", "kind TEXT", "step_id TEXT"]) {
+              try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+            }
             await db.prepare(
-              "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-            ).bind(crypto.randomUUID(), order.id, customerTo, `Refund processed: ${docNumber}`, resendEmailId).run();
+              "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, ?, ?, ?, ?, ?, 'refund')"
+            ).bind(crypto.randomUUID(), order.id, customerTo, `Refund processed: ${docNumber}`, resendEmailId, html).run();
           } catch (e) {
             // email_log table doesn't exist yet - the email still sent, just not logged this time
           }

@@ -72,7 +72,7 @@ export async function onRequest(context) {
   // (see the PUT handler below) - same Resend setup and email_log table as
   // design-proofs.js/payment-reminders.js, so this shows up for free in the
   // order's existing Communication History panel.
-  async function sendStepNotification(orderId, stepTitle) {
+  async function sendStepNotification(orderId, stepTitle, stepId) {
     if (!env.RESEND_API_KEY) return { sent: false, reason: "Email isn't set up yet - the RESEND_API_KEY secret is missing." };
     const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(orderId).first();
     if (!order) return { sent: false, reason: "Order not found" };
@@ -164,9 +164,12 @@ export async function onRequest(context) {
       // open tracking, since the webhook has nothing to match it against.
       const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
       try {
+        for (const col of ["body_html TEXT", "kind TEXT", "step_id TEXT"]) {
+          try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+        }
         await db.prepare(
-          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-        ).bind(crypto.randomUUID(), orderId, to, subject, resendEmailId).run();
+          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind, step_id) VALUES (?, ?, ?, ?, ?, ?, 'production_step', ?)"
+        ).bind(crypto.randomUUID(), orderId, to, subject, resendEmailId, html, stepId || null).run();
       } catch (e) {
         // email_log table doesn't exist yet (send-email.js/payment-reminders.js
         // create it lazily) - the email still sent, just not logged this time
@@ -311,7 +314,38 @@ export async function onRequest(context) {
       for (const img of images) {
         (imagesByStep[img.step_id] = imagesByStep[img.step_id] || []).push(img);
       }
-      return json(steps.map((s) => ({ ...s, images: imagesByStep[s.id] || [] })));
+
+      // Backs the "View email" popup on each step's own "📧 Emailed DATE"
+      // notice (admin.html) - the latest email_log row logged against this
+      // exact step (see sendStepNotification's step_id above), and
+      // separately the order's own review-request email (order-level, not
+      // tied to one step, but shown on the Order collected row) - both
+      // best-effort, so an email sent before this existed (no body_html
+      // saved) just shows nothing to preview rather than breaking the list.
+      let emailByStep = {};
+      let reviewRequestEmail = null;
+      try {
+        const stepIds = steps.map((s) => s.id);
+        if (stepIds.length) {
+          const placeholders = stepIds.map(() => "?").join(",");
+          const { results: stepEmails } = await db.prepare(
+            `SELECT step_id, subject, body_html, sent_at FROM email_log WHERE step_id IN (${placeholders}) ORDER BY sent_at DESC`
+          ).bind(...stepIds).all();
+          for (const e of stepEmails) {
+            if (!emailByStep[e.step_id]) emailByStep[e.step_id] = e; // first (newest) wins
+          }
+        }
+        reviewRequestEmail = await db.prepare(
+          "SELECT subject, body_html, sent_at FROM email_log WHERE order_id = ? AND kind = 'review_request' ORDER BY sent_at DESC LIMIT 1"
+        ).bind(orderId).first();
+      } catch {
+        // body_html/kind/step_id columns not there yet on a very old row - just show nothing to preview
+      }
+
+      return json({
+        steps: steps.map((s) => ({ ...s, images: imagesByStep[s.id] || [], email: emailByStep[s.id] || null })),
+        review_request_email: reviewRequestEmail || null,
+      });
     }
 
     if (request.method === "POST") {
@@ -543,7 +577,7 @@ export async function onRequest(context) {
 
       let emailResult = null;
       if (justCompleted && notifyCustomer) {
-        emailResult = await sendStepNotification(existing.order_id, title);
+        emailResult = await sendStepNotification(existing.order_id, title, data.id);
         if (emailResult.sent) {
           notifiedAt = new Date().toISOString();
           await db.prepare("UPDATE production_steps SET notified_at = ? WHERE id = ?").bind(notifiedAt, data.id).run();

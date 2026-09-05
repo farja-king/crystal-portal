@@ -76,6 +76,9 @@ export async function onRequest(context) {
         sent_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT", "body_html TEXT", "kind TEXT", "step_id TEXT"]) {
+      try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+    }
 
     async function getDaysAfterSent() {
       const row = await db.prepare("SELECT days_after_sent FROM quote_followup_settings WHERE id = 'default'").first();
@@ -153,8 +156,8 @@ export async function onRequest(context) {
         const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
 
         await db.prepare(
-          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId).run();
+          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, ?, ?, ?, ?, ?, 'quote_followup')"
+        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId, html).run();
         await db.prepare(
           "UPDATE orders SET followup_sent_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).bind(order.id).run();

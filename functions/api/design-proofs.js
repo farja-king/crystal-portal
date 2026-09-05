@@ -120,7 +120,7 @@ export async function onRequest(context) {
             sent_at TEXT DEFAULT CURRENT_TIMESTAMP
           )
         `).run();
-        for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT"]) {
+        for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT", "body_html TEXT", "kind TEXT", "step_id TEXT"]) {
           try {
             await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run();
           } catch {
@@ -128,8 +128,8 @@ export async function onRequest(context) {
           }
         }
         await db.prepare(
-          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId).run();
+          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, ?, ?, ?, ?, ?, 'design_proof')"
+        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId, html).run();
       } catch (e) {
         // Best-effort logging - never let it undo a proof email that
         // already genuinely went out.

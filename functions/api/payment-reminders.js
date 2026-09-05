@@ -70,6 +70,13 @@ export async function onRequest(context) {
         sent_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    // Guarded here too - relying on functions/api/send-email.js having
+    // already run to add these is exactly the kind of order-of-operations
+    // assumption that's bitten this app before (see other files' own
+    // repeated guards for the same reason).
+    for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT", "body_html TEXT", "kind TEXT", "step_id TEXT"]) {
+      try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+    }
 
     async function getDaysAfterDue() {
       const row = await db.prepare("SELECT days_after_due FROM reminder_settings WHERE id = 'default'").first();
@@ -135,8 +142,8 @@ export async function onRequest(context) {
         const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
 
         await db.prepare(
-          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId).run();
+          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, ?, ?, ?, ?, ?, 'payment_reminder')"
+        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId, html).run();
         await db.prepare(
           "UPDATE orders SET last_reminder_sent_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).bind(order.id).run();

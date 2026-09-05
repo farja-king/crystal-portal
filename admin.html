@@ -1859,6 +1859,29 @@
     </div>
   </div>
 
+  <!-- Shows exactly what was sent for one logged email (body_html snapshot
+       saved at send time - see the various "INSERT INTO email_log" call
+       sites across functions/api/*.js) - an iframe with srcdoc isolates the
+       email's own inline styles from this page's, and sandbox="" blocks any
+       script execution, which raw email HTML never needs anyway. Opened via
+       openEmailPreview() from Communication History, a production step's
+       own "Emailed" notice, and the review-request "sent" notice. -->
+  <div id="email-preview-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-5 max-h-[85vh] flex flex-col">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <div class="min-w-0">
+          <p id="email-preview-subject" class="text-sm font-semibold text-slate-900 truncate"></p>
+          <p id="email-preview-meta" class="text-xs text-slate-500 mt-0.5"></p>
+        </div>
+        <button type="button" onclick="closeEmailPreview()" class="text-slate-400 hover:text-slate-600 text-xl leading-none shrink-0">&times;</button>
+      </div>
+      <iframe id="email-preview-frame" sandbox="" class="flex-1 w-full rounded-lg border border-slate-200" style="min-height:400px;"></iframe>
+      <div class="flex justify-end mt-4">
+        <button type="button" onclick="closeEmailPreview()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Dashboard "new DTF-Prep orders" popup - see checkNewGangSheetOrders()/
        showNewGangSheetsPopup(). Single-button info dialog, not a Yes/No
        decision, so it's its own small overlay rather than reusing
@@ -7972,6 +7995,25 @@
     // Custom Yes/No overlay used in place of the native confirm() for
     // bulk-pricing actions - resolves true/false rather than blocking the
     // whole tab like a native dialog does.
+    // Opens the "what was actually sent" popup for one logged email.
+    // bodyHtml is only present for an email sent after body_html started
+    // being saved (see the email_log schema change across functions/api/*.js) -
+    // an older send just shows a toast explaining there's nothing saved for it.
+    function openEmailPreview(subject, sentTo, sentAt, bodyHtml) {
+      if (!bodyHtml) {
+        showActionToast('ℹ', "No preview saved for this email - it was sent before this feature was added.");
+        return;
+      }
+      document.getElementById('email-preview-subject').textContent = subject || '(no subject)';
+      document.getElementById('email-preview-meta').textContent = 'To ' + (sentTo || '?') + (sentAt ? ' · ' + ukDateTime(sentAt) : '');
+      document.getElementById('email-preview-frame').srcdoc = bodyHtml;
+      document.getElementById('email-preview-modal').classList.remove('hidden');
+    }
+    function closeEmailPreview() {
+      document.getElementById('email-preview-modal').classList.add('hidden');
+      document.getElementById('email-preview-frame').srcdoc = '';
+    }
+
     function confirmModal(message) {
       return new Promise((resolve) => {
         const modal = document.getElementById('confirm-modal');
@@ -11057,6 +11099,11 @@
           el.innerHTML = '<p class="text-sm text-slate-400">No emails sent yet.</p>';
           return;
         }
+        // Keyed lookup rather than embedding raw body_html straight into an
+        // onclick="" attribute string - the HTML routinely contains quotes
+        // that would break out of the attribute.
+        window.emailPreviewBodies = {};
+        log.forEach((e, idx) => { window.emailPreviewBodies[e.id || idx] = e.body_html || ''; });
         // Same delivery-status vocabulary as the order list's badge (see
         // functions/api/resend-webhook.js) - here every past send gets its
         // own status rather than only the most recent, since "the quote
@@ -11095,6 +11142,7 @@
             ${e.subject ? `<div class="text-xs text-slate-500">Subject: ${escapeHtml(e.subject)}</div>` : ''}
             ${e.delivery_detail && (e.delivery_status === 'bounced' || e.delivery_status === 'complained' || e.delivery_status === 'failed') ? `<div class="text-xs text-rose-600">${escapeHtml(e.delivery_detail)}</div>` : ''}
             <button type="button" onclick="document.getElementById('${activityId}').classList.toggle('hidden')" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1">📊 View activity (${timeline.length})</button>
+            ${e.body_html ? `<button type="button" onclick="openEmailPreview('${escapeAttr(e.subject || '')}', '${escapeAttr(e.sent_to)}', '${escapeAttr(e.sent_at)}', emailPreviewBodies['${escapeAttr(e.id || idx)}'])" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1 ml-2">👁 View email</button>` : ''}
             <div id="${activityId}" class="hidden mt-1 pl-3 border-l-2 border-slate-100 space-y-0.5">
               ${timeline.map((t) => `<div class="text-xs text-slate-500">${EVENT_LABEL[t.event_type] || t.event_type} - ${escapeHtml(ukDateTime(t.occurred_at))}${t.detail ? ` (${escapeHtml(t.detail)})` : ''}</div>`).join('')}
               <div class="text-xs text-slate-400 italic mt-1">Replies aren't tracked here - check the Inbox tab for anything the customer actually wrote back.</div>
@@ -11166,10 +11214,15 @@
       if (!el) return;
       try {
         const res = await fetch(API_PRODUCTION_STEPS_URL + '?order_id=' + encodeURIComponent(orderId), { cache: 'no-store' });
-        const steps = await res.json();
+        const data = await res.json();
         if (!el.isConnected) return;
-        if (!Array.isArray(steps)) throw new Error(steps.error || 'Could not load');
-        renderProductionSteps(orderId, steps);
+        if (!res.ok || !Array.isArray(data.steps)) throw new Error(data.error || 'Could not load');
+        // review_request_email backs the "View email" link on the Order
+        // collected step's "Review request sent" line - kept on the shared
+        // per-order cache (not per-step, since it's one email for the whole
+        // order) so pickupStatusHtml can read it without its own fetch.
+        if (ordersById[orderId]) ordersById[orderId].review_request_email = data.review_request_email || null;
+        renderProductionSteps(orderId, data.steps);
       } catch (e) {
         if (el.isConnected) el.innerHTML = '<p class="text-sm text-red-500">Could not load the production tracker.</p>';
       }
@@ -11183,6 +11236,15 @@
         return;
       }
       const firstPendingIdx = steps.findIndex((s) => s.status !== 'done');
+
+      // Keyed lookups for the "View email" links below - same
+      // raw-HTML-can't-go-in-an-onclick-attribute reasoning as
+      // loadOrderCommHistory's emailPreviewBodies.
+      window.stepEmailPreviewBodies = {};
+      steps.forEach((s) => { if (s.email) window.stepEmailPreviewBodies[s.id] = s.email.body_html || ''; });
+      // One order panel open at a time, so a single value (not a keyed map)
+      // is enough for the "Review request sent" line's own View email link.
+      window.reviewRequestEmailBody = (order && order.review_request_email && order.review_request_email.body_html) || '';
 
       const order = ordersById[orderId];
 
@@ -11225,7 +11287,7 @@
                 </label>` : '';
         const pickupStatusHtml = isCollectedStep && order
           ? `${order.review_email_sent_at
-                ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Review request sent ${escapeHtml(ukDate(order.review_email_sent_at))}</div>`
+                ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Review request sent ${escapeHtml(ukDate(order.review_email_sent_at))}${order.review_request_email && order.review_request_email.body_html ? ` · <button type="button" onclick="openEmailPreview('${escapeAttr((order.review_request_email && order.review_request_email.subject) || '')}', '', '${escapeAttr((order.review_request_email && order.review_request_email.sent_at) || '')}', reviewRequestEmailBody)" class="text-indigo-600 hover:text-indigo-800 font-medium">👁 View email</button>` : ''}</div>`
                 : order.review_email_scheduled_at
                 ? `<div class="text-xs text-sky-600 mt-0.5">🕐 Review request due ${escapeHtml(new Date(order.review_email_scheduled_at).toLocaleString('en-GB'))}
                     <button type="button" onclick="sendPickupReviewNow('${escapeAttr(orderId)}')" class="ml-1 text-indigo-600 hover:text-indigo-800 font-semibold underline">Send now</button>
@@ -11263,7 +11325,7 @@
               </div>
             </div>
             <textarea placeholder="Notes…" onblur="saveStepNotes('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" rows="1" class="w-full text-xs text-slate-600 bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 mt-1 resize-y">${escapeHtml(s.notes || '')}</textarea>
-            ${s.notified_at ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Emailed ${escapeHtml(ukDate(s.notified_at))}</div>` : ''}
+            ${s.notified_at ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Emailed ${escapeHtml(ukDate(s.notified_at))}${s.email && s.email.body_html ? ` · <button type="button" onclick="openEmailPreview('${escapeAttr(s.email.subject || '')}', '', '${escapeAttr(s.email.sent_at || '')}', stepEmailPreviewBodies['${escapeAttr(s.id)}'])" class="text-indigo-600 hover:text-indigo-800 font-medium">👁 View email</button>` : ''}</div>` : ''}
             ${pickupStatusHtml}
             ${imagesHtml ? `<div class="mt-1">${imagesHtml}</div>` : ''}
           </div>

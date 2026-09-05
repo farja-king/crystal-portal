@@ -48,6 +48,9 @@ export async function onRequest(context) {
       sent_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
+  for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT", "body_html TEXT", "kind TEXT", "step_id TEXT"]) {
+    try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+  }
 
   const { customer_id, preview } = await request.json();
   if (!customer_id) return json({ error: "customer_id required" }, 400);
@@ -158,8 +161,8 @@ export async function onRequest(context) {
     // each of that invoice's own Communication History panel too - there's
     // no single order_id this email is "about", and email_log requires one.
     await db.batch(invoices.map((o) =>
-      db.prepare("INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)")
-        .bind(crypto.randomUUID(), o.id, to, subject, resendEmailId)
+      db.prepare("INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, ?, ?, ?, ?, ?, 'customer_statement')")
+        .bind(crypto.randomUUID(), o.id, to, subject, resendEmailId, html)
     ));
 
     return json({ success: true, sent: true });

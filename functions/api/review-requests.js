@@ -65,6 +65,9 @@ export async function onRequest(context) {
         sent_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT", "body_html TEXT", "kind TEXT", "step_id TEXT"]) {
+      try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+    }
 
     async function sendReviewEmail(order) {
       if (!env.RESEND_API_KEY) return { sent: false, reason: "Email isn't set up yet - the RESEND_API_KEY secret is missing." };
@@ -95,8 +98,8 @@ export async function onRequest(context) {
         try {
           const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
           await db.prepare(
-            "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-          ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId).run();
+            "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, ?, ?, ?, ?, ?, 'review_request')"
+          ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId, html).run();
         } catch (e) {
           // email_log couldn't be written to - the email still sent either way
         }

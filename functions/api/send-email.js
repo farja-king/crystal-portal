@@ -85,7 +85,7 @@ export async function onRequest(context) {
     // Resend returns it in the POST /emails response body. delivery_status
     // starts NULL ("sent, no confirmation yet") until a webhook event
     // updates it - never assume "sent" means "arrived".
-    for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT"]) {
+    for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT", "body_html TEXT", "kind TEXT", "step_id TEXT"]) {
       try {
         await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run();
       } catch {
@@ -99,12 +99,17 @@ export async function onRequest(context) {
     // resend-webhook.js's email_events table, which keeps every delivered/
     // opened/clicked/bounced event separately rather than the single
     // latest-status columns on this row, so "opened 3 times" is answerable
-    // (the "View activity" report in admin.html reads this).
+    // (the "View activity" report in admin.html reads this). body_html is
+    // a snapshot of exactly what was sent, saved at the moment it went out
+    // (every kind of email this app sends now saves one - see the various
+    // "INSERT INTO email_log" call sites) - it's what backs the "View
+    // email" popup, and only ever missing for an email sent before that
+    // was added.
     if (request.method === "GET") {
       const orderId = new URL(request.url).searchParams.get("order_id");
       if (!orderId) return json({ error: "order_id is required" }, 400);
       const { results } = await db.prepare(
-        "SELECT sent_to, subject, sent_at, resend_email_id, delivery_status, delivery_status_at, delivery_detail FROM email_log WHERE order_id = ? ORDER BY sent_at DESC"
+        "SELECT id, sent_to, subject, sent_at, resend_email_id, delivery_status, delivery_status_at, delivery_detail, body_html FROM email_log WHERE order_id = ? ORDER BY sent_at DESC"
       ).bind(orderId).all();
 
       const emailIds = results.map((r) => r.resend_email_id).filter(Boolean);
@@ -364,8 +369,8 @@ export async function onRequest(context) {
         "UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP, email_sent_to = ?, email_sent_count = email_sent_count + 1 WHERE id = ?"
       ).bind(to, o.id).run();
       await db.prepare(
-        "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-      ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId).run();
+        "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html) VALUES (?, ?, ?, ?, ?, ?)"
+      ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId, html).run();
       if (pendingProof) {
         await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(pendingProof.id).run();
       }
@@ -639,8 +644,8 @@ export async function onRequest(context) {
       "UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP, email_sent_to = ?, email_sent_count = email_sent_count + 1 WHERE id = ?"
     ).bind(to, o.id).run();
     await db.prepare(
-      "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, ?, ?, ?, ?)"
-    ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId).run();
+      "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId, html).run();
     if (pendingProof) {
       await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(pendingProof.id).run();
     }

@@ -55,6 +55,9 @@ export async function onRequest(context) {
         sent_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
+    for (const col of ["resend_email_id TEXT", "delivery_status TEXT", "delivery_status_at TEXT", "delivery_detail TEXT", "body_html TEXT", "kind TEXT", "step_id TEXT"]) {
+      try { await db.prepare(`ALTER TABLE email_log ADD COLUMN ${col}`).run(); } catch {}
+    }
 
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
     if (!env.RESEND_API_KEY) {
@@ -90,8 +93,8 @@ export async function onRequest(context) {
         const resendEmailId = await res.json().then((r) => r.id).catch(() => null);
 
         await db.prepare(
-          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id) VALUES (?, NULL, ?, ?, ?)"
-        ).bind(crypto.randomUUID(), to, subject, resendEmailId).run();
+          "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, NULL, ?, ?, ?, ?, 'reorder_reminder')"
+        ).bind(crypto.randomUUID(), to, subject, resendEmailId, html).run();
         await db.prepare(
           "UPDATE customers SET reorder_reminder_sent_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).bind(customer.id).run();
