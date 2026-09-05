@@ -11355,6 +11355,13 @@
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, title }),
         });
+        // Same reload-or-go-stale reasoning as saveStepNotify: the "mark
+        // done" button's onclick bakes in this step's title at render time,
+        // and re-tests it against /collected/i to decide whether to open
+        // the review-request popup - renaming a step to or away from
+        // "Order collected" without reloading would leave that check
+        // running against the pre-rename title.
+        loadProductionSteps(orderId);
         loadOrders(); // the badge on the list may be echoing this step's title
       } catch (e) {
         showActionToast('⚠', 'Could not save: ' + e.message);
