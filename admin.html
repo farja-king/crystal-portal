@@ -7610,7 +7610,7 @@
                 ${g.brand ? '<span class="text-xs text-slate-400 ml-2">' + escapeHtml(g.brand) + '</span>' : ''}
               </td>
               <td class="p-3 text-right text-xs text-slate-500" colspan="2">${variants.length} variant${variants.length === 1 ? '' : 's'}</td>
-              <td class="p-3 text-right" colspan="2" onclick="event.stopPropagation()">
+              <td class="p-3 text-right" colspan="3" onclick="event.stopPropagation()">
                 <div class="flex items-center justify-end gap-1.5">
                   <span class="text-xs text-slate-400">${pricedCount} priced</span>
                   £<input type="number" step="0.01" min="0" value="${groupPrice}" placeholder="${pricesMixed ? 'Mixed' : '-'}" title="Set the sale price of all ${variants.length} variant(s) of ${escapeAttr(g.supplier_code)} at once" onchange="applyGroupPrice('${escapeAttr(g.supplier_code)}', this.value)" class="w-20 text-right rounded border ${pricesMixed ? 'border-amber-400 bg-amber-50' : 'border-slate-300'} px-2 py-1 text-sm" />
