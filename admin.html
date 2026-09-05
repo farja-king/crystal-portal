@@ -7578,6 +7578,23 @@
           // the group header, so there's exactly one of each per code.
           const onWebsite = variants.length > 0 && !!variants[0].on_website;
           const anyPriced = pricedCount > 0;
+          // Most codes charge the same sale price across every colour/size
+          // (a garment's price doesn't usually depend on which colour it
+          // is) - editing that price used to mean opening the group and
+          // editing (or "Apply to all filtered"-ing) every individual
+          // variant row. One field here sets all of them at once via
+          // apply_pricing's exact supplier_code match (see products.js) -
+          // scoped unambiguously to this one code, no search-filter
+          // footgun like the per-row "Apply to all filtered" button had.
+          // Left blank (not showing any one variant's price) when the
+          // variants genuinely have different prices already, so editing
+          // it always means "set ALL of them", never "silently keep most
+          // of them and only nudge one".
+          const priceValues = variants.map((v) => v.sell_price);
+          const uniquePrices = new Set(priceValues.map((p) => (p === null || p === undefined ? null : Number(p))));
+          const pricesMixed = uniquePrices.size > 1;
+          const groupPrice = !pricesMixed && priceValues.length && priceValues[0] !== null && priceValues[0] !== undefined
+            ? Number(priceValues[0]).toFixed(2) : '';
           const groupPublishAction = onWebsite
             ? `<button type="button" title="Remove this product from embroidery.click" onclick="event.stopPropagation(); openUnpublishModal('${escapeAttr(g.supplier_code)}')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold">Unpublish</button>`
             : anyPriced
@@ -7593,7 +7610,12 @@
                 ${g.brand ? '<span class="text-xs text-slate-400 ml-2">' + escapeHtml(g.brand) + '</span>' : ''}
               </td>
               <td class="p-3 text-right text-xs text-slate-500" colspan="2">${variants.length} variant${variants.length === 1 ? '' : 's'}</td>
-              <td class="p-3 text-right text-xs text-slate-500" colspan="2">${pricedCount} priced</td>
+              <td class="p-3 text-right" colspan="2" onclick="event.stopPropagation()">
+                <div class="flex items-center justify-end gap-1.5">
+                  <span class="text-xs text-slate-400">${pricedCount} priced</span>
+                  £<input type="number" step="0.01" min="0" value="${groupPrice}" placeholder="${pricesMixed ? 'Mixed' : '-'}" title="Set the sale price of all ${variants.length} variant(s) of ${escapeAttr(g.supplier_code)} at once" onchange="applyGroupPrice('${escapeAttr(g.supplier_code)}', this.value)" class="w-20 text-right rounded border ${pricesMixed ? 'border-amber-400 bg-amber-50' : 'border-slate-300'} px-2 py-1 text-sm" />
+                </div>
+              </td>
               <td class="p-3 text-center" onclick="event.stopPropagation()" title="Manually correct the on-website flag without publishing/unpublishing the actual page - use Publish/Unpublish for the normal flow">
                 <input type="checkbox" ${onWebsite ? 'checked' : ''} onchange="toggleOnWebsite('${escapeAttr(g.supplier_code)}', this.checked)" class="rounded border-slate-300" />
               </td>
@@ -8269,6 +8291,49 @@
       } catch (e) {
         msg.className = 'text-sm mt-3 text-red-600';
         msg.textContent = 'Could not apply price: ' + e.message;
+      }
+    }
+
+    // The Garment Catalog group header's own "set the sale price of this
+    // whole code" field - see the comment on groupPrice/pricesMixed in
+    // renderCatalogGroups. Scoped by an EXACT supplier_code match
+    // (products.js's apply_pricing), not a text search, so there's no way
+    // for this to spill onto a different code the way the old per-row
+    // "Apply to all filtered" button could when its search box was empty.
+    async function applyGroupPrice(code, rawValue) {
+      const group = lastCatalogGroups.find((g) => g.supplier_code === code);
+      if (!group) return;
+      const variantCount = (group.variants || []).length;
+
+      if (rawValue.trim() === '') { renderCatalogGroups(lastCatalogGroups); return; }
+      const priceNum = Number(rawValue);
+      if (!isFinite(priceNum) || priceNum < 0) {
+        showActionToast('⚠', 'Enter a valid price');
+        renderCatalogGroups(lastCatalogGroups);
+        return;
+      }
+
+      const ok = await confirmModal('Set the sale price of all ' + variantCount + ' variant(s) of ' + code + ' to £' + priceNum.toFixed(2) + '?\n\nThis overwrites any price already set on them.');
+      if (!ok) { renderCatalogGroups(lastCatalogGroups); return; }
+
+      try {
+        const res = await fetch(API_PRODUCTS_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apply_pricing: { mode: 'fixed', price: priceNum, supplier_code: code } }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        group.variants.forEach((v) => {
+          v.sell_price = priceNum;
+          v.profit = round2(priceNum - (Number(v.cost_price) || 0) * (1 + (Number(v.vat_rate) || 0)));
+        });
+        renderCatalogGroups(lastCatalogGroups);
+        showActionToast('✓', 'Priced ' + (data.updated ?? variantCount) + ' variant(s) of ' + code + ' at £' + priceNum.toFixed(2) + '.');
+        loadFacets();
+      } catch (e) {
+        showActionToast('⚠', 'Could not set price: ' + e.message);
+        renderCatalogGroups(lastCatalogGroups);
       }
     }
 

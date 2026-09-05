@@ -882,8 +882,14 @@ export async function onRequest(context) {
 
         const where = [];
         const binds = [];
+        // supplier_code is an EXACT match (unlike q's LIKE) - the "set this
+        // one code's price" field on the Garment Catalog's group header
+        // uses this, since a LIKE match on the code (e.g. "RX1") would also
+        // catch RX101/RX151/RX100 and any other code sharing that
+        // substring, not just the single code the header row is for.
+        if (a.supplier_code) { where.push(`supplier_code = ?${binds.length + 1}`); binds.push(a.supplier_code); }
         if (a.q) {
-          where.push("(supplier_code LIKE ?1 OR title LIKE ?1 OR colour LIKE ?1 OR brand LIKE ?1)");
+          where.push(`(supplier_code LIKE ?${binds.length + 1} OR title LIKE ?${binds.length + 1} OR colour LIKE ?${binds.length + 1} OR brand LIKE ?${binds.length + 1})`);
           binds.push(`%${a.q}%`);
         }
         for (const [k, col] of [["supplier", "supplier"], ["brand", "brand"], ["category", "category"]]) {
