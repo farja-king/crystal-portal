@@ -11236,6 +11236,7 @@
         return;
       }
       const firstPendingIdx = steps.findIndex((s) => s.status !== 'done');
+      const order = ordersById[orderId];
 
       // Keyed lookups for the "View email" links below - same
       // raw-HTML-can't-go-in-an-onclick-attribute reasoning as
@@ -11245,8 +11246,6 @@
       // One order panel open at a time, so a single value (not a keyed map)
       // is enough for the "Review request sent" line's own View email link.
       window.reviewRequestEmailBody = (order && order.review_request_email && order.review_request_email.body_html) || '';
-
-      const order = ordersById[orderId];
 
       el.innerHTML = steps.map((s, idx) => {
         const isDone = s.status === 'done';
