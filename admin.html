@@ -8159,8 +8159,20 @@
 
       const hasFilter = !!(f.q || f.supplier || f.brand || f.category) || onlyUnpriced;
       const scope = hasFilter ? 'the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
-      const ok = await confirmModal('Set the sell price of ' + scope + ' using a ' + percent + '% ' + mode + '?\n\nThis overwrites any sell price already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'));
-      if (!ok) return;
+      if (!hasFilter) {
+        // This box (unlike the per-row "Apply to all filtered" quick
+        // button) is deliberately allowed to reprice the entire catalog
+        // when nothing's filtered - but a plain Yes/No dialog is too easy
+        // to click past without registering just how big "EVERY product"
+        // is, which is exactly what happened here twice in a row on
+        // 2026-09-05. Typing the word out is a genuine extra beat, not
+        // just another button to click.
+        const typed = await promptModal('This will reprice EVERY product in the entire catalog (' + catalogVariantTotal.toLocaleString() + ' items) - not just what you can currently see.\n\nType EVERYTHING to confirm:', '', 'text');
+        if ((typed || '').trim().toUpperCase() !== 'EVERYTHING') return;
+      } else {
+        const ok = await confirmModal('Set the sell price of ' + scope + ' using a ' + percent + '% ' + mode + '?\n\nThis overwrites any sell price already set on those products' + (onlyUnpriced ? ' (except ones you have already priced).' : '.'));
+        if (!ok) return;
+      }
 
       msg.className = 'text-sm mt-3 text-slate-600';
       msg.textContent = 'Applying…';
@@ -8207,9 +8219,23 @@
       const priceNum = Number(price);
       if (!isFinite(priceNum) || priceNum < 0) { showActionToast('✓', 'Enter a valid price'); return; }
 
+      // This button's entire purpose is "apply to whatever's currently
+      // filtered" - it should never silently fall back to repricing the
+      // WHOLE catalog just because the search box happens to be empty at
+      // the moment it's clicked (e.g. typed into one variant's price box
+      // while looking at an expanded group, without the search box itself
+      // holding that code). That silent whole-catalog fallback is exactly
+      // what overwrote every single product's price to one value, twice in
+      // a row, on 2026-09-05 - refusing outright here, rather than asking
+      // for confirmation, since "the whole catalog" is never what this
+      // specific control is for (use the Bulk pricing box for that,
+      // deliberately, with its own much louder confirmation).
       const hasFilter = !!(f.q || f.supplier || f.brand || f.category);
-      const scope = hasFilter ? 'the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter' : 'EVERY product in the catalog';
-      const ok = await confirmModal('Set the sell price of ' + scope + ' to £' + priceNum.toFixed(2) + '?\n\nThis will overwrite any price already set on those products.');
+      if (!hasFilter) {
+        showActionToast('⚠', 'Search or filter for the product(s) you mean first - this only applies to what\'s currently filtered, never the whole catalog.');
+        return;
+      }
+      const ok = await confirmModal('Set the sell price of the ' + catalogVariantTotal.toLocaleString() + ' products matching your current filter to £' + priceNum.toFixed(2) + '?\n\nThis will overwrite any price already set on those products.');
       if (!ok) return;
 
       msg.className = 'text-sm mt-3 text-slate-600';
@@ -8223,11 +8249,14 @@
             apply_pricing: {
               mode: 'fixed',
               price: priceNum,
+              // hasFilter is always true here (returned above otherwise) -
+              // confirm_all is never sent, so the server's own "refuse an
+              // unfiltered sweep without confirm_all" guard stays a real
+              // backstop rather than something this call always opts past.
               q: f.q || undefined,
               supplier: f.supplier || undefined,
               brand: f.brand || undefined,
               category: f.category || undefined,
-              confirm_all: hasFilter ? undefined : true,
             },
           }),
         });
