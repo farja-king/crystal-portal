@@ -7595,6 +7595,18 @@
           const pricesMixed = uniquePrices.size > 1;
           const groupPrice = !pricesMixed && priceValues.length && priceValues[0] !== null && priceValues[0] !== undefined
             ? Number(priceValues[0]).toFixed(2) : '';
+          // Representative Profit/Margin for the header row - uses the
+          // first variant's cost/VAT the same way the price field uses its
+          // sell price, so it's only exact when cost is also uniform
+          // across the code (common, but not guaranteed - a code can cost
+          // more per size). Good enough for an at-a-glance summary; the
+          // real per-variant figures are always in the expanded rows below.
+          const repCost = variants.length ? Number(variants[0].cost_price) || 0 : 0;
+          const repVatRate = variants.length ? Number(variants[0].vat_rate) || 0 : 0;
+          const repPriceNum = groupPrice !== '' ? Number(groupPrice) : null;
+          const repProfit = repPriceNum === null ? null : round2(repPriceNum - repCost * (1 + repVatRate));
+          const repProfitClass = repProfit === null ? 'text-slate-400' : (repProfit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold');
+          const repMargin = repPriceNum && repPriceNum > 0 && repProfit !== null ? ((repProfit / repPriceNum) * 100).toFixed(1) + '%' : '-';
           const groupPublishAction = onWebsite
             ? `<button type="button" title="Remove this product from embroidery.click" onclick="event.stopPropagation(); openUnpublishModal('${escapeAttr(g.supplier_code)}')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold">Unpublish</button>`
             : anyPriced
@@ -7609,13 +7621,12 @@
                 <span class="text-slate-700 ml-2">${escapeHtml(g.title)}</span>
                 ${g.brand ? '<span class="text-xs text-slate-400 ml-2">' + escapeHtml(g.brand) + '</span>' : ''}
               </td>
-              <td class="p-3 text-right text-xs text-slate-500" colspan="2">${variants.length} variant${variants.length === 1 ? '' : 's'}</td>
-              <td class="p-3 text-right" colspan="3" onclick="event.stopPropagation()">
-                <div class="flex items-center justify-end gap-1.5">
-                  <span class="text-xs text-slate-400">${pricedCount} priced</span>
-                  £<input type="number" step="0.01" min="0" value="${groupPrice}" placeholder="${pricesMixed ? 'Mixed' : '-'}" title="Set the sale price of all ${variants.length} variant(s) of ${escapeAttr(g.supplier_code)} at once" onchange="applyGroupPrice('${escapeAttr(g.supplier_code)}', this.value)" class="w-20 text-right rounded border ${pricesMixed ? 'border-amber-400 bg-amber-50' : 'border-slate-300'} px-2 py-1 text-sm" />
-                </div>
+              <td class="p-3 text-right text-xs text-slate-500" colspan="2">${variants.length} variant${variants.length === 1 ? '' : 's'}, ${pricedCount} priced</td>
+              <td class="p-3 text-right" onclick="event.stopPropagation()">
+                £<input type="number" step="0.01" min="0" value="${groupPrice}" placeholder="${pricesMixed ? 'Mixed' : '-'}" title="Set the sale price of all ${variants.length} variant(s) of ${escapeAttr(g.supplier_code)} at once" onchange="applyGroupPrice('${escapeAttr(g.supplier_code)}', this.value)" class="w-20 text-right rounded border ${pricesMixed ? 'border-amber-400 bg-amber-50' : 'border-slate-300'} px-2 py-1 text-sm" />
               </td>
+              <td class="p-3 text-right text-xs ${repProfitClass}">${repProfit === null ? '-' : money(repProfit)}</td>
+              <td class="p-3 text-right text-xs text-slate-500">${repMargin}</td>
               <td class="p-3 text-center" onclick="event.stopPropagation()" title="Manually correct the on-website flag without publishing/unpublishing the actual page - use Publish/Unpublish for the normal flow">
                 <input type="checkbox" ${onWebsite ? 'checked' : ''} onchange="toggleOnWebsite('${escapeAttr(g.supplier_code)}', this.checked)" class="rounded border-slate-300" />
               </td>
