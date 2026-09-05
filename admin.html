@@ -7568,6 +7568,21 @@
 
           const groupIds = variants.map((v) => v.id);
           const groupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedCatalogIds.has(id));
+          // on_website lives on the shared PHYSICAL row now (see products.js's
+          // file header on the catalog consolidation) - every variant of a
+          // code carries the same value, so "Publish"/"Unpublish"/the on-site
+          // checkbox are genuinely one action for the whole code, not per
+          // colour/size. They used to render on every single variant row
+          // (repeating the SAME action 70+ times for a code like BB45,
+          // looking like it needed clicking on each one) - moved here, to
+          // the group header, so there's exactly one of each per code.
+          const onWebsite = variants.length > 0 && !!variants[0].on_website;
+          const anyPriced = pricedCount > 0;
+          const groupPublishAction = onWebsite
+            ? `<button type="button" title="Remove this product from embroidery.click" onclick="event.stopPropagation(); openUnpublishModal('${escapeAttr(g.supplier_code)}')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold">Unpublish</button>`
+            : anyPriced
+            ? `<button type="button" title="Publish this product to embroidery.click - all its priced colours/sizes go live at once" onclick="event.stopPropagation(); openAddProductModal('${escapeAttr(g.supplier_code)}')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold">Publish</button>`
+            : `<span class="text-xs text-slate-300" title="Price at least one variant before publishing">Publish</span>`;
           const headerRow = `
             <tr class="bg-slate-50 hover:bg-slate-100 transition" data-group-toggle="${escapeAttr(g.supplier_code)}">
               <td class="p-3" onclick="event.stopPropagation()"><input type="checkbox" class="rounded border-slate-300" ${groupAllSelected ? 'checked' : ''} onchange="toggleCatalogGroupSelect('${escapeAttr(g.supplier_code)}', this.checked)" /></td>
@@ -7578,7 +7593,11 @@
                 ${g.brand ? '<span class="text-xs text-slate-400 ml-2">' + escapeHtml(g.brand) + '</span>' : ''}
               </td>
               <td class="p-3 text-right text-xs text-slate-500" colspan="2">${variants.length} variant${variants.length === 1 ? '' : 's'}</td>
-              <td class="p-3 text-right text-xs text-slate-500" colspan="4">${pricedCount} priced</td>
+              <td class="p-3 text-right text-xs text-slate-500" colspan="2">${pricedCount} priced</td>
+              <td class="p-3 text-center" onclick="event.stopPropagation()" title="Manually correct the on-website flag without publishing/unpublishing the actual page - use Publish/Unpublish for the normal flow">
+                <input type="checkbox" ${onWebsite ? 'checked' : ''} onchange="toggleOnWebsite('${escapeAttr(g.supplier_code)}', this.checked)" class="rounded border-slate-300" />
+              </td>
+              <td class="p-3 text-right" onclick="event.stopPropagation()">${groupPublishAction}</td>
             </tr>`;
 
           const detailRows = variants.map((p) => {
@@ -7605,7 +7624,7 @@
                 '<td class="p-2 text-right"><input type="number" step="0.01" min="0" value="' + (sell === null ? '' : sell.toFixed(2)) + '" data-sell-id="' + escapeAttr(p.id) + '" placeholder="-" class="w-24 text-right rounded-lg border border-slate-300 px-2 py-1 text-slate-900" /></td>' +
                 '<td class="p-2 text-right text-xs text-slate-400">auto</td>' +
                 '<td class="p-2 text-right text-xs text-slate-400">auto</td>' +
-                '<td class="p-2 text-center"><input type="checkbox" ' + (p.on_website ? 'checked' : '') + ' onchange="toggleOnWebsite(\'' + escapeAttr(p.id) + '\', this.checked)" class="rounded border-slate-300" /></td>' +
+                '<td class="p-2"></td>' +
                 '<td class="p-2 text-right whitespace-nowrap">' +
                   '<button type="button" onclick="saveCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold mr-2">Save</button>' +
                   '<button type="button" onclick="cancelCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-slate-400 hover:text-slate-600 text-xs">Cancel</button>' +
@@ -7630,14 +7649,8 @@
                 '<button type="button" title="Price history" onclick="showPriceHistory(\'' + escapeAttr(p.id) + '\', \'' + escapeAttr(p.supplier_code) + '\')" class="text-slate-400 hover:text-slate-600 text-xs align-middle">🕘</button></td>' +
               '<td class="p-3 text-right ' + profitClass + '">' + (profit === null ? '-' : money(profit)) + '</td>' +
               '<td class="p-3 text-right text-slate-600">' + margin + '</td>' +
-              '<td class="p-3 text-center"><input type="checkbox" ' + (p.on_website ? 'checked' : '') + ' onchange="toggleOnWebsite(\'' + escapeAttr(p.id) + '\', this.checked)" class="rounded border-slate-300" /></td>' +
+              '<td class="p-3"></td>' +
               '<td class="p-3 text-right whitespace-nowrap">' +
-                (!p.on_website && p.supplier_code && sell !== null
-                  ? '<button type="button" title="Publish this product to embroidery.click" onclick="openAddProductModal(\'' + escapeAttr(p.supplier_code) + '\')" class="text-emerald-600 hover:text-emerald-800 text-xs font-semibold mr-2">Publish</button>'
-                  : '') +
-                (p.on_website && p.supplier_code
-                  ? '<button type="button" title="Remove this product from embroidery.click" onclick="openUnpublishModal(\'' + escapeAttr(p.supplier_code) + '\')" class="text-amber-600 hover:text-amber-800 text-xs font-semibold mr-2">Unpublish</button>'
-                  : '') +
                 '<button type="button" onclick="startCatalogRowEdit(\'' + escapeAttr(p.id) + '\')" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold mr-2">Edit</button>' +
                 '<button type="button" onclick="deleteCatalogProduct(\'' + escapeAttr(p.id) + '\')" class="text-rose-500 hover:text-rose-700 text-xs font-semibold">Delete</button>' +
               '</td>' +
@@ -7726,18 +7739,31 @@
 
     // "On my website" used to be set automatically by the price-sync job -
     // now that syncing prices from the live site has been removed (it was
-    // the source of a real pricing corruption incident), this is the only
-    // way to mark a product as listed on embroidery.click.
-    async function toggleOnWebsite(id, checked) {
+    // the source of a real pricing corruption incident), this is a manual
+    // escape hatch for correcting the flag without going through Publish/
+    // Unpublish's full page-build/teardown - e.g. the live page was already
+    // handled some other way and the flag just needs to match reality.
+    //
+    // on_website lives on the one shared PHYSICAL row a code now sits on
+    // (see products.js's file header on the catalog consolidation) - every
+    // colour/size of the code carries the same value, so this only ever
+    // needs to touch ONE of the group's variant ids to flip the flag for
+    // the whole code, and updates every variant in the group's local cache
+    // (not just the one id sent) so the header's own state stays in sync
+    // without a full reload.
+    async function toggleOnWebsite(supplierCode, checked) {
+      const group = lastCatalogGroups.find((g) => g.supplier_code === supplierCode);
+      const anyVariant = group && group.variants && group.variants[0];
+      if (!anyVariant) return;
       try {
         const res = await fetch(API_PRODUCTS_URL, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, on_website: checked ? 1 : 0 }),
+          body: JSON.stringify({ id: anyVariant.id, on_website: checked ? 1 : 0 }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const row = lastCatalogGroups.flatMap((g) => g.variants || []).find((v) => v.id === id);
-        if (row) row.on_website = checked ? 1 : 0;
+        group.variants.forEach((v) => { v.on_website = checked ? 1 : 0; });
+        renderCatalogGroups(lastCatalogGroups);
       } catch (e) {
         showActionToast('⚠', 'Could not update On Website: ' + e.message);
         renderCatalogGroups(lastCatalogGroups);
