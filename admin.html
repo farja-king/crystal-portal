@@ -708,8 +708,14 @@
           <label class="text-sm md:col-span-2">
             <span class="block font-medium text-slate-700 mb-1">Search</span>
             <div class="relative">
-              <input id="cat-q" placeholder="Code, title, colour or brand…" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900" />
+              <input id="cat-q" autocomplete="off" placeholder="Code, title, colour or brand…" class="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-2 text-slate-900" />
               <button type="button" onclick="clearSearchField('cat-q')" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+              <!-- Recent-searches dropdown - see renderCatalogSearchSuggestions()/
+                   saveRecentCatalogSearch(). Stored in this browser's localStorage
+                   only, not synced anywhere - replaces Chrome's own unreliable
+                   native autofill for this field (autocomplete="off" above turns
+                   that off), so what's shown here is actually consistent. -->
+              <div id="cat-q-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-white rounded-lg border border-slate-200 shadow-lg z-20 max-h-56 overflow-y-auto"></div>
             </div>
           </label>
           <label class="text-sm">
@@ -8354,11 +8360,87 @@
       const el = document.getElementById(id);
       const evt = el.tagName === 'INPUT' && el.type !== 'checkbox' ? 'input' : 'change';
       el.addEventListener(evt, () => {
-        if (id === 'cat-q') toggleSearchClear(el);
+        if (id === 'cat-q') { toggleSearchClear(el); renderCatalogSearchSuggestions(); }
         clearTimeout(catalogFilterTimer);
         catalogFilterTimer = setTimeout(() => loadCatalog(0), evt === 'input' ? 350 : 0);
       });
     });
+
+    // Recent Garment Catalog searches - kept in THIS browser's localStorage
+    // only (never sent anywhere, no D1/server cost at all), replacing
+    // Chrome's own native autofill for this field (turned off via
+    // autocomplete="off" on #cat-q) - that was showing an inconsistent,
+    // uncontrollable mix of old values Chrome happened to remember. This is
+    // deliberately simple: last 8 distinct searches, most recent first.
+    const RECENT_CATALOG_SEARCHES_KEY = 'crystalPortalRecentCatalogSearches';
+    const RECENT_CATALOG_SEARCHES_MAX = 8;
+
+    function getRecentCatalogSearches() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(RECENT_CATALOG_SEARCHES_KEY) || '[]');
+        return Array.isArray(raw) ? raw.filter((s) => typeof s === 'string') : [];
+      } catch {
+        return []; // private browsing, storage disabled, or corrupted value - just no history
+      }
+    }
+
+    function saveRecentCatalogSearch(term) {
+      const trimmed = term.trim();
+      if (!trimmed) return;
+      try {
+        const existing = getRecentCatalogSearches().filter((s) => s.toLowerCase() !== trimmed.toLowerCase());
+        existing.unshift(trimmed);
+        localStorage.setItem(RECENT_CATALOG_SEARCHES_KEY, JSON.stringify(existing.slice(0, RECENT_CATALOG_SEARCHES_MAX)));
+      } catch {
+        // storage full/disabled - losing history silently is fine, this is a convenience feature only
+      }
+    }
+
+    // Shown on focus (every recent search) and narrowed as you type (only
+    // ones that still match) - hidden entirely once nothing matches, so it
+    // never sits there suggesting something that would return no results.
+    function renderCatalogSearchSuggestions() {
+      const input = document.getElementById('cat-q');
+      const box = document.getElementById('cat-q-suggestions');
+      const typed = input.value.trim().toLowerCase();
+      const matches = getRecentCatalogSearches().filter((s) => !typed || s.toLowerCase().includes(typed));
+      // Typing the exact thing that's already the only/top history entry
+      // isn't worth a dropdown for - nothing left to pick that isn't just
+      // what's already there.
+      if (!matches.length || (matches.length === 1 && matches[0].toLowerCase() === typed)) {
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        return;
+      }
+      box.innerHTML = matches.map((s) => `
+        <button type="button" onmousedown="event.preventDefault()" onclick="chooseCatalogSearchSuggestion('${escapeAttr(s)}')" class="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">
+          🕘 ${escapeHtml(s)}
+        </button>`).join('');
+      box.classList.remove('hidden');
+    }
+
+    function chooseCatalogSearchSuggestion(term) {
+      const input = document.getElementById('cat-q');
+      input.value = term;
+      toggleSearchClear(input);
+      document.getElementById('cat-q-suggestions').classList.add('hidden');
+      clearTimeout(catalogFilterTimer);
+      loadCatalog(0);
+      input.focus();
+    }
+
+    (() => {
+      const input = document.getElementById('cat-q');
+      input.addEventListener('focus', renderCatalogSearchSuggestions);
+      // A short delay (not onblur-immediate) so a click on a suggestion
+      // button - which itself prevents the default mousedown that would
+      // otherwise blur the input first - still has time to fire its own
+      // click handler before the dropdown disappears.
+      input.addEventListener('blur', () => {
+        saveRecentCatalogSearch(input.value);
+        setTimeout(() => document.getElementById('cat-q-suggestions').classList.add('hidden'), 150);
+      });
+    })();
 
     document.addEventListener('change', (e) => {
       const input = e.target.closest('[data-sell-id]');
