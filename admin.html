@@ -11378,6 +11378,15 @@
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, notify_customer: notifyCustomer }),
         });
+        // The "mark done" button's onclick bakes in this step's current
+        // notify_customer value at render time (see renderProductionSteps) -
+        // without reloading here, ticking this checkbox then immediately
+        // clicking "mark done" would fire the button's STALE pre-tick value,
+        // silently skipping the "Order collected" review-request popup and
+        // falling through to a plain done+generic-email instead. Found in
+        // production: exactly this sequence sent "Thanks for visiting!"
+        // instead of ever opening the scheduler.
+        loadProductionSteps(orderId);
       } catch (e) {
         showActionToast('⚠', 'Could not save: ' + e.message);
       }
