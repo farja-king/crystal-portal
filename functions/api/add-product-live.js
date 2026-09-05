@@ -49,6 +49,7 @@ export async function onRequest(context) {
     "collections/gilets-jackets-category.html": "Gilets & Jackets",
     "collections/headwear-category.html": "Headwear",
     "collections/leavers-category.html": "Leavers",
+    "collections/hospitality-category.html": "Hospitality",
   };
 
   if (request.method === "GET") {
