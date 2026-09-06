@@ -88,7 +88,7 @@ export async function onRequest(context) {
 
         const notes = String(data.notes || "").trim().slice(0, 2000);
         await db.prepare(
-          "UPDATE customers SET dtf_credit_status = 'pending', dtf_credit_notes = ? WHERE id = ?"
+          "UPDATE customers SET dtf_credit_status = 'pending', dtf_credit_notes = ?, dtf_credit_seen_by_staff = 0 WHERE id = ?"
         ).bind(notes, customerId).run();
 
         return json({ success: true });

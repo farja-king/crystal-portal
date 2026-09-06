@@ -60,11 +60,37 @@ export async function onRequest(context) {
         return json(results);
       }
 
+      // The Dashboard's "new DTF credit application" popup - same
+      // seen_by_staff pattern as gang-sheet-uploads.js's count_new and
+      // payments.js's ?new=1, just scoped to customers.dtf_credit_status
+      // instead of its own table.
+      if (view === "new_credit") {
+        const { results } = await db.prepare(`
+          SELECT id, name, email, dtf_credit_notes
+          FROM customers
+          WHERE dtf_credit_status = 'pending' AND dtf_credit_seen_by_staff = 0 AND deleted_at IS NULL
+          ORDER BY created_at ASC
+        `).all();
+        return json(results);
+      }
+
       return json({ error: "Unknown view" }, 400);
     }
 
     if (request.method === "PUT") {
       const data = await request.json();
+
+      // Dismissing the new-credit-application popup - not scoped to one
+      // customer_id (a backlog of several unseen applications is dismissed
+      // in one go, same as gang-sheet-uploads.js/payments.js's own
+      // mark_seen), so it has to come before the customer_id check below.
+      if (data.action === "mark_seen_credit") {
+        await db.prepare(
+          "UPDATE customers SET dtf_credit_seen_by_staff = 1 WHERE dtf_credit_status = 'pending' AND dtf_credit_seen_by_staff = 0"
+        ).run();
+        return json({ success: true });
+      }
+
       if (!data.customer_id) return json({ error: "customer_id is required" }, 400);
 
       // Pulls an existing, ordinary store customer into the DTF-Prep world
@@ -82,7 +108,7 @@ export async function onRequest(context) {
         if (!status) return json({ error: "Invalid status" }, 400);
         const limit = status === "approved" ? Number(data.credit_limit) || 0 : null;
         await db.prepare(
-          "UPDATE customers SET dtf_credit_status = ?, dtf_credit_limit = ? WHERE id = ?"
+          "UPDATE customers SET dtf_credit_status = ?, dtf_credit_limit = ?, dtf_credit_seen_by_staff = 1 WHERE id = ?"
         ).bind(status, limit, data.customer_id).run();
         return json({ success: true });
       }

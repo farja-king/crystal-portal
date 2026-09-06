@@ -2046,6 +2046,23 @@
     </div>
   </div>
 
+  <!-- "New DTF credit application" popup - same seen_by_staff/mark_seen
+       pattern as the gang-sheet and payment popups above, see
+       checkNewDtfCredit()/showNewDtfCreditPopup() and
+       functions/api/gang-sheet-admin.js's ?view=new_credit. Polled on a
+       timer like the payment popup, not just once per page load, since an
+       application can land at any point during a session. -->
+  <div id="dtf-credit-popup" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5">
+      <h3 class="font-bold text-indigo-700 mb-2">🧾 <span id="dtf-credit-popup-title"></span></h3>
+      <div id="dtf-credit-popup-msg" class="text-sm text-slate-800 mb-5 space-y-1"></div>
+      <div class="flex justify-end gap-3">
+        <button type="button" onclick="dismissNewDtfCreditPopup(false)" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold">Dismiss</button>
+        <button type="button" onclick="dismissNewDtfCreditPopup(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">View applications</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Reusable single-field text input overlay - see promptModal() - replaces
        the native browser prompt() (password setup, "send to which email"). -->
   <div id="prompt-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4">
@@ -13122,6 +13139,51 @@
       if (goToOrders) switchTab('orders');
     }
 
+    // "New DTF credit application" popup - same pattern as the payment
+    // popup above, just for functions/api/gang-sheet-admin.js's own
+    // seen_by_staff column (on customers, not its own table - see
+    // dtf-schema.js's ensureDtfCustomerColumns).
+    let dtfCreditPopupOpen = false;
+    async function checkNewDtfCredit() {
+      if (dtfCreditPopupOpen) return;
+      try {
+        const res = await fetch('/api/gang-sheet-admin?view=new_credit', { cache: 'no-store' });
+        const rows = await res.json();
+        if (res.ok && Array.isArray(rows) && rows.length) showNewDtfCreditPopup(rows);
+      } catch (e) {
+        // silent - non-critical, next poll tries again
+      }
+    }
+
+    function showNewDtfCreditPopup(rows) {
+      dtfCreditPopupOpen = true;
+      document.getElementById('dtf-credit-popup-title').textContent =
+        rows.length === 1 ? 'New DTF credit application' : `${rows.length} new DTF credit applications`;
+      const shown = rows.slice(0, 8);
+      const lines = shown.map((r) => `<div>${escapeHtml(r.name || '')}${r.email ? ' - ' + escapeHtml(r.email) : ''}</div>`);
+      if (rows.length > shown.length) lines.push(`<div class="text-slate-400">…and ${rows.length - shown.length} more</div>`);
+      document.getElementById('dtf-credit-popup-msg').innerHTML = lines.join('');
+      document.getElementById('dtf-credit-popup').classList.remove('hidden');
+    }
+
+    async function dismissNewDtfCreditPopup(goToApplications) {
+      dtfCreditPopupOpen = false;
+      document.getElementById('dtf-credit-popup').classList.add('hidden');
+      try {
+        await fetch('/api/gang-sheet-admin', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'mark_seen_credit' }),
+        });
+      } catch (e) {
+        // Same batch would just re-pop next check - not worth surfacing an
+        // error over for something this low-stakes.
+      }
+      if (goToApplications) {
+        switchTab('dtf');
+        switchDtfSubview('credit');
+      }
+    }
+
     async function uploadDesignProof(orderId, inputId, statusId, containerId) {
       inputId = inputId || ('proof-file-input-' + orderId);
       statusId = statusId || ('proof-upload-status-' + orderId);
@@ -15512,6 +15574,8 @@
     setInterval(checkNewGangSheetOrders, 30000);
     checkNewPayments();
     setInterval(checkNewPayments, 30000); // same reasoning - a Square card payment can land at any time
+    checkNewDtfCredit();
+    setInterval(checkNewDtfCredit, 30000); // same reasoning - a credit application can land at any time
     loadQuotes();
     loadCustomers();
     loadFacets();
