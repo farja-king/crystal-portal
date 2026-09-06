@@ -50,7 +50,7 @@ export async function onRequest(context) {
       if (view === "orders") {
         const { results } = await db.prepare(`
           SELECT id, invoice_number, customer_id, customer_name, total, amount_paid, paid_status, created_at
-          FROM orders WHERE source = 'dtf-prep'
+          FROM orders WHERE source = 'dtf-prep' AND deleted_at IS NULL
           ORDER BY created_at DESC
         `).all();
         return json(results);
