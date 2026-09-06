@@ -621,10 +621,25 @@
           </div>
           <div id="dtf-grant-results" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
         </div>
+
+        <!-- Bulk delete - same tick-rows-then-act pattern as the Store
+             Customers/Stock/Orders tabs (see selectedDtfCustomerIds/
+             updateDtfCustomerBulkBar/bulkDeleteDtfCustomers). -->
+        <div id="dtf-cust-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+          <span id="dtf-cust-bulk-count" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="bulkDeleteDtfCustomers()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Delete selected
+          </button>
+          <button type="button" onclick="clearDtfCustomerSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+            Clear selection
+          </button>
+        </div>
+
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="p-4 w-8"><input type="checkbox" id="dtf-cust-select-all" onchange="toggleSelectAllDtfCustomers(this.checked)" class="rounded border-slate-300" /></th>
                 <th class="p-4">Name</th>
                 <th class="p-4">Email</th>
                 <th class="p-4">Tier</th>
@@ -634,18 +649,42 @@
               </tr>
             </thead>
             <tbody id="dtf-customers-table-body" class="divide-y divide-slate-100 text-sm">
-              <tr><td colspan="6" class="p-8 text-center text-slate-400">Loading...</td></tr>
+              <tr><td colspan="7" class="p-8 text-center text-slate-400">Loading...</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div id="dtf-cust-bulk-bar-bottom" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mt-3 text-sm">
+          <span id="dtf-cust-bulk-count-bottom" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="bulkDeleteDtfCustomers()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Delete selected
+          </button>
+          <button type="button" onclick="clearDtfCustomerSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+            Clear selection
+          </button>
         </div>
       </div>
 
       <!-- Orders sub-view -->
       <div id="dtf-view-orders" class="hidden">
+        <!-- Bulk delete - same tick-rows-then-act pattern as the main Quotes
+             & Invoices list (see selectedDtfOrderIds/updateDtfOrderBulkBar/
+             bulkDeleteDtfOrders). -->
+        <div id="dtf-ord-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+          <span id="dtf-ord-bulk-count" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="bulkDeleteDtfOrders()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Delete selected
+          </button>
+          <button type="button" onclick="clearDtfOrderSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+            Clear selection
+          </button>
+        </div>
+
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="p-4 w-8"><input type="checkbox" id="dtf-ord-select-all" onchange="toggleSelectAllDtfOrders(this.checked)" class="rounded border-slate-300" /></th>
                 <th class="p-4">Invoice #</th>
                 <th class="p-4">Customer</th>
                 <th class="p-4">Total</th>
@@ -655,9 +694,19 @@
               </tr>
             </thead>
             <tbody id="dtf-orders-table-body" class="divide-y divide-slate-100 text-sm">
-              <tr><td colspan="6" class="p-8 text-center text-slate-400">Loading...</td></tr>
+              <tr><td colspan="7" class="p-8 text-center text-slate-400">Loading...</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div id="dtf-ord-bulk-bar-bottom" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mt-3 text-sm">
+          <span id="dtf-ord-bulk-count-bottom" class="font-semibold text-indigo-900"></span>
+          <button type="button" onclick="bulkDeleteDtfOrders()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            Delete selected
+          </button>
+          <button type="button" onclick="clearDtfOrderSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+            Clear selection
+          </button>
         </div>
       </div>
 
@@ -11043,10 +11092,16 @@
 
     function renderDtfCustomers(rows) {
       const tbody = document.getElementById('dtf-customers-table-body');
+      dtfCustomersById = {};
+      selectedDtfCustomerIds = new Set();
+      updateDtfCustomerBulkBar();
+      const selectAll = document.getElementById('dtf-cust-select-all');
+      if (selectAll) selectAll.checked = false;
       if (!rows || !rows.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">No DTF-Prep customers yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No DTF-Prep customers yet.</td></tr>';
         return;
       }
+      rows.forEach((c) => { dtfCustomersById[c.id] = c; });
       // Same View/Edit/Delete actions as the Store customer list (see
       // renderCustomersTable) - reuses the exact same data-action buttons,
       // handled by the one delegated click listener further down, since a
@@ -11054,6 +11109,7 @@
       // with dtf_account_tier set, not a separate record type.
       tbody.innerHTML = rows.map((c) => `
         <tr>
+          <td class="p-4"><input type="checkbox" class="dtf-cust-select-checkbox rounded border-slate-300" data-id="${escapeAttr(c.id)}" onchange="toggleDtfCustomerSelect('${escapeAttr(c.id)}', this.checked)" /></td>
           <td class="p-4 font-medium text-slate-900">${escapeHtml(c.name || '')}</td>
           <td class="p-4 text-slate-600">${escapeHtml(c.email || '')}</td>
           <td class="p-4">${dtfTierBadge(c.dtf_account_tier)}</td>
@@ -11073,10 +11129,76 @@
         </tr>`).join('');
     }
 
+    // Same tick-rows-then-act pattern as selectedCustomerIds/
+    // updateCustomerBulkBar/bulkDeleteCustomers, scoped to this tab's own
+    // table (dtf-customers-table-body) since it's a separate DOM list even
+    // though the rows are the same underlying `customers` records.
+    let selectedDtfCustomerIds = new Set();
+    let dtfCustomersById = {};
+
+    function toggleDtfCustomerSelect(id, checked) {
+      if (checked) selectedDtfCustomerIds.add(id);
+      else selectedDtfCustomerIds.delete(id);
+      updateDtfCustomerBulkBar();
+    }
+
+    function toggleSelectAllDtfCustomers(checked) {
+      document.querySelectorAll('#dtf-customers-table-body .dtf-cust-select-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) selectedDtfCustomerIds.add(cb.dataset.id);
+        else selectedDtfCustomerIds.delete(cb.dataset.id);
+      });
+      updateDtfCustomerBulkBar();
+    }
+
+    function clearDtfCustomerSelection() {
+      selectedDtfCustomerIds = new Set();
+      loadDtfBuilder();
+    }
+
+    function updateDtfCustomerBulkBar() {
+      const count = selectedDtfCustomerIds.size;
+      ['', '-bottom'].forEach((suffix) => {
+        const bar = document.getElementById('dtf-cust-bulk-bar' + suffix);
+        if (!bar) return;
+        bar.classList.toggle('hidden', count === 0);
+        if (count === 0) return;
+        document.getElementById('dtf-cust-bulk-count' + suffix).textContent = count + ' selected';
+      });
+    }
+
+    // Same one-DELETE-per-row loop as bulkDeleteCustomers - this IS that
+    // same customers table, so it hits the exact same endpoint.
+    async function bulkDeleteDtfCustomers() {
+      const ids = [...selectedDtfCustomerIds];
+      if (!ids.length) return;
+      const names = ids.map((id) => (dtfCustomersById[id] ? dtfCustomersById[id].name : id)).join(', ');
+      if (!(await confirmModal(`Delete ${ids.length} customer(s)?\n\n${names}\n\nYou can restore them from Trash afterward if needed.`))) return;
+
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          const res = await fetch(API_CUSTOMERS_URL, {
+            method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+          });
+          if (!res.ok) throw new Error('Delete failed');
+        } catch (e) {
+          failed++;
+        }
+      }
+      loadDtfBuilder();
+      if (failed) showActionToast('⚠', `${failed} customer(s) could not be deleted.`);
+      else showActionToast('✓', `${ids.length} customer(s) deleted.`);
+    }
+
     function renderDtfOrders(rows) {
       const tbody = document.getElementById('dtf-orders-table-body');
+      selectedDtfOrderIds = new Set();
+      updateDtfOrderBulkBar();
+      const selectAll = document.getElementById('dtf-ord-select-all');
+      if (selectAll) selectAll.checked = false;
       if (!rows || !rows.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">No DTF-Prep orders yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">No DTF-Prep orders yet.</td></tr>';
         return;
       }
       // Same View/Edit/Delete actions as the main Quotes & Invoices list
@@ -11087,6 +11209,7 @@
       // row, not a separate DTF-specific record.
       tbody.innerHTML = rows.map((o) => `
         <tr>
+          <td class="p-4"><input type="checkbox" class="dtf-ord-select-checkbox rounded border-slate-300" data-id="${escapeAttr(o.id)}" onchange="toggleDtfOrderSelect('${escapeAttr(o.id)}', this.checked)" /></td>
           <td class="p-4 font-medium text-slate-900">${escapeHtml(o.invoice_number || '')}</td>
           <td class="p-4 text-slate-600">${escapeHtml(o.customer_name || '')}</td>
           <td class="p-4">£${Number(o.total || 0).toFixed(2)}</td>
@@ -11104,6 +11227,61 @@
             </button>
           </td>
         </tr>`).join('');
+    }
+
+    // Same tick-rows-then-act pattern as selectedOrderIds/updateOrderBulkBar/
+    // bulkDeleteOrders, scoped to this tab's own table (dtf-orders-table-
+    // body) since it's a separate DOM list even though the rows are the
+    // same underlying `orders` records.
+    let selectedDtfOrderIds = new Set();
+
+    function toggleDtfOrderSelect(id, checked) {
+      if (checked) selectedDtfOrderIds.add(id);
+      else selectedDtfOrderIds.delete(id);
+      updateDtfOrderBulkBar();
+    }
+
+    function toggleSelectAllDtfOrders(checked) {
+      document.querySelectorAll('#dtf-orders-table-body .dtf-ord-select-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) selectedDtfOrderIds.add(cb.dataset.id);
+        else selectedDtfOrderIds.delete(cb.dataset.id);
+      });
+      updateDtfOrderBulkBar();
+    }
+
+    function clearDtfOrderSelection() {
+      selectedDtfOrderIds = new Set();
+      loadDtfBuilder();
+    }
+
+    function updateDtfOrderBulkBar() {
+      const count = selectedDtfOrderIds.size;
+      ['', '-bottom'].forEach((suffix) => {
+        const bar = document.getElementById('dtf-ord-bulk-bar' + suffix);
+        if (!bar) return;
+        bar.classList.toggle('hidden', count === 0);
+        if (count === 0) return;
+        document.getElementById('dtf-ord-bulk-count' + suffix).textContent = count + ' selected';
+      });
+    }
+
+    // Same single bulk DELETE request as bulkDeleteOrders - this IS that
+    // same orders table, so it hits the exact same endpoint.
+    async function bulkDeleteDtfOrders() {
+      const ids = [...selectedDtfOrderIds];
+      if (!ids.length) return;
+      if (!(await confirmModal(`Delete ${ids.length} quote(s)/invoice(s)? You can restore them from Trash afterward if needed.`))) return;
+      try {
+        const res = await fetch(API_ORDERS_URL, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || 'Delete failed');
+        selectedDtfOrderIds = new Set();
+        loadDtfBuilder();
+      } catch (e) {
+        showActionToast('⚠', 'Some items could not be deleted: ' + e.message);
+      }
     }
 
     function renderDtfCredit(rows) {
