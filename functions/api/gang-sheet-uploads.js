@@ -117,10 +117,26 @@ export async function onRequest(context) {
     // than one gang sheet to the same order (one popup per order, not one
     // per sheet).
     if (url.searchParams.get("count_new")) {
-      const row = await db.prepare(
-        "SELECT COUNT(DISTINCT order_id) AS n FROM gang_sheet_uploads WHERE production_ready_at IS NOT NULL AND seen_by_staff = 0 AND order_id IS NOT NULL"
-      ).first();
-      return json({ count: (row && row.n) || 0 });
+      // Split by whether the order behind it was actually paid (Square) or
+      // just invoiced to an approved credit account - production_ready_at
+      // is set the same way for both (see the comment above), but "paid
+      // and ready for production" is only true for one of them. Without
+      // this split the Dashboard popup told staff every new DTF order was
+      // paid even when no card had ever been charged.
+      const row = await db.prepare(`
+        SELECT
+          COUNT(DISTINCT gsu.order_id) AS n,
+          COUNT(DISTINCT CASE WHEN o.paid_status = 'paid' THEN gsu.order_id END) AS paid_n,
+          COUNT(DISTINCT CASE WHEN o.paid_status != 'paid' THEN gsu.order_id END) AS credit_n
+        FROM gang_sheet_uploads gsu
+        JOIN orders o ON o.id = gsu.order_id
+        WHERE gsu.production_ready_at IS NOT NULL AND gsu.seen_by_staff = 0 AND gsu.order_id IS NOT NULL
+      `).first();
+      return json({
+        count: (row && row.n) || 0,
+        paid_count: (row && row.paid_n) || 0,
+        credit_count: (row && row.credit_n) || 0,
+      });
     }
 
     // Streams the actual PNG - same pattern as design-files.js's ?view=.
