@@ -45,25 +45,56 @@
           <button id="tab-quotes" onclick="switchTab('quotes')" class="hidden px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             📋 Quotes & Orders
           </button>
-          <button id="tab-customers" onclick="switchTab('customers')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
-            🧑 Customers
-          </button>
-          <button id="tab-catalog" onclick="switchTab('catalog')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
-            👕 Garments
-          </button>
-          <button id="tab-services" onclick="switchTab('services')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
-            🛠️ Services
-          </button>
-          <button id="tab-stock" onclick="switchTab('stock')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
-            📦 Stock
-          </button>
-          <button id="tab-orders" onclick="switchTab('orders')" class="relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
-            🧾 Quotes & Invoices
-            <span id="quote-requests-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
-          </button>
-          <button id="tab-proofs" onclick="switchTab('proofs')" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
-            🎨 Design Proofs
-          </button>
+          <!-- Grouped dropdowns (declutters what used to be 11 flat nav
+               buttons) - each toggle below reveals the *original* tab-X
+               buttons unchanged (same ids, same onclick="switchTab(...)"),
+               so switchTab()'s className-rewrite loop (which looks these up
+               by id every call) keeps working exactly as before. Only the
+               presentation - grouping them behind a toggle - is new. See
+               toggleNavDropdown()/closeNavDropdowns() in the page script. -->
+          <div class="relative">
+            <button onclick="toggleNavDropdown('customers-menu', event)" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+              🧑 Customers ▾
+            </button>
+            <div id="customers-menu" class="nav-dropdown-menu hidden absolute left-0 mt-1 w-44 bg-slate-800 rounded-lg shadow-lg p-1 z-50 flex flex-col gap-1">
+              <button id="tab-customers" onclick="switchTab('customers')" class="text-left px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+                🧑 Store
+              </button>
+              <button id="tab-dtf" onclick="switchTab('dtf')" class="text-left px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+                🧵 DTF Builder
+              </button>
+            </div>
+          </div>
+          <div class="relative">
+            <button onclick="toggleNavDropdown('catalog-menu', event)" class="px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+              👕 Catalog ▾
+            </button>
+            <div id="catalog-menu" class="nav-dropdown-menu hidden absolute left-0 mt-1 w-40 bg-slate-800 rounded-lg shadow-lg p-1 z-50 flex flex-col gap-1">
+              <button id="tab-catalog" onclick="switchTab('catalog')" class="text-left px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+                👕 Garments
+              </button>
+              <button id="tab-services" onclick="switchTab('services')" class="text-left px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+                🛠️ Services
+              </button>
+              <button id="tab-stock" onclick="switchTab('stock')" class="text-left px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+                📦 Stock
+              </button>
+            </div>
+          </div>
+          <div class="relative">
+            <button onclick="toggleNavDropdown('orders-menu', event)" class="relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+              🧾 Orders ▾
+              <span id="quote-requests-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
+            </button>
+            <div id="orders-menu" class="nav-dropdown-menu hidden absolute left-0 mt-1 w-48 bg-slate-800 rounded-lg shadow-lg p-1 z-50 flex flex-col gap-1">
+              <button id="tab-orders" onclick="switchTab('orders')" class="text-left px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+                🧾 Quotes & Invoices
+              </button>
+              <button id="tab-proofs" onclick="switchTab('proofs')" class="text-left px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
+                🎨 Design Proofs
+              </button>
+            </div>
+          </div>
           <button id="tab-inbox" onclick="switchTab('inbox')" class="relative px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition">
             📥 Inbox
             <span id="inbox-unread-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
@@ -528,6 +559,94 @@
           Clear selection
         </button>
       </div>
+      </div>
+    </section>
+
+    <!-- DTF BUILDER TAB (Customers > DTF Builder) -->
+    <!-- Everything sourced from the separate DTF-Prep gang-sheet-builder
+         site (portal.embroidery.click's DTF customers/orders/credit
+         applications) - kept out of the Store/Quotes & Invoices tabs on
+         purpose (see the display-only filters in loadCustomers/
+         renderOrdersTable), one dedicated place instead. Backed entirely by
+         functions/api/gang-sheet-admin.js. -->
+    <section id="section-dtf" class="hidden">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">DTF Builder</h2>
+          <p class="text-slate-500 text-sm">Customers, orders, and credit applications from the DTF gang sheet builder site.</p>
+        </div>
+        <div id="refreshed-dtf" class="text-xs text-slate-400"></div>
+      </div>
+
+      <div class="flex gap-2 bg-slate-200 p-1 rounded-lg w-fit mb-6">
+        <button id="dtf-subtab-customers" onclick="switchDtfSubview('customers')" class="px-4 py-1.5 rounded-md text-sm font-medium bg-white shadow text-slate-900">Customers</button>
+        <button id="dtf-subtab-orders" onclick="switchDtfSubview('orders')" class="px-4 py-1.5 rounded-md text-sm font-medium text-slate-600">Orders</button>
+        <button id="dtf-subtab-credit" onclick="switchDtfSubview('credit')" class="relative px-4 py-1.5 rounded-md text-sm font-medium text-slate-600">
+          Credit Applications
+          <span id="dtf-credit-badge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] leading-none font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">0</span>
+        </button>
+      </div>
+
+      <!-- Customers sub-view -->
+      <div id="dtf-view-customers">
+        <div class="flex justify-end mb-3">
+          <button onclick="openGrantDtfAccessPicker()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+            + Grant DTF access to an existing customer
+          </button>
+        </div>
+        <!-- Picker for "grant access" - a plain search-and-pick list, not a
+             full modal component (none exists generically in this file to
+             reuse) - kept intentionally simple since it's a rare admin
+             action. Only ever lists customers who are NOT already DTF-Prep
+             customers (dtf_account_tier IS NULL). -->
+        <div id="dtf-grant-picker" class="hidden bg-white rounded-xl shadow-sm border border-indigo-200 p-4 mb-4">
+          <div class="flex items-center justify-between gap-3 mb-2">
+            <input id="dtf-grant-search" type="text" placeholder="Search customers by name, company, or email..." oninput="renderDtfGrantResults()" class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <button onclick="closeDtfGrantPicker()" class="text-slate-400 hover:text-slate-600 text-sm font-semibold">✕</button>
+          </div>
+          <div id="dtf-grant-results" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="p-4">Name</th>
+                <th class="p-4">Email</th>
+                <th class="p-4">Tier</th>
+                <th class="p-4">Credit</th>
+                <th class="p-4">Since</th>
+              </tr>
+            </thead>
+            <tbody id="dtf-customers-table-body" class="divide-y divide-slate-100 text-sm">
+              <tr><td colspan="5" class="p-8 text-center text-slate-400">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Orders sub-view -->
+      <div id="dtf-view-orders" class="hidden">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="p-4">Invoice #</th>
+                <th class="p-4">Customer</th>
+                <th class="p-4">Total</th>
+                <th class="p-4">Status</th>
+                <th class="p-4">Date</th>
+              </tr>
+            </thead>
+            <tbody id="dtf-orders-table-body" class="divide-y divide-slate-100 text-sm">
+              <tr><td colspan="5" class="p-8 text-center text-slate-400">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Credit Applications sub-view -->
+      <div id="dtf-view-credit" class="hidden">
+        <div id="dtf-credit-list" class="flex flex-col gap-3"></div>
       </div>
     </section>
 
@@ -2890,7 +3009,25 @@
     }
 
     // Switch between Admin Tabs
-    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'catalog', 'services', 'stock', 'orders', 'inbox', 'proofs', 'backups', 'trash', 'quickapp'];
+    const ADMIN_TABS = ['dashboard', 'quotes', 'customers', 'dtf', 'catalog', 'services', 'stock', 'orders', 'inbox', 'proofs', 'backups', 'trash', 'quickapp'];
+
+    // Nav dropdowns (Customers/Catalog/Orders) - plain show/hide, no
+    // library. Clicking a toggle closes any other open menu first (so at
+    // most one is ever open); clicking anywhere outside all menus closes
+    // whichever is open. event.stopPropagation() on the toggle click stops
+    // that same click from immediately re-triggering the document listener
+    // and closing the menu it just opened.
+    function toggleNavDropdown(menuId, evt) {
+      if (evt) evt.stopPropagation();
+      const menu = document.getElementById(menuId);
+      const wasHidden = menu.classList.contains('hidden');
+      closeNavDropdowns();
+      if (wasHidden) menu.classList.remove('hidden');
+    }
+    function closeNavDropdowns() {
+      document.querySelectorAll('.nav-dropdown-menu').forEach((m) => m.classList.add('hidden'));
+    }
+    document.addEventListener('click', closeNavDropdowns);
     function switchTab(tab) {
       // Keeps the URL in sync with whichever tab is open (replaceState, not
       // a fresh history entry, so this doesn't fill up the back button)
@@ -2899,6 +3036,7 @@
       // always snapping back to Dashboard. See the matching hash read on
       // initial load, right after "renderOrderLines()" below.
       history.replaceState(null, '', '#' + tab);
+      closeNavDropdowns();
       const active = 'flex-shrink-0 whitespace-nowrap px-4 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white shadow transition';
       const idle = 'relative flex-shrink-0 whitespace-nowrap px-4 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white transition';
       ADMIN_TABS.forEach((name) => {
@@ -2921,6 +3059,7 @@
       // moment than remembering to hit each tab's own Refresh button.
       if (tab === 'quotes') loadQuotes();
       if (tab === 'customers') loadCustomers();
+      if (tab === 'dtf') loadDtfBuilder();
       // loadFacets() here (not after every single edit inside the tab - see
       // saveSellPrice's comment) keeps the filter counts fresh on every
       // natural "arriving at this tab" moment without paying its ~390k-row
@@ -3349,7 +3488,13 @@
         (customers || []).forEach(c => { customersById[c.id] = c; });
         renderOrderCustomerPicker();
 
-        allCustomers = customers || [];
+        // DTF-Prep customers (dtf_account_tier set) get their own dedicated
+        // list under Customers > DTF Builder - see loadDtfBuilder() -
+        // rather than cluttering the everyday Store list. Display-only:
+        // customersById above still holds every customer (DTF included) so
+        // lookups elsewhere (order customer picker, quote requests, etc)
+        // keep working exactly as before.
+        allCustomers = (customers || []).filter(c => !c.dtf_account_tier);
         selectedCustomerIds = new Set();
         filterCustomers();
         stampRefreshed('refreshed-customers');
@@ -10702,6 +10847,198 @@
       if (r.status !== 'contacted') markQuoteRequestStatus(id, 'contacted');
     }
 
+    // ========================== DTF Builder tab =============================
+    // Customers/orders/credit applications from the separate DTF-Prep
+    // gang-sheet-builder site - all backed by functions/api/gang-sheet-admin.js.
+    // Kept as its own tab (under Customers > DTF Builder) rather than mixed
+    // into the Store customers / Quotes & Invoices lists - see the
+    // display-only filters in loadCustomers()/renderOrdersTable().
+    let dtfSubview = 'customers';
+    let dtfCreditRows = [];
+
+    function switchDtfSubview(view) {
+      dtfSubview = view;
+      ['customers', 'orders', 'credit'].forEach((v) => {
+        document.getElementById('dtf-view-' + v).classList.toggle('hidden', v !== view);
+        document.getElementById('dtf-subtab-' + v).className = v === view
+          ? 'relative px-4 py-1.5 rounded-md text-sm font-medium bg-white shadow text-slate-900'
+          : 'relative px-4 py-1.5 rounded-md text-sm font-medium text-slate-600';
+      });
+    }
+
+    async function loadDtfBuilder() {
+      switchDtfSubview(dtfSubview);
+      try {
+        const [custRes, orderRes, creditRes] = await Promise.all([
+          fetch('/api/gang-sheet-admin?view=customers', { cache: 'no-store' }),
+          fetch('/api/gang-sheet-admin?view=orders', { cache: 'no-store' }),
+          fetch('/api/gang-sheet-admin?view=credit', { cache: 'no-store' }),
+        ]);
+        renderDtfCustomers(await custRes.json());
+        renderDtfOrders(await orderRes.json());
+        dtfCreditRows = await creditRes.json();
+        renderDtfCredit(dtfCreditRows);
+        stampRefreshed('refreshed-dtf');
+      } catch (e) {
+        showActionToast('⚠', 'Could not load DTF Builder data: ' + e.message);
+      }
+    }
+
+    function dtfTierBadge(tier) {
+      return tier === 'registered'
+        ? '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">Registered</span>'
+        : '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">Guest</span>';
+    }
+    function dtfCreditBadge(status, limit) {
+      if (status === 'approved') return `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">Approved · £${Number(limit || 0).toFixed(2)}</span>`;
+      if (status === 'pending') return '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">Pending</span>';
+      if (status === 'rejected') return '<span class="px-2 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">Rejected</span>';
+      return '<span class="text-slate-400">—</span>';
+    }
+
+    function renderDtfCustomers(rows) {
+      const tbody = document.getElementById('dtf-customers-table-body');
+      if (!rows || !rows.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">No DTF-Prep customers yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map((c) => `
+        <tr>
+          <td class="p-4 font-medium text-slate-900">${escapeHtml(c.name || '')}</td>
+          <td class="p-4 text-slate-600">${escapeHtml(c.email || '')}</td>
+          <td class="p-4">${dtfTierBadge(c.dtf_account_tier)}</td>
+          <td class="p-4">${dtfCreditBadge(c.dtf_credit_status, c.dtf_credit_limit)}</td>
+          <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(c.created_at))}</td>
+        </tr>`).join('');
+    }
+
+    function renderDtfOrders(rows) {
+      const tbody = document.getElementById('dtf-orders-table-body');
+      if (!rows || !rows.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">No DTF-Prep orders yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map((o) => `
+        <tr>
+          <td class="p-4 font-medium text-slate-900">${escapeHtml(o.invoice_number || '')}</td>
+          <td class="p-4 text-slate-600">${escapeHtml(o.customer_name || '')}</td>
+          <td class="p-4">£${Number(o.total || 0).toFixed(2)}</td>
+          <td class="p-4"><span class="px-2 py-1 text-xs font-semibold rounded-full ${paidStatusBadgeClass(o.paid_status)}">${escapeHtml(o.paid_status || '')}</span></td>
+          <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
+        </tr>`).join('');
+    }
+
+    function renderDtfCredit(rows) {
+      const list = document.getElementById('dtf-credit-list');
+      const pendingCount = (rows || []).filter((r) => r.dtf_credit_status === 'pending').length;
+      const badge = document.getElementById('dtf-credit-badge');
+      if (badge) {
+        badge.textContent = pendingCount > 99 ? '99+' : String(pendingCount);
+        badge.classList.toggle('hidden', pendingCount === 0);
+      }
+      if (!rows || !rows.length) {
+        list.innerHTML = '<p class="text-slate-400 text-sm">No credit applications yet.</p>';
+        return;
+      }
+      list.innerHTML = rows.map((r) => `
+        <div class="bg-white border ${r.dtf_credit_status === 'pending' ? 'border-amber-200 bg-amber-50/40' : 'border-slate-200'} rounded-lg p-3">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <span class="font-semibold text-slate-900">${escapeHtml(r.name || '')}</span>
+              <span class="text-slate-500 text-sm ml-2">${escapeHtml(r.email || '')}</span>
+              <div class="mt-1">${dtfCreditBadge(r.dtf_credit_status, r.dtf_credit_limit)}</div>
+              ${r.dtf_credit_notes ? `<p class="text-sm text-slate-600 mt-2 whitespace-pre-line">${escapeHtml(r.dtf_credit_notes)}</p>` : ''}
+            </div>
+            ${r.dtf_credit_status === 'pending' ? `
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button onclick="dtfCreditDecision('${escapeAttr(r.id)}', 'approved')" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded font-semibold">Approve</button>
+                <button onclick="dtfCreditDecision('${escapeAttr(r.id)}', 'rejected')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-2.5 py-1 rounded font-semibold">Reject</button>
+              </div>` : ''}
+          </div>
+        </div>`).join('');
+    }
+
+    async function dtfCreditDecision(customerId, status) {
+      let creditLimit = null;
+      if (status === 'approved') {
+        const input = prompt('Set a credit limit for this account (£):', '100');
+        if (input === null) return;
+        creditLimit = Number(input);
+        if (!creditLimit || creditLimit <= 0) { showActionToast('⚠', 'Please enter a valid credit limit.'); return; }
+      }
+      try {
+        const res = await fetch('/api/gang-sheet-admin', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'credit_decision', customer_id: customerId, status, credit_limit: creditLimit }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        loadDtfBuilder();
+      } catch (e) {
+        showActionToast('⚠', 'Could not update: ' + e.message);
+      }
+    }
+
+    // "Grant DTF access" picker - lists ordinary store customers (fetched
+    // fresh each time, independent of whatever's currently in
+    // customersById, since staff may open this tab without ever having
+    // visited Customers first) who aren't already DTF-Prep customers.
+    let dtfGrantCandidates = [];
+
+    async function openGrantDtfAccessPicker() {
+      document.getElementById('dtf-grant-picker').classList.remove('hidden');
+      document.getElementById('dtf-grant-search').value = '';
+      document.getElementById('dtf-grant-results').innerHTML = '<p class="text-slate-400 text-sm p-2">Loading customers...</p>';
+      try {
+        const res = await fetch(API_CUSTOMERS_URL, { cache: 'no-store' });
+        const customers = await res.json();
+        dtfGrantCandidates = (customers || []).filter((c) => !c.dtf_account_tier);
+        renderDtfGrantResults();
+      } catch (e) {
+        document.getElementById('dtf-grant-results').innerHTML = `<p class="text-rose-500 text-sm p-2">Could not load customers: ${escapeHtml(e.message)}</p>`;
+      }
+    }
+    function closeDtfGrantPicker() {
+      document.getElementById('dtf-grant-picker').classList.add('hidden');
+    }
+    function renderDtfGrantResults() {
+      const raw = document.getElementById('dtf-grant-search').value.trim().toLowerCase();
+      const results = document.getElementById('dtf-grant-results');
+      if (!raw) { results.innerHTML = '<p class="text-slate-400 text-sm p-2">Type a name, company, or email to search.</p>'; return; }
+      const matches = dtfGrantCandidates.filter((c) =>
+        (c.name || '').toLowerCase().includes(raw) ||
+        (c.company || '').toLowerCase().includes(raw) ||
+        (c.email || '').toLowerCase().includes(raw)
+      ).slice(0, 25);
+      if (!matches.length) { results.innerHTML = '<p class="text-slate-400 text-sm p-2">No matching customers (or they already have DTF access).</p>'; return; }
+      results.innerHTML = matches.map((c) => `
+        <div class="flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-slate-50">
+          <div class="text-sm">
+            <span class="font-medium text-slate-900">${escapeHtml(c.name || '')}</span>
+            <span class="text-slate-500 ml-2">${escapeHtml(c.email || '')}</span>
+          </div>
+          <div class="flex gap-1.5 shrink-0">
+            <button onclick="grantDtfAccess('${escapeAttr(c.id)}', 'guest')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1 rounded font-semibold">As Guest</button>
+            <button onclick="grantDtfAccess('${escapeAttr(c.id)}', 'registered')" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded font-semibold">As Registered</button>
+          </div>
+        </div>`).join('');
+    }
+    async function grantDtfAccess(customerId, tier) {
+      try {
+        const res = await fetch('/api/gang-sheet-admin', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'grant_access', customer_id: customerId, tier }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast('✅', 'DTF-Prep access granted.');
+        closeDtfGrantPicker();
+        loadDtfBuilder();
+      } catch (e) {
+        showActionToast('⚠', 'Could not grant access: ' + e.message);
+      }
+    }
+
     // Does this order need a garment that's currently in the negative on
     // Stock - i.e. more has already gone out than was ever on the shelf?
     // Checked against stockLevelsIndex (see loadStockLevelsIndex, shared
@@ -10811,7 +11148,13 @@
     function renderOrdersTable() {
       const tbody = document.getElementById('orders-table-body');
       if (!tbody) return;
-      let rows = Object.values(ordersById);
+      // DTF-Prep orders (source === 'dtf-prep') get their own dedicated
+      // list under Customers > DTF Builder - see loadDtfBuilder() - kept
+      // out of the everyday Quotes & Invoices list the same way DTF
+      // customers are kept out of the Store customers list. Display-only:
+      // ordersById itself is untouched, so anything else reading it
+      // (Dashboard stats, production tracker, etc) still sees every order.
+      let rows = Object.values(ordersById).filter((o) => o.source !== 'dtf-prep');
       if (ordersDocTypeFilter !== 'all') rows = rows.filter((o) => o.doc_type === ordersDocTypeFilter);
       if (ordersSearchQuery) {
         rows = rows.filter((o) => {

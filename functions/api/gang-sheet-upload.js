@@ -193,10 +193,17 @@ export async function onRequest(context) {
       // length-based rate entirely, any length up to the max costs the same.
       // Looked up here, not trusted from the client, for the same reason
       // the standard price isn't: this is what actually gets charged.
-      const customerRow = await db.prepare("SELECT dtf_flat_sheet_price FROM customers WHERE id = ?").bind(customerId).first();
+      //
+      // dtf_account_tier === 'registered' - a customer who's completed
+      // their profile (see gang-sheet-account.js) waives the upscale charge
+      // entirely; 'guest' (or NULL, shouldn't happen once auth is required
+      // to reach this endpoint) still pays it. Also looked up here rather
+      // than trusted from the client, same reasoning.
+      const customerRow = await db.prepare("SELECT dtf_flat_sheet_price, dtf_account_tier FROM customers WHERE id = ?").bind(customerId).first();
       const flatPrice = customerRow && customerRow.dtf_flat_sheet_price != null ? Number(customerRow.dtf_flat_sheet_price) : null;
+      const upscaleIsFree = customerRow && customerRow.dtf_account_tier === "registered";
       const price = round2(
-        (flatPrice != null ? flatPrice : Math.max(heightMm * RATE_PER_MM, MIN_CHARGE_GBP)) + upscaleCount * UPSCALE_CHARGE_GBP
+        (flatPrice != null ? flatPrice : Math.max(heightMm * RATE_PER_MM, MIN_CHARGE_GBP)) + (upscaleIsFree ? 0 : upscaleCount * UPSCALE_CHARGE_GBP)
       );
       const filename = file.name || `gang-sheet-${id}.png`;
 

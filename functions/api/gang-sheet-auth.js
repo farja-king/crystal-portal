@@ -113,19 +113,27 @@ export async function onRequest(context) {
       if (!email || !email.includes("@")) return json({ error: "A valid email address is required" }, 400);
 
       let customer = await db.prepare(
-        "SELECT id, name FROM customers WHERE lower(email) = ? AND deleted_at IS NULL LIMIT 1"
+        "SELECT id, name, dtf_account_tier FROM customers WHERE lower(email) = ? AND deleted_at IS NULL LIMIT 1"
       ).bind(email).first();
 
       // No matching customer - auto-create one under this email, same as a
       // brand new lead would get today via request-quote.html. Name is just
       // the email's local-part since this form only collects an email;
       // staff can rename it later from the Customers tab like any other
-      // lightly-populated record.
+      // lightly-populated record. dtf_account_tier starts 'guest' - see
+      // gang-sheet-account.js for how a customer becomes 'registered'.
       if (!customer) {
         const id = crypto.randomUUID();
         const name = email.split("@")[0];
-        await db.prepare("INSERT INTO customers (id, name, email) VALUES (?, ?, ?)").bind(id, name, email).run();
-        customer = { id, name };
+        await db.prepare("INSERT INTO customers (id, name, email, dtf_account_tier) VALUES (?, ?, ?, 'guest')").bind(id, name, email).run();
+        customer = { id, name, dtf_account_tier: "guest" };
+      } else if (!customer.dtf_account_tier) {
+        // An existing store customer signing into DTF-Prep for the first
+        // time (or a pre-migration DTF-Prep customer from before this
+        // column existed) - lazily backfilled to 'guest' here rather than a
+        // one-off bulk migration, same "set it the first time it's needed"
+        // convention as auth_config.customer_token_secret above.
+        await db.prepare("UPDATE customers SET dtf_account_tier = 'guest' WHERE id = ?").bind(customer.id).run();
       }
 
       const jti = crypto.randomUUID();

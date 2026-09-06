@@ -475,6 +475,19 @@ export async function onRequest(context) {
       // already exists
     }
 
+    // source - which front-end created this order, e.g. 'dtf-prep' for
+    // gang-sheet-checkout.js. NULL for every existing order and every other
+    // caller (admin.html's own New Quote builder, Crystal Quick) - they
+    // never pass this field, so nothing about their behavior changes.
+    // Purely so admin.html can keep DTF-Prep orders out of the main Quotes
+    // & Invoices list (a display-only filter there, not a query change here
+    // - see the DTF Builder sub-tab instead).
+    try {
+      await db.prepare(`ALTER TABLE orders ADD COLUMN source TEXT`).run();
+    } catch {
+      // already exists
+    }
+
     // payments - the real ledger, one row per payment actually received.
     // paid_status on the order stays a quick-glance summary ('unpaid' |
     // 'partial' | 'paid'), derived from this table; this is the record of
@@ -705,8 +718,8 @@ export async function onRequest(context) {
       await db.prepare(`
         INSERT INTO orders (
           id, doc_type, quote_number, invoice_number, customer_id, customer_name, customer_email,
-          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, production_due_date, reminder_interval_days, followup_interval_days, invoiced_at, deposit_pct, deposit_amount
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          items, subtotal, discount_pct, discount_flat, discount_amount, total, status, paid_status, notes, due_date, production_due_date, reminder_interval_days, followup_interval_days, invoiced_at, deposit_pct, deposit_amount, source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         isInvoice ? "invoice" : "quote",
@@ -730,7 +743,8 @@ export async function onRequest(context) {
         data.followup_interval_days ? Number(data.followup_interval_days) : null,
         isInvoice ? new Date().toISOString() : null,
         Number(data.deposit_pct) || 0,
-        Number(data.deposit_amount) || 0
+        Number(data.deposit_amount) || 0,
+        data.source || null
       ).run();
 
       await logOrderEvent(db, id, "created", `${isInvoice ? "Invoice" : "Quote"} ${docNumber} created`);

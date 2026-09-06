@@ -76,6 +76,25 @@ export async function onRequest(context) {
       // while this is set unless the request is explicitly marked manual
       // (the "Send Review Request Manually" override in admin.html).
       "review_requested INTEGER DEFAULT 0",
+      // dtf_account_tier - NULL means "not a DTF-Prep customer at all" (an
+      // ordinary store customer never touches this). Set to 'guest' the
+      // moment someone signs up via gang-sheet-auth.js's magic link, or set
+      // manually by staff via gang-sheet-admin.js's grant_access action for
+      // an existing store customer who should get DTF-Prep access too.
+      // Flips guest -> 'registered' when gang-sheet-account.js's
+      // complete_profile action succeeds (name + postcode on file) - see
+      // gang-sheet-upload.js, where 'registered' waives the upscale charge.
+      "dtf_account_tier TEXT",
+      // dtf_credit_status / dtf_credit_limit / dtf_credit_notes - a DTF-Prep
+      // credit account, applied for by the customer (gang-sheet-account.js's
+      // apply_credit, registered tier only) and approved/rejected by staff
+      // (gang-sheet-admin.js's credit_decision, which also sets the limit).
+      // NULL status = never applied. Balance isn't stored here - it's
+      // computed on demand from unpaid orders at checkout time, see
+      // gang-sheet-checkout.js.
+      "dtf_credit_status TEXT",
+      "dtf_credit_limit REAL",
+      "dtf_credit_notes TEXT",
     ]) {
       try {
         await db.prepare(`ALTER TABLE customers ADD COLUMN ${col}`).run();

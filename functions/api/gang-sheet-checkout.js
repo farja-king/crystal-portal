@@ -66,7 +66,9 @@ export async function onRequest(context) {
       return json({ error: "Some items in your cart are no longer available - please refresh and try again." }, 409);
     }
 
-    const customer = await db.prepare("SELECT id, name, email FROM customers WHERE id = ? AND deleted_at IS NULL").bind(customerId).first();
+    const customer = await db.prepare(
+      "SELECT id, name, email, dtf_credit_status, dtf_credit_limit FROM customers WHERE id = ? AND deleted_at IS NULL"
+    ).bind(customerId).first();
     if (!customer) return json({ error: "That account no longer exists." }, 404);
 
     const total = uploads.reduce((sum, u) => sum + Number(u.price || 0), 0);
@@ -93,6 +95,7 @@ export async function onRequest(context) {
         customer_email: customer.email || "",
         items: orderItems,
         notes: "Created automatically from a DTF-Prep checkout.",
+        source: "dtf-prep",
       }),
     });
     const created = await createRes.json();
@@ -100,6 +103,30 @@ export async function onRequest(context) {
       return json({ error: "Couldn't create your order - please try again shortly." }, 502);
     }
     const orderId = created.id;
+
+    await db.prepare(`
+      UPDATE gang_sheet_uploads SET order_id = ?, status = 'attached', attached_at = CURRENT_TIMESTAMP
+      WHERE id IN (${placeholders})
+    `).bind(orderId, ...uploadIds).run();
+
+    // Approved credit accounts skip Square entirely and go straight on
+    // account, as long as this order plus whatever they already owe stays
+    // within their limit - re-checked here server-side, never trusted from
+    // the client, same reasoning as every other price/entitlement check in
+    // this endpoint's sibling files. Outside the limit (or no credit at
+    // all) falls straight through to the existing Square flow below,
+    // unchanged - this is the only new branch.
+    if (customer.dtf_credit_status === "approved" && customer.dtf_credit_limit != null) {
+      const outstandingRow = await db.prepare(`
+        SELECT COALESCE(SUM(total - amount_paid), 0) AS outstanding FROM orders
+        WHERE customer_id = ? AND doc_type = 'invoice' AND paid_status != 'paid' AND id != ?
+      `).bind(customerId, orderId).first();
+      const outstanding = (outstandingRow && outstandingRow.outstanding) || 0;
+
+      if (outstanding + total <= Number(customer.dtf_credit_limit)) {
+        return json({ success: true, invoiced_on_credit: true, order_id: orderId });
+      }
+    }
 
     const tokenRes = await fetch(`${origin}/api/orders`, {
       method: "PUT",
@@ -111,11 +138,6 @@ export async function onRequest(context) {
     if (!tokenRes.ok || !payToken) {
       return json({ error: "Couldn't prepare payment for your order - please try again shortly." }, 502);
     }
-
-    await db.prepare(`
-      UPDATE gang_sheet_uploads SET order_id = ?, status = 'attached', attached_at = CURRENT_TIMESTAMP
-      WHERE id IN (${placeholders})
-    `).bind(orderId, ...uploadIds).run();
 
     const squareAccessToken = (env.SQUARE_ACCESS_TOKEN || "").trim();
     const squareLocationId = (env.SQUARE_LOCATION_ID || "").trim();
