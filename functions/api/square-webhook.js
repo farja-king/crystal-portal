@@ -12,9 +12,8 @@
 // entirely from the portal-login gate for that reason - this file is its own
 // gate, and a request that fails signature verification is rejected outright
 // rather than silently trusted.
-import { logOrderEvent } from "../_lib/order-events.js";
-import { markInvoicePaidStepDone } from "../_lib/production-invoice-paid.js";
 import { buildDtfOrderItems, createDtfOrder } from "../_lib/gang-sheet-order.js";
+import { recordPaymentOnOrder } from "../_lib/record-payment.js";
 const SQUARE_VERSION = "2026-07-15"; // matches the API version on Martin's Square app/webhook subscription - keep in step with pay-by-card.js
 
 async function verifySquareSignature(request, rawBody, signatureKey) {
@@ -93,6 +92,18 @@ export async function onRequest(context) {
         customer_id TEXT NOT NULL,
         upload_ids TEXT NOT NULL,
         total REAL NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    // See customer-statement.js - the "Pay all outstanding" link on an
+    // account statement covers several invoices with one Square payment,
+    // so reference_id points at one of these rows (order_ids, oldest
+    // first) instead of a single order id.
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS statement_payment_links (
+        id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        order_ids TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
@@ -178,46 +189,98 @@ export async function onRequest(context) {
       await db.prepare("DELETE FROM gang_sheet_pending_checkouts WHERE id = ?").bind(pending.id).run();
     }
 
+    // Still nothing resolved from `orders` directly - reference_id might
+    // instead be a combined statement payment (customer-statement.js's
+    // "Pay all outstanding" link), which covers several invoices with one
+    // Square payment. Split the single payment across those invoices,
+    // oldest first, same amount-owed math a person doing this by hand over
+    // several Record Payment entries would use, then finish the webhook
+    // here rather than falling through to the single-order path below.
+    if (!order) {
+      const group = await db.prepare("SELECT * FROM statement_payment_links WHERE id = ?").bind(ourOrderId).first();
+      if (group) {
+        let orderIds = [];
+        try {
+          orderIds = JSON.parse(group.order_ids);
+        } catch {
+          orderIds = [];
+        }
+        let remaining = Number(payment.amount_money && payment.amount_money.amount) / 100;
+        if (!remaining || remaining <= 0) return json({ received: true });
+
+        const results = [];
+        for (const oid of orderIds) {
+          if (remaining <= 0.001) break;
+          const invoice = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(oid).first();
+          if (!invoice || invoice.paid_status === "paid") continue;
+          const owed = Number(invoice.total) - Number(invoice.amount_paid || 0);
+          if (owed <= 0.001) continue;
+          const applied = Math.min(owed, remaining);
+          remaining -= applied;
+          const { paymentId, status } = await recordPaymentOnOrder(db, invoice, applied, {
+            method: "Card (Square)",
+            notes: `Paid by card via Square as part of a combined statement payment (payment ${payment.id})`,
+            receivedAt: payment.updated_at,
+            squarePaymentId: payment.id,
+          });
+          results.push({ order_id: invoice.id, invoice_number: invoice.invoice_number, amount: applied, status, paymentId });
+        }
+
+        await db.prepare("DELETE FROM statement_payment_links WHERE id = ?").bind(group.id).run();
+
+        // Same best-effort receipt-per-invoice + portal notification as the
+        // single-order path below, just once per invoice this payment
+        // actually touched.
+        const authCfg = await db.prepare("SELECT api_key FROM auth_config WHERE id = 'default'").first();
+        const origin = new URL(request.url).origin;
+        for (const r of results) {
+          if (authCfg && authCfg.api_key) {
+            try {
+              await fetch(`${origin}/api/receipt`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-API-Key": authCfg.api_key },
+                body: JSON.stringify({ order_id: r.order_id, payment_id: r.paymentId }),
+              });
+            } catch (e) {
+              // Payment is already safely recorded either way.
+            }
+          }
+        }
+        if (env.RESEND_API_KEY && results.length) {
+          const notifyTo = env.NOTIFY_EMAIL_TO || env.RESEND_REPLY_TO || "hello@embroidery.click";
+          const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
+          const lines = results.map((r) => `<li>${r.invoice_number}: £${r.amount.toFixed(2)} (now ${r.status})</li>`).join("");
+          try {
+            await fetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: fromAddress,
+                to: [notifyTo],
+                subject: `Combined card payment received - £${(Number(payment.amount_money.amount) / 100).toFixed(2)}`,
+                html: `<p>A combined statement payment was received and split across ${results.length} invoice${results.length === 1 ? "" : "s"}:</p><ul>${lines}</ul>`,
+              }),
+            });
+          } catch (e) {
+            // Notification failing shouldn't fail the webhook.
+          }
+        }
+
+        return json({ received: true, recorded: true, combined: true, applied: results });
+      }
+    }
+
     if (!order) return json({ received: true, unmatched: true });
 
     const amount = Number(payment.amount_money && payment.amount_money.amount) / 100;
     if (!amount || amount <= 0) return json({ received: true });
 
-    const paymentId = crypto.randomUUID();
-    await db.prepare(`
-      INSERT INTO payments (id, order_id, amount, method, type, notes, received_at, square_payment_id)
-      VALUES (?, ?, ?, 'Card (Square)', 'payment', ?, ?, ?)
-    `).bind(
-      paymentId, order.id, amount,
-      `Paid by card via Square (payment ${payment.id})`,
-      payment.updated_at || new Date().toISOString(),
-      payment.id
-    ).run();
-
-    // Same recompute orders.js's recomputePaymentSummary does - duplicated
-    // rather than imported, same self-contained-file pattern every other
-    // Function here follows.
-    const sumRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE order_id = ?").bind(order.id).first();
-    const amountPaid = sumRow ? sumRow.total : 0;
-    let status;
-    if (amountPaid <= 0) status = "unpaid";
-    else if (amountPaid >= order.total) status = "paid";
-    else status = "partial";
-    const paidAt = status === "paid" ? new Date().toISOString() : null;
-    await db.prepare(
-      "UPDATE orders SET amount_paid = ?, paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).bind(amountPaid, status, paidAt, order.id).run();
-    await logOrderEvent(db, order.id, "payment_via_card", `Paid £${amount.toFixed(2)} by card via Square`);
-    if (status === "paid") {
-      await markInvoicePaidStepDone(db, order.id);
-      // Flips the DTF Builder "new orders" popup from "checkout started"
-      // to "actually paid" - see gang-sheet-uploads.js. No-op (0 rows) for
-      // a non-DTF order, since order_id only ever matches gang-sheet
-      // uploads that came through gang-sheet-checkout.js.
-      await db.prepare(
-        "UPDATE gang_sheet_uploads SET production_ready_at = CURRENT_TIMESTAMP WHERE order_id = ? AND production_ready_at IS NULL"
-      ).bind(order.id).run();
-    }
+    const { paymentId, status } = await recordPaymentOnOrder(db, order, amount, {
+      method: "Card (Square)",
+      notes: `Paid by card via Square (payment ${payment.id})`,
+      receivedAt: payment.updated_at,
+      squarePaymentId: payment.id,
+    });
 
     // Fire the same receipt email the Record Payment modal's "send receipt"
     // checkbox triggers - reusing /api/receipt.js rather than duplicating

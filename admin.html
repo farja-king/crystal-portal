@@ -2507,7 +2507,7 @@
           <p id="cv-company" class="text-sm text-slate-500"></p>
         </div>
         <div class="flex items-center gap-3">
-          <button type="button" id="cv-send-statement-btn" onclick="sendCustomerStatement()" title="Emails every invoice on this customer's account (number, date, total, status, balance) plus the overall balance due - can be sent any time" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
+          <button type="button" id="cv-send-statement-btn" onclick="sendCustomerStatement()" title="Emails every invoice on this customer's account (number, date, total, status, balance) plus the overall balance due, with a single 'Pay all outstanding' card payment link covering every unpaid invoice at once - can be sent any time" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">
             Send Statement
           </button>
           <button type="button" id="cv-send-reorder-btn" onclick="sendReorderReminderNow()" title="Nudges this customer to reorder - normally only sent automatically ~11 months after their last invoice (see functions/api/reorder-reminders.js), this sends one right now regardless" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg font-semibold shadow-sm">

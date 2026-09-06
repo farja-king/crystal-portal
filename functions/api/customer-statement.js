@@ -6,6 +6,8 @@
 // the existing per-invoice Send Statement button in any way.
 import { emailShell } from "../_lib/email-template.js";
 
+const SQUARE_VERSION = "2026-07-15"; // keep in step with pay-by-card.js/gang-sheet-checkout.js's own constant
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -122,6 +124,72 @@ export async function onRequest(context) {
     ? `<p style="font-weight:600;color:#16a34a;">Everything on your account is paid in full - thank you!</p>`
     : `<p>Total balance due across all invoices: <strong>${money(totalBalance)}</strong> (of ${money(totalInvoiced)} invoiced, ${money(totalPaid)} paid to date).</p>`;
 
+  // "Pay all outstanding" - one Square Payment Link for the whole balance,
+  // covering every unpaid/partial invoice on this statement in a single
+  // card payment, rather than the customer having to pay each individually.
+  // square-webhook.js resolves it back via reference_id -> a
+  // statement_payment_links row (order_ids, oldest first) and splits the
+  // one payment across them - see that file and recordPaymentOnOrder() in
+  // _lib/record-payment.js for the other half of this.
+  //
+  // Real send only (never during preview - each preview click would
+  // otherwise mint a fresh, unused Square link every time staff just wants
+  // to see the wording), and only when there's actually something to pay.
+  let payCtaUrl = null;
+  const unpaidOrderIds = invoices.filter((o) => o.paid_status !== "paid").map((o) => o.id);
+  if (!preview && totalBalance > 0.001 && unpaidOrderIds.length) {
+    const squareAccessToken = (env.SQUARE_ACCESS_TOKEN || "").trim();
+    const squareLocationId = (env.SQUARE_LOCATION_ID || "").trim();
+    if (squareAccessToken && squareLocationId) {
+      try {
+        await db.prepare(`
+          CREATE TABLE IF NOT EXISTS statement_payment_links (
+            id TEXT PRIMARY KEY,
+            customer_id TEXT NOT NULL,
+            order_ids TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+          )
+        `).run();
+        const groupId = crypto.randomUUID();
+        const squareBase = env.SQUARE_ENV === "sandbox" ? "https://connect.squareupsandbox.com" : "https://connect.squareup.com";
+        const squareRes = await fetch(`${squareBase}/v2/online-checkout/payment-links`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${squareAccessToken}`,
+            "Content-Type": "application/json",
+            "Square-Version": SQUARE_VERSION,
+          },
+          body: JSON.stringify({
+            idempotency_key: crypto.randomUUID(),
+            order: {
+              location_id: squareLocationId,
+              reference_id: groupId,
+              line_items: [{
+                name: `Account balance - ${unpaidOrderIds.length} invoice${unpaidOrderIds.length === 1 ? "" : "s"}`,
+                quantity: "1",
+                base_price_money: { amount: Math.round(totalBalance * 100), currency: "GBP" },
+              }],
+            },
+          }),
+        });
+        if (squareRes.ok) {
+          const squareData = await squareRes.json();
+          const checkoutUrl = squareData && squareData.payment_link && squareData.payment_link.url;
+          if (checkoutUrl) {
+            await db.prepare(
+              "INSERT INTO statement_payment_links (id, customer_id, order_ids) VALUES (?, ?, ?)"
+            ).bind(groupId, customer_id, JSON.stringify(unpaidOrderIds)).run();
+            payCtaUrl = checkoutUrl;
+          }
+        }
+      } catch (e) {
+        // A statement with no working pay link is still useful (it's the
+        // whole point of the email otherwise) - never block the send over
+        // this failing.
+      }
+    }
+  }
+
   const html = emailShell({
     heading: "Account Statement",
     bodyHtml: `<p>Hi ${escapeHtml(customer.name)},</p>
@@ -136,8 +204,11 @@ export async function onRequest(context) {
         </tr>
         ${invoiceRows}
       </table>
-      ${overallLine}`,
-    ctaColor: "#4f46e5",
+      ${overallLine}
+      ${(preview && totalBalance > 0.001) ? `<p style="color:#94a3b8;font-size:12px;">(A secure "Pay all outstanding" link will be included here when this statement is actually sent.)</p>` : ""}`,
+    ctaText: payCtaUrl ? `Pay ${money(totalBalance)} now` : undefined,
+    ctaUrl: payCtaUrl || undefined,
+    ctaColor: "#16a34a",
   });
 
   // Preview mode - builds and returns the exact email (subject/to/html)
