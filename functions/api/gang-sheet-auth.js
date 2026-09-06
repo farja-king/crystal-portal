@@ -181,13 +181,17 @@ export async function onRequest(context) {
       ).bind(jti, customer.id, expiresAt).run();
 
       if (env.RESEND_API_KEY) {
+        const reason = REQUEST_REASON_COPY[data.reason] ? data.reason : "checkout";
         // Always back to cart.html regardless of which page/reason started
-        // this - checkout resumes automatically if there's a cart (see
-        // handleLoginTokenInUrl in src/cart.js); upload/upscale just sign
-        // the customer in and leave them to go back to what they were
-        // doing, same as landing on cart.html any other way.
-        const loginUrl = `${env.DTF_PREP_ORIGIN}/cart.html?login_token=${loginToken}`;
-        const copy = REQUEST_REASON_COPY[data.reason] || REQUEST_REASON_COPY.checkout;
+        // this (checkout resumes automatically there if there's a cart -
+        // see handleLoginTokenInUrl in src/cart.js) - reason rides along in
+        // the URL so that logic can send an upload/upscale/account sign-in
+        // back to the right page even if the link's opened on a different
+        // device/browser than the one that requested it (src/cart.js also
+        // keeps its own localStorage copy for the common same-device case,
+        // in case a link-wrapping email client ever strips this param).
+        const loginUrl = `${env.DTF_PREP_ORIGIN}/cart.html?login_token=${loginToken}&reason=${encodeURIComponent(reason)}`;
+        const copy = REQUEST_REASON_COPY[reason];
         const html = emailShell({
           heading: copy.heading,
           bodyHtml: `<p>${copy.body}</p>`,
