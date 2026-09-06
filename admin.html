@@ -3626,13 +3626,12 @@
         (customers || []).forEach(c => { customersById[c.id] = c; });
         renderOrderCustomerPicker();
 
-        // DTF-Prep customers (dtf_account_tier set) get their own dedicated
-        // list under Customers > DTF Builder - see loadDtfBuilder() -
-        // rather than cluttering the everyday Store list. Display-only:
-        // customersById above still holds every customer (DTF included) so
-        // lookups elsewhere (order customer picker, quote requests, etc)
-        // keep working exactly as before.
-        allCustomers = (customers || []).filter(c => !c.dtf_account_tier);
+        // DTF-Prep customers (dtf_account_tier set) also get their own
+        // dedicated list under Customers > DTF Builder - see
+        // loadDtfBuilder() - but they're the same customer record either
+        // way, so they belong in the main Directory too, not hidden from
+        // it.
+        allCustomers = customers || [];
         selectedCustomerIds = new Set();
         filterCustomers();
         stampRefreshed('refreshed-customers');
