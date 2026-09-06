@@ -450,6 +450,15 @@
           <p id="edit-combined-activity" class="text-lg text-slate-900 font-bold"></p>
         </div>
 
+        <!-- Same read-only DTF credit line as the customer View popup (see
+             cv-dtf-credit-row) - decided via Customers > DTF Builder > Credit
+             Applications, not editable here. Hidden entirely for a customer
+             who's never applied. -->
+        <div id="edit-dtf-credit-row" class="hidden mt-4 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-800">
+          <p class="text-xs text-slate-500 font-medium mb-1">DTF Credit Account</p>
+          <p id="edit-dtf-credit"></p>
+        </div>
+
         <div class="mt-4 flex gap-3">
           <button onclick="saveCustomerEdit()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             Save Changes
@@ -2520,6 +2529,17 @@
 
       <p id="cv-square-summary" class="hidden bg-slate-50 rounded-lg p-3 mb-4 text-sm text-slate-700"></p>
 
+      <!-- DTF credit account status - only shown for a customer who's ever
+           applied (dtf_credit_status not null). Read-only here (decided via
+           Customers > DTF Builder > Credit Applications, see
+           dtfCreditDecision()) - this is just making it visible from the
+           customer's own record too, since it previously only ever showed
+           up in that one sub-tab. -->
+      <div id="cv-dtf-credit-row" class="hidden border-t border-slate-200 pt-4 mb-4">
+        <p class="text-xs text-slate-500 font-medium mb-1">DTF Credit Account</p>
+        <p id="cv-dtf-credit" class="text-sm text-slate-800"></p>
+      </div>
+
       <!-- DTF Gang Sheet flat price - same field as the Edit Customer form
            (customers.js's dtf_flat_sheet_price), just also editable right
            here so it doesn't need a trip to Edit to check or change while
@@ -4015,6 +4035,25 @@
       document.getElementById('cv-dtf-flat-price').value = c.dtf_flat_sheet_price != null ? c.dtf_flat_sheet_price : '';
       document.getElementById('cv-dtf-flat-price-status').classList.add('hidden');
 
+      // DTF credit account - hidden entirely for a customer who's never
+      // applied, same dtfCreditBadge() as the DTF Builder tab's own list so
+      // the two can never show it differently. Decided over there, not
+      // editable here - see dtfCreditDecision().
+      const dtfCreditRow = document.getElementById('cv-dtf-credit-row');
+      if (c.dtf_credit_status) {
+        dtfCreditRow.classList.remove('hidden');
+        const outstanding = Object.values(ordersById || {})
+          .filter((o) => o.customer_id === id && o.doc_type === 'invoice' && o.paid_status !== 'paid')
+          .reduce((sum, o) => sum + (Number(o.total) - Number(o.amount_paid || 0)), 0);
+        const outstandingLine = c.dtf_credit_status === 'approved'
+          ? `<br>£${outstanding.toFixed(2)} outstanding of £${Number(c.dtf_credit_limit || 0).toFixed(2)} limit.`
+          : '';
+        document.getElementById('cv-dtf-credit').innerHTML = dtfCreditBadge(c.dtf_credit_status, c.dtf_credit_limit) + outstandingLine +
+          (c.dtf_credit_notes ? `<br><span class="text-slate-500">${escapeHtml(c.dtf_credit_notes)}</span>` : '');
+      } else {
+        dtfCreditRow.classList.add('hidden');
+      }
+
       // Same combined figure (Square baseline + this customer's own portal
       // invoices) as the Customer Directory list and the edit form's
       // Activity line - shown here too so all three can never disagree.
@@ -5354,6 +5393,14 @@
       document.getElementById('edit-type').value = c.type || 'Retail';
       document.getElementById('edit-discount').value = c.discount_pct || 0;
       document.getElementById('edit-dtf-flat-price').value = c.dtf_flat_sheet_price != null ? c.dtf_flat_sheet_price : '';
+      const editDtfCreditRow = document.getElementById('edit-dtf-credit-row');
+      if (c.dtf_credit_status) {
+        editDtfCreditRow.classList.remove('hidden');
+        document.getElementById('edit-dtf-credit').innerHTML = dtfCreditBadge(c.dtf_credit_status, c.dtf_credit_limit) +
+          (c.dtf_credit_notes ? `<br><span class="text-slate-500">${escapeHtml(c.dtf_credit_notes)}</span>` : '');
+      } else {
+        editDtfCreditRow.classList.add('hidden');
+      }
       document.getElementById('edit-address1').value = c.address_1 || '';
       document.getElementById('edit-address2').value = c.address_2 || '';
       document.getElementById('edit-city').value = c.city || '';

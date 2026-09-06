@@ -4,6 +4,11 @@
 // gate unchanged (same as quote-requests.js's GET/PUT), since this is
 // entirely a staff-facing endpoint with no public/customer path at all.
 import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
+import { emailShell } from "../_lib/email-template.js";
+
+function ukDateStamp() {
+  return new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -110,6 +115,50 @@ export async function onRequest(context) {
         await db.prepare(
           "UPDATE customers SET dtf_credit_status = ?, dtf_credit_limit = ?, dtf_credit_seen_by_staff = 1 WHERE id = ?"
         ).bind(status, limit, data.customer_id).run();
+
+        const customer = await db.prepare("SELECT id, name, email, notes FROM customers WHERE id = ?").bind(data.customer_id).first();
+
+        // Permanent, chronological record on the customer's own Notes field
+        // - there's no separate customer-level activity log in this
+        // codebase (order-events.js only ever tracks one order), and Notes
+        // is the one field every existing customer function (View/Edit,
+        // Store list, DTF Builder list) already surfaces, so this is the
+        // one place staff are guaranteed to see it later regardless of
+        // which screen they're looking at the customer from.
+        const noteLine = status === "approved"
+          ? `${ukDateStamp()}: DTF credit approved, £${limit.toFixed(2)} limit.`
+          : `${ukDateStamp()}: DTF credit application declined.`;
+        const newNotes = customer && customer.notes ? `${customer.notes}\n${noteLine}` : noteLine;
+        await db.prepare("UPDATE customers SET notes = ? WHERE id = ?").bind(newNotes, data.customer_id).run();
+
+        // Best-effort - a customer who applied for credit but somehow has
+        // no email on file (or Resend isn't configured) still gets the
+        // decision recorded above either way, just not emailed about it.
+        if (env.RESEND_API_KEY && customer && customer.email) {
+          try {
+            const heading = status === "approved" ? "Your DTF credit account is approved" : "Your DTF credit application";
+            const bodyHtml = status === "approved"
+              ? `<p>Hi ${customer.name || ""},</p><p>Good news - your DTF-Prep credit account has been approved with a limit of <strong>£${limit.toFixed(2)}</strong>. You can now check out gang sheet orders on account, up to that limit, without paying by card each time.</p>`
+              : `<p>Hi ${customer.name || ""},</p><p>Thanks for applying for a DTF-Prep credit account. Unfortunately we're not able to approve it at this time - you can still check out and pay by card as normal.</p>`;
+            const html = emailShell({ heading, bodyHtml });
+            await fetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>",
+                to: [customer.email],
+                reply_to: env.RESEND_REPLY_TO || "hello@embroidery.click",
+                subject: status === "approved" ? "Your DTF credit account has been approved" : "Your DTF credit application",
+                html,
+              }),
+            });
+          } catch {
+            // Same reasoning as every other best-effort send in this
+            // codebase - the decision itself (above) already went through
+            // regardless of whether the email does.
+          }
+        }
+
         return json({ success: true });
       }
 
