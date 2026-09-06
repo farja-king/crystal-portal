@@ -117,17 +117,22 @@ export async function onRequest(context) {
     // than one gang sheet to the same order (one popup per order, not one
     // per sheet).
     if (url.searchParams.get("count_new")) {
-      // Split by whether the order behind it was actually paid (Square) or
-      // just invoiced to an approved credit account - production_ready_at
-      // is set the same way for both (see the comment above), but "paid
-      // and ready for production" is only true for one of them. Without
-      // this split the Dashboard popup told staff every new DTF order was
-      // paid even when no card had ever been charged.
+      // Split three ways - production_ready_at is set the same way for all
+      // of them (see the comment above), but "paid and ready for
+      // production" is only actually true for one:
+      //  - genuinely paid via Square (paid_status='paid' AND a real total)
+      //  - free of charge (total=0 - see gang-sheet-checkout.js's own
+      //    total===0 branch, a deliberate £0 dtf_flat_sheet_price override
+      //    - also marked paid_status='paid' since nothing's owed, but no
+      //    card was ever charged, so lumping it in with genuine Square
+      //    payments would be just as wrong as calling it "on credit")
+      //  - invoiced to an approved credit account, still unpaid
       const row = await db.prepare(`
         SELECT
           COUNT(DISTINCT gsu.order_id) AS n,
-          COUNT(DISTINCT CASE WHEN o.paid_status = 'paid' THEN gsu.order_id END) AS paid_n,
-          COUNT(DISTINCT CASE WHEN o.paid_status != 'paid' THEN gsu.order_id END) AS credit_n
+          COUNT(DISTINCT CASE WHEN o.paid_status = 'paid' AND o.total > 0 THEN gsu.order_id END) AS paid_n,
+          COUNT(DISTINCT CASE WHEN o.total = 0 THEN gsu.order_id END) AS free_n,
+          COUNT(DISTINCT CASE WHEN o.paid_status != 'paid' AND o.total > 0 THEN gsu.order_id END) AS credit_n
         FROM gang_sheet_uploads gsu
         JOIN orders o ON o.id = gsu.order_id
         WHERE gsu.production_ready_at IS NOT NULL AND gsu.seen_by_staff = 0 AND gsu.order_id IS NOT NULL
@@ -135,6 +140,7 @@ export async function onRequest(context) {
       return json({
         count: (row && row.n) || 0,
         paid_count: (row && row.paid_n) || 0,
+        free_count: (row && row.free_n) || 0,
         credit_count: (row && row.credit_n) || 0,
       });
     }

@@ -108,11 +108,34 @@ export async function onRequest(context) {
     if (!customer) return json({ error: "That account no longer exists." }, 404);
 
     const total = uploads.reduce((sum, u) => sum + Number(u.price || 0) * Math.max(1, parseInt(u.qty, 10) || 1), 0);
-    if (total <= 0) return json({ error: "Nothing to charge" }, 400);
+    if (total < 0) return json({ error: "Nothing to charge" }, 400);
 
     const authHeaders = { "Content-Type": "application/json" };
     if (authCfg.api_key) authHeaders["X-API-Key"] = authCfg.api_key;
     const origin = new URL(request.url).origin;
+
+    // A £0.00 dtf_flat_sheet_price (see customers.js) - a deliberate
+    // "make this free for this customer" override, not "no override" (that
+    // stays null - see gang-sheet-upload.js's own flatPrice != null check).
+    // Nothing to charge and no external payment step makes sense here, so
+    // create the order already marked paid, same as a genuine £0-owed
+    // invoice would be - previously this just refused checkout outright
+    // ("Nothing to charge"), which meant a £0 price was actually unusable.
+    if (total === 0) {
+      const orderItems = buildDtfOrderItems(uploads);
+      const orderId = await createDtfOrder({ origin, authHeaders, customer }, orderItems);
+
+      await db.prepare(
+        "UPDATE orders SET paid_status = 'paid', amount_paid = 0, paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+      ).bind(orderId).run();
+
+      await db.prepare(`
+        UPDATE gang_sheet_uploads SET order_id = ?, status = 'attached', attached_at = CURRENT_TIMESTAMP, production_ready_at = CURRENT_TIMESTAMP
+        WHERE id IN (${placeholders})
+      `).bind(orderId, ...uploadIds).run();
+
+      return json({ success: true, free: true, order_id: orderId });
+    }
 
     // Approved credit accounts skip Square entirely and go straight on
     // account, as long as this order plus whatever they already owe stays

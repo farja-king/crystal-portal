@@ -13169,29 +13169,39 @@
       try {
         const res = await fetch(API_GANG_SHEET_UPLOADS_URL + '?count_new=1', { cache: 'no-store' });
         const data = await res.json();
-        if (res.ok && data.count > 0) showNewGangSheetsPopup(data.count, data.paid_count || 0, data.credit_count || 0);
+        if (res.ok && data.count > 0) {
+          showNewGangSheetsPopup(data.count, data.paid_count || 0, data.free_count || 0, data.credit_count || 0);
+        }
       } catch (e) {
         // silent - non-critical
       }
     }
 
-    // paidCount/creditCount split which of the new orders were actually
-    // charged via Square vs just invoiced to an approved credit account -
-    // production_ready_at (what count_new counts) is set the same way for
-    // both, but only one of them means money has actually changed hands.
-    // Previously this always said "paid", which was flatly wrong for a
-    // credit order - nothing to reconcile against a bank statement for one
-    // of those.
-    function showNewGangSheetsPopup(count, paidCount, creditCount) {
+    // paidCount/freeCount/creditCount split which of the new orders
+    // actually had money change hands: genuinely charged via Square,
+    // deliberately free (a £0 dtf_flat_sheet_price override - see gang-
+    // sheet-checkout.js's total===0 branch), or invoiced to an approved
+    // credit account and still unpaid. production_ready_at (what count_new
+    // counts) is set the same way for all three. Previously this always
+    // said "paid", which was wrong for both a credit order (nothing paid
+    // yet) and a free one (nothing ever will be) - there's nothing to
+    // reconcile against a bank statement for either.
+    function showNewGangSheetsPopup(count, paidCount, freeCount, creditCount) {
       const modal = document.getElementById('gang-sheet-popup');
       const plural = count > 1 ? 's' : '';
       let msg;
-      if (creditCount === 0) {
+      if (freeCount === 0 && creditCount === 0) {
         msg = `You have ${count} new DTF gang sheet order${plural} - paid via Square and ready for production.`;
-      } else if (paidCount === 0) {
+      } else if (paidCount === 0 && creditCount === 0) {
+        msg = `You have ${count} new DTF gang sheet order${plural} - free of charge and ready for production.`;
+      } else if (paidCount === 0 && freeCount === 0) {
         msg = `You have ${count} new DTF gang sheet order${plural} - on credit and ready for production. No payment has been taken.`;
       } else {
-        msg = `You have ${count} new DTF gang sheet order${plural} ready for production (${paidCount} paid via Square, ${creditCount} on credit - no payment taken).`;
+        const parts = [];
+        if (paidCount) parts.push(`${paidCount} paid via Square`);
+        if (freeCount) parts.push(`${freeCount} free of charge`);
+        if (creditCount) parts.push(`${creditCount} on credit - no payment taken`);
+        msg = `You have ${count} new DTF gang sheet order${plural} ready for production (${parts.join(', ')}).`;
       }
       document.getElementById('gang-sheet-popup-msg').textContent = msg;
       modal.classList.remove('hidden');
