@@ -7,6 +7,7 @@
 // gang-sheet-upload.js; no staff/portal-password path, this is entirely
 // customer-facing.
 import { verifyCustomerToken } from "../_lib/customer-token.js";
+import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -27,6 +28,8 @@ export async function onRequest(context) {
   if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
 
   try {
+    await ensureDtfCustomerColumns(db);
+
     const auth = request.headers.get("Authorization") || "";
     const bearerToken = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
     if (!bearerToken) return json({ error: "Not authenticated" }, 401);
@@ -39,10 +42,16 @@ export async function onRequest(context) {
       return json({ error: "Your session has expired - please sign in again." }, 401);
     }
 
-    const customer = await db.prepare("SELECT dtf_flat_sheet_price FROM customers WHERE id = ?").bind(payload.customer_id).first();
+    const customer = await db.prepare("SELECT dtf_flat_sheet_price, dtf_account_tier FROM customers WHERE id = ?").bind(payload.customer_id).first();
     return json({
       success: true,
       flat_sheet_price: customer && customer.dtf_flat_sheet_price != null ? Number(customer.dtf_flat_sheet_price) : null,
+      // 'registered' waives the DPI upscale charge server-side (see
+      // gang-sheet-upload.js) - returned here too so DTF-Prep's live price
+      // estimate (Order Summary, while still building) matches what
+      // actually gets charged at checkout, instead of only finding out the
+      // real total once Square is already involved.
+      upscale_free: !!(customer && customer.dtf_account_tier === "registered"),
     });
   } catch (err) {
     return json({ error: err.message }, 500);
