@@ -7722,7 +7722,7 @@
         summary += '\n\nImport this now? Old rows for these codes will be moved to Trash (not deleted) once the new rows are in.';
         console.log('[pencarrie-import dry run]\n' + summary);
 
-        if (!autoConfirm && !confirm(summary)) {
+        if (!autoConfirm && !(await confirmModal(summary))) {
           status.textContent = 'Cancelled - nothing was changed. (' + preview.totalRows + ' row(s) checked.)';
           return;
         }
@@ -11328,7 +11328,7 @@
     async function dtfCreditDecision(customerId, status, defaultLimit) {
       let creditLimit = null;
       if (status === 'approved') {
-        const input = prompt('Set a credit limit for this account (£):', String(defaultLimit || 100));
+        const input = await promptModal('Set a credit limit for this account (£):', String(defaultLimit || 100), 'number');
         if (input === null) return;
         creditLimit = Number(input);
         if (!creditLimit || creditLimit <= 0) { showActionToast('⚠', 'Please enter a valid credit limit.'); return; }
