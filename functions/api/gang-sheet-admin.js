@@ -3,6 +3,8 @@
 // path here falls through functions/_middleware.js's normal staff login
 // gate unchanged (same as quote-requests.js's GET/PUT), since this is
 // entirely a staff-facing endpoint with no public/customer path at all.
+import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -21,6 +23,8 @@ export async function onRequest(context) {
   if (!db) return json({ error: "Database isn't set up yet" }, 500);
 
   try {
+    await ensureDtfCustomerColumns(db);
+
     if (request.method === "GET") {
       const view = new URL(request.url).searchParams.get("view");
 

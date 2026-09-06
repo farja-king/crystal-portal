@@ -16,6 +16,7 @@
 //    (DTF-Prep and this portal are different origins, so no shared cookie).
 import { signCustomerToken, verifyCustomerToken, randomHex } from "../_lib/customer-token.js";
 import { emailShell } from "../_lib/email-template.js";
+import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
 
 const LOGIN_TOKEN_TTL = 15 * 60;
 const SESSION_TOKEN_TTL = 30 * 24 * 60 * 60;
@@ -73,6 +74,7 @@ export async function onRequest(context) {
         // already exists
       }
     }
+    await ensureDtfCustomerColumns(db);
 
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS gang_sheet_login_tokens (

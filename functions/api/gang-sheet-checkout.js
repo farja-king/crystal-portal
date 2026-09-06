@@ -11,6 +11,7 @@
 // resolves a completed payment back to an orders row via reference_id, and
 // this produces a perfectly normal invoice-shaped row.
 import { verifyCustomerToken } from "../_lib/customer-token.js";
+import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
 
 const SQUARE_VERSION = "2026-07-15"; // keep in step with pay-by-card.js's own constant
 
@@ -34,6 +35,8 @@ export async function onRequest(context) {
   if (!env.DTF_PREP_ORIGIN) return json({ error: "DTF-Prep isn't configured yet - DTF_PREP_ORIGIN is missing" }, 500);
 
   try {
+    await ensureDtfCustomerColumns(db);
+
     // Customer session auth - identical check to gang-sheet-upload.js.
     const auth = request.headers.get("Authorization") || "";
     const bearerToken = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;

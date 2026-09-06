@@ -5,6 +5,7 @@
 // exemption for this path, added alongside gang-sheet-auth's). There's no
 // staff-facing path here at all; that's functions/api/gang-sheet-queue.js.
 import { verifyCustomerToken } from "../_lib/customer-token.js";
+import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
 
 // Pricing is computed here, not trusted from the client, since this price is
 // what gang-sheet-checkout.js later charges through Square. Must be kept in
@@ -61,6 +62,7 @@ export async function onRequest(context) {
       )
     `).run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_gsu_status ON gang_sheet_uploads (status)").run();
+    await ensureDtfCustomerColumns(db);
 
     // Customer session auth - the only auth this endpoint accepts.
     const auth = request.headers.get("Authorization") || "";

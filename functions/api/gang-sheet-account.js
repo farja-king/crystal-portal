@@ -8,6 +8,7 @@
 // checkout.js - reachable only with a valid gang-sheet-session token, and
 // exempted from the staff login gate the same way (see functions/_middleware.js).
 import { verifyCustomerToken } from "../_lib/customer-token.js";
+import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -27,6 +28,8 @@ export async function onRequest(context) {
   if (!db) return json({ error: "Database isn't set up yet" }, 500);
 
   try {
+    await ensureDtfCustomerColumns(db);
+
     const auth = request.headers.get("Authorization") || "";
     const bearerToken = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
     if (!bearerToken) return json({ error: "Not authenticated" }, 401);
