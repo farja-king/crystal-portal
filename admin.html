@@ -4043,9 +4043,7 @@
       const dtfCreditRow = document.getElementById('cv-dtf-credit-row');
       if (c.dtf_credit_status) {
         dtfCreditRow.classList.remove('hidden');
-        const outstanding = Object.values(ordersById || {})
-          .filter((o) => o.customer_id === id && o.doc_type === 'invoice' && o.paid_status !== 'paid')
-          .reduce((sum, o) => sum + (Number(o.total) - Number(o.amount_paid || 0)), 0);
+        const outstanding = dtfCreditOutstanding(id);
         const outstandingLine = c.dtf_credit_status === 'approved'
           ? `<br>£${outstanding.toFixed(2)} outstanding of £${Number(c.dtf_credit_limit || 0).toFixed(2)} limit.`
           : '';
@@ -5397,7 +5395,10 @@
       const editDtfCreditRow = document.getElementById('edit-dtf-credit-row');
       if (c.dtf_credit_status) {
         editDtfCreditRow.classList.remove('hidden');
-        document.getElementById('edit-dtf-credit').innerHTML = dtfCreditBadge(c.dtf_credit_status, c.dtf_credit_limit) +
+        const editOutstandingLine = c.dtf_credit_status === 'approved'
+          ? `<br>£${dtfCreditOutstanding(id).toFixed(2)} outstanding of £${Number(c.dtf_credit_limit || 0).toFixed(2)} limit.`
+          : '';
+        document.getElementById('edit-dtf-credit').innerHTML = dtfCreditBadge(c.dtf_credit_status, c.dtf_credit_limit) + editOutstandingLine +
           (c.dtf_credit_notes ? `<br><span class="text-slate-500">${escapeHtml(c.dtf_credit_notes)}</span>` : '');
       } else {
         editDtfCreditRow.classList.add('hidden');
@@ -11001,6 +11002,20 @@
       return '<span class="text-slate-400">—</span>';
     }
 
+    // Live outstanding balance for a DTF credit account - the sum of every
+    // unpaid invoice this customer has, same figure gang-sheet-checkout.js
+    // itself checks against the limit at checkout time. Deliberately
+    // computed from ordersById on demand rather than stored anywhere, so it
+    // can never drift out of sync with the actual invoices (a stored
+    // running balance would need updating on every payment AND every
+    // refund/edit to stay correct) - see cv-dtf-credit-row and viewOrder()'s
+    // own DTF Credit Account line, both of which call this.
+    function dtfCreditOutstanding(customerId) {
+      return Object.values(ordersById || {})
+        .filter((o) => o.customer_id === customerId && o.doc_type === 'invoice' && o.paid_status !== 'paid')
+        .reduce((sum, o) => sum + (Number(o.total) - Number(o.amount_paid || 0)), 0);
+    }
+
     function renderDtfCustomers(rows) {
       const tbody = document.getElementById('dtf-customers-table-body');
       if (!rows || !rows.length) {
@@ -11724,7 +11739,11 @@
       const dtfCreditHtml = (o.source === 'dtf-prep' && orderCustomer && orderCustomer.dtf_credit_status) ? `
           <div>
             <p class="text-xs text-slate-500 font-medium mb-1">DTF Credit Account</p>
-            <p class="text-sm text-slate-800">${dtfCreditBadge(orderCustomer.dtf_credit_status, orderCustomer.dtf_credit_limit)}</p>
+            <p class="text-sm text-slate-800">${dtfCreditBadge(orderCustomer.dtf_credit_status, orderCustomer.dtf_credit_limit)}${
+              orderCustomer.dtf_credit_status === 'approved'
+                ? `<br>£${dtfCreditOutstanding(o.customer_id).toFixed(2)} outstanding of £${Number(orderCustomer.dtf_credit_limit || 0).toFixed(2)} limit.`
+                : ''
+            }</p>
           </div>` : '';
 
       content.innerHTML = `
