@@ -5,7 +5,8 @@
       "name": "crystal-portal",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8421"],
-      "port": 8421
+      "port": 8421,
+      "url": "http://localhost:8421/admin.html"
     }
   ]
 }

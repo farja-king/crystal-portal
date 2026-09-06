@@ -2997,7 +2997,7 @@
       return cachedSettings;
     }
 
-    // Same pricing formula the portal uses (see calculateUnitPrice in index.html)
+    // Same pricing formula the old customer-facing quote portal used
     function calculateUnitPrice(lengthMm, settings) {
       const parsedLength = Number(lengthMm) || 0;
       const effectiveLength = Math.max(parsedLength, settings.minimumBillableLengthMm);
