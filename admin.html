@@ -11750,7 +11750,9 @@
         <div class="grid gap-4 md:grid-cols-2 pb-4 border-b border-slate-200">
           <div>
             <p class="text-xs text-slate-500 font-medium mb-1">Customer</p>
-            <p class="font-semibold text-slate-900">${escapeHtml(o.customer_name)}</p>
+            ${o.customer_id
+              ? `<button type="button" onclick="closeOrderPanel(); viewCustomerHistory('${escapeAttr(o.customer_id)}')" title="Open this customer's own record - contact details, notes, DTF credit, Send Statement" class="font-semibold text-indigo-600 hover:text-indigo-800 hover:underline text-left">${escapeHtml(o.customer_name)}</button>`
+              : `<p class="font-semibold text-slate-900">${escapeHtml(o.customer_name)}</p>`}
             ${o.customer_email ? `<p class="text-sm text-slate-600">${escapeHtml(o.customer_email)}</p>` : ''}
           </div>
           <div>
