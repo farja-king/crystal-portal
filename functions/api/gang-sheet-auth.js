@@ -21,6 +21,37 @@ import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
 const LOGIN_TOKEN_TTL = 15 * 60;
 const SESSION_TOKEN_TTL = 30 * 24 * 60 * 60;
 
+// DTF-Prep passes along why it's asking for sign-in (its own login modal
+// shows matching copy - see LOGIN_REASONS in src/cart.js), so the emailed
+// link says the same thing rather than always "finish your order" even
+// when what triggered it was Upscale or the Ready-to-Upload page.
+const REQUEST_REASON_COPY = {
+  checkout: {
+    subject: "Sign in to DTF-Prep",
+    heading: "Sign in to DTF-Prep",
+    body: "Click below to sign in and finish your order. This link works once and expires in 15 minutes.",
+    cta: "Sign in to DTF-Prep",
+  },
+  upload: {
+    subject: "Sign in to upload your gang sheet",
+    heading: "Sign in to upload your gang sheet",
+    body: "Click below to sign in and upload your print-ready gang sheet. This link works once and expires in 15 minutes.",
+    cta: "Sign in to upload",
+  },
+  upscale: {
+    subject: "Sign in to upscale your image",
+    heading: "Sign in to upscale to 300 DPI",
+    body: "Click below to sign in and upscale your image to 300 DPI. This link works once and expires in 15 minutes. Registered accounts (with a name and address on file) get DPI upscaling for free.",
+    cta: "Sign in to upscale",
+  },
+  account: {
+    subject: "Sign in to DTF-Prep",
+    heading: "Sign in to DTF-Prep",
+    body: "Click below to sign in to your account. This link works once and expires in 15 minutes.",
+    cta: "Sign in to DTF-Prep",
+  },
+};
+
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -150,14 +181,17 @@ export async function onRequest(context) {
       ).bind(jti, customer.id, expiresAt).run();
 
       if (env.RESEND_API_KEY) {
-        // Always back to cart.html — checkout (the only thing that ever
-        // triggers this login) always ends up recomputable from there
-        // regardless of which page (builder or cart) started it.
+        // Always back to cart.html regardless of which page/reason started
+        // this - checkout resumes automatically if there's a cart (see
+        // handleLoginTokenInUrl in src/cart.js); upload/upscale just sign
+        // the customer in and leave them to go back to what they were
+        // doing, same as landing on cart.html any other way.
         const loginUrl = `${env.DTF_PREP_ORIGIN}/cart.html?login_token=${loginToken}`;
+        const copy = REQUEST_REASON_COPY[data.reason] || REQUEST_REASON_COPY.checkout;
         const html = emailShell({
-          heading: "Sign in to DTF-Prep",
-          bodyHtml: "<p>Click below to sign in and finish your order. This link works once and expires in 15 minutes.</p>",
-          ctaText: "Sign in to DTF-Prep",
+          heading: copy.heading,
+          bodyHtml: `<p>${copy.body}</p>`,
+          ctaText: copy.cta,
           ctaUrl: loginUrl,
         });
         try {
@@ -168,7 +202,7 @@ export async function onRequest(context) {
               from: env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>",
               to: [email],
               reply_to: env.RESEND_REPLY_TO || "hello@embroidery.click",
-              subject: "Sign in to DTF-Prep",
+              subject: copy.subject,
               html,
             }),
           });
