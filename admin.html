@@ -1739,10 +1739,25 @@
            30-day cleanup sweep and from being removed if its order is ever
            deleted (see gang-sheet-cleanup.js / deleteOrphanedGangSheetUploads
            in orders.js). -->
+      <!-- Bulk delete - same tick-rows-then-act pattern as the Customers/
+           Stock/Orders tabs (see selectedGangSheetIds/updateGangSheetBulkBar/
+           bulkDeleteGangSheets), repeated above and below the table so a
+           long list doesn't mean scrolling back up to act on what's ticked. -->
+      <div id="gangsheets-bulk-bar" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3 text-sm">
+        <span id="gangsheets-bulk-count" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="bulkDeleteGangSheets()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected
+        </button>
+        <button type="button" onclick="clearGangSheetSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
+      </div>
+
       <div id="proofs-subview-gangsheets" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
             <tr>
+              <th class="p-4 w-8"><input type="checkbox" id="gangsheets-select-all" onchange="toggleSelectAllGangSheets(this.checked)" class="rounded border-slate-300" /></th>
               <th class="text-left px-4 py-3">Image</th>
               <th class="text-left px-4 py-3">Customer</th>
               <th class="text-left px-4 py-3">Order</th>
@@ -1754,9 +1769,19 @@
             </tr>
           </thead>
           <tbody id="gangsheets-dashboard-body">
-            <tr><td colspan="8" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>
+            <tr><td colspan="9" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div id="gangsheets-bulk-bar-bottom" class="hidden flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mt-3 text-sm">
+        <span id="gangsheets-bulk-count-bottom" class="font-semibold text-indigo-900"></span>
+        <button type="button" onclick="bulkDeleteGangSheets()" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm">
+          Delete selected
+        </button>
+        <button type="button" onclick="clearGangSheetSelection()" class="text-slate-500 hover:text-slate-700 text-xs font-medium ml-auto">
+          Clear selection
+        </button>
       </div>
     </section>
 
@@ -12323,13 +12348,17 @@
     async function loadGangSheetsDashboard() {
       const tbody = document.getElementById('gangsheets-dashboard-body');
       if (!tbody) return;
-      tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
+      selectedGangSheetIds = new Set();
+      updateGangSheetBulkBar();
+      const selectAll = document.getElementById('gangsheets-select-all');
+      if (selectAll) selectAll.checked = false;
+      tbody.innerHTML = '<tr><td colspan="9" class="p-4 text-center text-slate-400 text-sm">Loading…</td></tr>';
       try {
         const res = await fetch(API_GANG_SHEET_UPLOADS_URL + '?all=1', { cache: 'no-store' });
         const rows = await res.json();
         if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load');
         if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-slate-400 text-sm">Nothing uploaded yet.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" class="p-4 text-center text-slate-400 text-sm">Nothing uploaded yet.</td></tr>';
           return;
         }
         tbody.innerHTML = rows.map((g) => {
@@ -12340,6 +12369,7 @@
           const statusNote = g.status === 'expired' ? '<div class="text-xs text-rose-500">Expired - file removed</div>' : '';
           return `
           <tr class="border-t border-slate-100">
+            <td class="p-4"><input type="checkbox" class="gangsheet-select-checkbox rounded border-slate-300" data-id="${escapeAttr(g.id)}" onchange="toggleGangSheetSelect('${escapeAttr(g.id)}', this.checked)" /></td>
             <td class="px-4 py-3">
               ${g.status === 'expired'
                 ? `<div class="w-12 h-12 flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300 text-[10px] text-center leading-tight">Removed</div>`
@@ -12359,8 +12389,69 @@
           </tr>`;
         }).join('');
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-red-500 text-sm">Could not load: ${escapeHtml(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="p-4 text-center text-red-500 text-sm">Could not load: ${escapeHtml(e.message)}</td></tr>`;
       }
+    }
+
+    // Same tick-rows-then-act pattern as selectedStockIds/updateStockBulkBar/
+    // bulkDeleteStock - repeated bulk bars above and below the table.
+    let selectedGangSheetIds = new Set();
+
+    function toggleGangSheetSelect(id, checked) {
+      if (checked) selectedGangSheetIds.add(id);
+      else selectedGangSheetIds.delete(id);
+      updateGangSheetBulkBar();
+    }
+
+    function toggleSelectAllGangSheets(checked) {
+      document.querySelectorAll('#gangsheets-dashboard-body .gangsheet-select-checkbox').forEach((cb) => {
+        cb.checked = checked;
+        if (checked) selectedGangSheetIds.add(cb.dataset.id);
+        else selectedGangSheetIds.delete(cb.dataset.id);
+      });
+      updateGangSheetBulkBar();
+    }
+
+    function clearGangSheetSelection() {
+      selectedGangSheetIds = new Set();
+      loadGangSheetsDashboard();
+    }
+
+    function updateGangSheetBulkBar() {
+      const count = selectedGangSheetIds.size;
+      ['', '-bottom'].forEach((suffix) => {
+        const bar = document.getElementById('gangsheets-bulk-bar' + suffix);
+        if (!bar) return;
+        bar.classList.toggle('hidden', count === 0);
+        if (count === 0) return;
+        document.getElementById('gangsheets-bulk-count' + suffix).textContent = count + ' selected';
+      });
+    }
+
+    // One DELETE-per-row loop, same as bulkDeleteStock - the API only takes
+    // one id at a time (see gang-sheet-uploads.js's action:'delete'), and a
+    // bad row shouldn't block the rest.
+    async function bulkDeleteGangSheets() {
+      const ids = [...selectedGangSheetIds];
+      if (!ids.length) return;
+      if (!(await confirmModal(`Delete ${ids.length} gang sheet(s)? This removes the file(s) permanently and cannot be undone.`))) return;
+
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          const res = await fetch(API_GANG_SHEET_UPLOADS_URL, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || 'Could not delete');
+        } catch (e) {
+          failed++;
+        }
+      }
+      loadGangSheetsDashboard();
+      if (failed) showActionToast('⚠', `${failed} gang sheet(s) could not be deleted.`);
+      else showActionToast('✓', `${ids.length} gang sheet(s) deleted.`);
     }
 
     async function toggleGangSheetKeep(id, keep) {
