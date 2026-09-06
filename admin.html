@@ -651,10 +651,11 @@
                 <th class="p-4">Total</th>
                 <th class="p-4">Status</th>
                 <th class="p-4">Date</th>
+                <th class="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody id="dtf-orders-table-body" class="divide-y divide-slate-100 text-sm">
-              <tr><td colspan="5" class="p-8 text-center text-slate-400">Loading...</td></tr>
+              <tr><td colspan="6" class="p-8 text-center text-slate-400">Loading...</td></tr>
             </tbody>
           </table>
         </div>
@@ -5554,12 +5555,13 @@
         allCustomers = allCustomers.filter((cust) => cust.id !== id);
 
         // This same delete-customer button also renders on the DTF
-        // Builder tab's customer rows (a DTF-Prep customer is just a
-        // customers-table row with dtf_account_tier set) - remove the row
-        // from wherever it was clicked, not just the Store list, using
+        // Builder tab's customer rows AND its Credit Applications cards (a
+        // DTF-Prep customer/application is just a customers-table row with
+        // dtf_account_tier/dtf_credit_status set) - remove whichever shape
+        // was actually clicked, not just the Store list's <tr>, using
         // document-wide lookup rather than assuming #customers-table-body.
         document.querySelectorAll(`[data-action="delete-customer"][data-id="${CSS.escape(id)}"]`).forEach((btn) => {
-          const row = btn.closest('tr');
+          const row = btn.closest('tr, .dtf-credit-card');
           if (row) row.remove();
         });
         const tbody = document.getElementById('customers-table-body');
@@ -11034,9 +11036,15 @@
     function renderDtfOrders(rows) {
       const tbody = document.getElementById('dtf-orders-table-body');
       if (!rows || !rows.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">No DTF-Prep orders yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">No DTF-Prep orders yet.</td></tr>';
         return;
       }
+      // Same View/Edit/Delete actions as the main Quotes & Invoices list
+      // (see renderOrdersTable) - view-order/edit-order are the same
+      // delegated data-action buttons handled by the one click listener
+      // further down, and deleteOrder() is the exact same function the
+      // main list's own Delete button calls - this IS that same orders
+      // row, not a separate DTF-specific record.
       tbody.innerHTML = rows.map((o) => `
         <tr>
           <td class="p-4 font-medium text-slate-900">${escapeHtml(o.invoice_number || '')}</td>
@@ -11044,6 +11052,17 @@
           <td class="p-4">£${Number(o.total || 0).toFixed(2)}</td>
           <td class="p-4"><span class="px-2 py-1 text-xs font-semibold rounded-full ${paidStatusBadgeClass(o.paid_status)}">${escapeHtml(o.paid_status || '')}</span></td>
           <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(o.created_at))}</td>
+          <td class="p-4 text-right space-x-2 whitespace-nowrap">
+            <button data-action="view-order" data-id="${escapeAttr(o.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+              View
+            </button>
+            <button data-action="edit-order" data-id="${escapeAttr(o.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold shadow-sm">
+              Edit
+            </button>
+            <button onclick="deleteOrder('${escapeAttr(o.id)}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+              Delete
+            </button>
+          </td>
         </tr>`).join('');
     }
 
@@ -11060,7 +11079,7 @@
         return;
       }
       list.innerHTML = rows.map((r) => `
-        <div class="bg-white border ${r.dtf_credit_status === 'pending' ? 'border-amber-200 bg-amber-50/40' : 'border-slate-200'} rounded-lg p-3">
+        <div class="dtf-credit-card bg-white border ${r.dtf_credit_status === 'pending' ? 'border-amber-200 bg-amber-50/40' : 'border-slate-200'} rounded-lg p-3">
           <div class="flex items-start justify-between gap-3 flex-wrap">
             <div>
               <span class="font-semibold text-slate-900">${escapeHtml(r.name || '')}</span>
@@ -11068,11 +11087,19 @@
               <div class="mt-1">${dtfCreditBadge(r.dtf_credit_status, r.dtf_credit_limit)}</div>
               ${r.dtf_credit_notes ? `<p class="text-sm text-slate-600 mt-2 whitespace-pre-line">${escapeHtml(r.dtf_credit_notes)}</p>` : ''}
             </div>
-            ${r.dtf_credit_status === 'pending' ? `
-              <div class="flex items-center gap-1.5 shrink-0">
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${r.dtf_credit_status === 'pending' ? `
                 <button onclick="dtfCreditDecision('${escapeAttr(r.id)}', 'approved')" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded font-semibold">Approve</button>
                 <button onclick="dtfCreditDecision('${escapeAttr(r.id)}', 'rejected')" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-rose-600 px-2.5 py-1 rounded font-semibold">Reject</button>
-              </div>` : ''}
+              ` : ''}
+              <!-- Same View/Edit/Delete as the Customers sub-view (see
+                   renderDtfCustomers) - a credit application is just this
+                   same customer row, so it gets the same three actions
+                   rather than only being reachable that other way. -->
+              <button data-action="view-customer" data-id="${escapeAttr(r.id)}" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded font-semibold">View</button>
+              <button data-action="edit-customer" data-id="${escapeAttr(r.id)}" class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2.5 py-1 rounded font-semibold">Edit</button>
+              <button data-action="delete-customer" data-id="${escapeAttr(r.id)}" class="text-xs bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 rounded font-semibold">Delete</button>
+            </div>
           </div>
         </div>`).join('');
     }
@@ -13911,7 +13938,14 @@
       await fetch(API_ORDERS_URL, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
       });
-      loadOrders();
+      await loadOrders();
+      // This same Delete button also renders on the DTF Builder tab's own
+      // Orders sub-view (a DTF-Prep order is just an orders-table row with
+      // source='dtf-prep') - refresh that list too so a delete from there
+      // doesn't leave a stale row behind until the next full DTF reload.
+      if (document.getElementById('dtf-orders-table-body')) {
+        renderDtfOrders(Object.values(ordersById).filter((o) => o.source === 'dtf-prep'));
+      }
     }
 
     // Which order the one-click Completed/Pending choice popup is currently
