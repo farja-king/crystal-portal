@@ -621,10 +621,11 @@
                 <th class="p-4">Tier</th>
                 <th class="p-4">Credit</th>
                 <th class="p-4">Since</th>
+                <th class="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody id="dtf-customers-table-body" class="divide-y divide-slate-100 text-sm">
-              <tr><td colspan="5" class="p-8 text-center text-slate-400">Loading...</td></tr>
+              <tr><td colspan="6" class="p-8 text-center text-slate-400">Loading...</td></tr>
             </tbody>
           </table>
         </div>
@@ -5318,6 +5319,13 @@
     function openCustomerEditForm(id) {
       const c = customersById[id];
       if (!c) return;
+      // The edit form lives inside section-customers - invoked from
+      // elsewhere (e.g. the DTF Builder tab's own customer rows, which are
+      // just customers table rows with dtf_account_tier set), it would
+      // populate while sat inside a hidden section. Jump to the Customers
+      // tab first so the form is actually visible; skip it (and the
+      // re-fetch switchTab('customers') triggers) when already there.
+      if (document.getElementById('section-customers').classList.contains('hidden')) switchTab('customers');
       addingNewCustomer = false;
       editingCustomerId = id;
       document.getElementById('customer-edit-form-title').textContent = 'Edit Customer';
@@ -5481,10 +5489,16 @@
         delete customersById[id];
         allCustomers = allCustomers.filter((cust) => cust.id !== id);
 
+        // This same delete-customer button also renders on the DTF
+        // Builder tab's customer rows (a DTF-Prep customer is just a
+        // customers-table row with dtf_account_tier set) - remove the row
+        // from wherever it was clicked, not just the Store list, using
+        // document-wide lookup rather than assuming #customers-table-body.
+        document.querySelectorAll(`[data-action="delete-customer"][data-id="${CSS.escape(id)}"]`).forEach((btn) => {
+          const row = btn.closest('tr');
+          if (row) row.remove();
+        });
         const tbody = document.getElementById('customers-table-body');
-        const btn = tbody.querySelector(`[data-action="delete-customer"][data-id="${CSS.escape(id)}"]`);
-        const row = btn ? btn.closest('tr') : null;
-        if (row) row.remove();
         if (!tbody.children.length) filterCustomers();
       } catch (err) {
         showActionToast('⚠', 'Failed to delete customer: ' + err.message);
@@ -10924,9 +10938,14 @@
     function renderDtfCustomers(rows) {
       const tbody = document.getElementById('dtf-customers-table-body');
       if (!rows || !rows.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400">No DTF-Prep customers yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-400">No DTF-Prep customers yet.</td></tr>';
         return;
       }
+      // Same View/Edit/Delete actions as the Store customer list (see
+      // renderCustomersTable) - reuses the exact same data-action buttons,
+      // handled by the one delegated click listener further down, since a
+      // DTF-Prep customer is just a row from the same `customers` table
+      // with dtf_account_tier set, not a separate record type.
       tbody.innerHTML = rows.map((c) => `
         <tr>
           <td class="p-4 font-medium text-slate-900">${escapeHtml(c.name || '')}</td>
@@ -10934,6 +10953,17 @@
           <td class="p-4">${dtfTierBadge(c.dtf_account_tier)}</td>
           <td class="p-4">${dtfCreditBadge(c.dtf_credit_status, c.dtf_credit_limit)}</td>
           <td class="p-4 text-slate-500 text-xs">${escapeHtml(ukDate(c.created_at))}</td>
+          <td class="p-4 text-right space-x-2 whitespace-nowrap">
+            <button data-action="view-customer" data-id="${escapeHtml(c.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+              View
+            </button>
+            <button data-action="edit-customer" data-id="${escapeHtml(c.id)}" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1 rounded text-xs font-semibold shadow-sm">
+              Edit
+            </button>
+            <button data-action="delete-customer" data-id="${escapeHtml(c.id)}" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-semibold shadow-sm">
+              Delete
+            </button>
+          </td>
         </tr>`).join('');
     }
 
@@ -11173,13 +11203,15 @@
     function renderOrdersTable() {
       const tbody = document.getElementById('orders-table-body');
       if (!tbody) return;
-      // DTF-Prep orders (source === 'dtf-prep') get their own dedicated
-      // list under Customers > DTF Builder - see loadDtfBuilder() - kept
-      // out of the everyday Quotes & Invoices list the same way DTF
-      // customers are kept out of the Store customers list. Display-only:
-      // ordersById itself is untouched, so anything else reading it
-      // (Dashboard stats, production tracker, etc) still sees every order.
-      let rows = Object.values(ordersById).filter((o) => o.source !== 'dtf-prep');
+      // DTF-Prep orders (source === 'dtf-prep') also get their own
+      // dedicated list under Customers > DTF Builder (see loadDtfBuilder())
+      // - deliberately shown here too, at Martin's request, so he has
+      // access to them from whichever tab he's already in rather than
+      // having to remember DTF Builder is where they live. Genuinely the
+      // same `orders` row either place (both read from ordersById), so
+      // every action here (View/Edit/Record Payment/etc) works exactly the
+      // same as for a normal quote/invoice.
+      let rows = Object.values(ordersById);
       if (ordersDocTypeFilter !== 'all') rows = rows.filter((o) => o.doc_type === ordersDocTypeFilter);
       if (ordersSearchQuery) {
         rows = rows.filter((o) => {
@@ -11198,9 +11230,16 @@
 
       tbody.innerHTML = rows.map((o) => {
           const isInvoice = o.doc_type === 'invoice';
+          // Flagged since these also appear under Customers > DTF Builder -
+          // same underlying order row either place, shown here too so it's
+          // reachable from whichever tab is already open, but the badge
+          // stops it reading as a regular Store quote/invoice.
+          const dtfBadge = o.source === 'dtf-prep'
+            ? '<span class="mr-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-violet-100 text-violet-700">DTF</span>'
+            : '';
           const number = isInvoice
-            ? `${escapeHtml(o.invoice_number)} <span class="text-xs text-slate-400 block">from ${escapeHtml(o.quote_number)}</span>`
-            : escapeHtml(o.quote_number);
+            ? `${dtfBadge}${escapeHtml(o.invoice_number)} <span class="text-xs text-slate-400 block">from ${escapeHtml(o.quote_number)}</span>`
+            : `${dtfBadge}${escapeHtml(o.quote_number)}`;
           const statusBadge = isInvoice
             ? `<span class="px-2 py-1 text-xs font-semibold rounded-full ${paidStatusBadgeClass(o.paid_status)}">${paidStatusBadgeLabel(o)}</span>`
             : `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">${escapeHtml(o.status || 'draft')}</span>`;
