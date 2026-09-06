@@ -75,6 +75,14 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // See gang-sheet-uploads.js for why this exists - guarded here too
+    // since this is exactly where a DTF-Prep order's payment actually
+    // completes, and this file can just as easily be first to touch it.
+    try {
+      await db.prepare(`ALTER TABLE gang_sheet_uploads ADD COLUMN production_ready_at TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     if (event.type !== "payment.updated") return json({ received: true });
 
@@ -132,7 +140,16 @@ export async function onRequest(context) {
       "UPDATE orders SET amount_paid = ?, paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
     ).bind(amountPaid, status, paidAt, order.id).run();
     await logOrderEvent(db, order.id, "payment_via_card", `Paid £${amount.toFixed(2)} by card via Square`);
-    if (status === "paid") await markInvoicePaidStepDone(db, order.id);
+    if (status === "paid") {
+      await markInvoicePaidStepDone(db, order.id);
+      // Flips the DTF Builder "new orders" popup from "checkout started"
+      // to "actually paid" - see gang-sheet-uploads.js. No-op (0 rows) for
+      // a non-DTF order, since order_id only ever matches gang-sheet
+      // uploads that came through gang-sheet-checkout.js.
+      await db.prepare(
+        "UPDATE gang_sheet_uploads SET production_ready_at = CURRENT_TIMESTAMP WHERE order_id = ? AND production_ready_at IS NULL"
+      ).bind(order.id).run();
+    }
 
     // Fire the same receipt email the Record Payment modal's "send receipt"
     // checkbox triggers - reusing /api/receipt.js rather than duplicating

@@ -580,7 +580,22 @@ export async function onRequest(context) {
       await db.prepare(
         "UPDATE orders SET amount_paid = ?, paid_status = ?, paid_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
       ).bind(amountPaid, status, paidAt, orderId).run();
-      if (status === "paid") await markInvoicePaidStepDone(db, orderId);
+      if (status === "paid") {
+        await markInvoicePaidStepDone(db, orderId);
+        // Flips the DTF Builder "new orders" popup from "checkout started"
+        // to "actually paid" for a DTF-Prep order paid off outside Square
+        // (e.g. Record Payment for a bank transfer) - see gang-sheet-
+        // uploads.js. No-op (0 rows, and the column may not exist yet on a
+        // cold deploy that's never hit gang-sheet-uploads.js/-checkout.js/
+        // square-webhook.js) for a normal Store order.
+        try {
+          await db.prepare(
+            "UPDATE gang_sheet_uploads SET production_ready_at = CURRENT_TIMESTAMP WHERE order_id = ? AND production_ready_at IS NULL"
+          ).bind(orderId).run();
+        } catch {
+          // gang_sheet_uploads.production_ready_at doesn't exist yet - fine
+        }
+      }
       return { amount_paid: amountPaid, paid_status: status, paid_at: paidAt };
     }
 

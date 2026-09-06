@@ -33,6 +33,34 @@ export async function onRequest(context) {
     // already exists
   }
 
+  // production_ready_at - set only once payment is genuinely confirmed
+  // (square-webhook.js, on a paid_status transition to 'paid') or the order
+  // was invoiced straight to an approved credit account (gang-sheet-
+  // checkout.js's credit branch). Deliberately separate from `status =
+  // 'attached'`, which gang-sheet-checkout.js sets the moment checkout
+  // *starts* (an order + Square payment link created) - before that fix,
+  // the dashboard's "new orders" popup counted 'attached' rows and told
+  // staff an order was "paid and ready for production" even when the
+  // customer cancelled at Square's payment screen and never actually paid.
+  try {
+    await db.prepare(`ALTER TABLE gang_sheet_uploads ADD COLUMN production_ready_at TEXT`).run();
+    // One-time backfill for orders that were already genuinely paid before
+    // this column existed - without it, any such order still sitting
+    // unseen would silently vanish from the popup/count instead of still
+    // being flagged, the moment this deploys. Only runs meaningfully once:
+    // the ALTER above throws (column already exists) on every later
+    // request, skipping straight to the catch below.
+    await db.prepare(`
+      UPDATE gang_sheet_uploads SET production_ready_at = COALESCE(
+        (SELECT paid_at FROM orders WHERE orders.id = gang_sheet_uploads.order_id), attached_at
+      )
+      WHERE status = 'attached' AND production_ready_at IS NULL
+        AND order_id IN (SELECT id FROM orders WHERE paid_status = 'paid')
+    `).run();
+  } catch {
+    // already exists
+  }
+
   // The dashboard's "new orders" popup (mark_seen) and the Keep file
   // toggle (set_keep) don't need R2 at all, so they're handled before the
   // bucket guard below - no reason to block them just because file storage
@@ -42,7 +70,7 @@ export async function onRequest(context) {
       const data = await request.json();
       if (data.action === "mark_seen") {
         await db.prepare(
-          "UPDATE gang_sheet_uploads SET seen_by_staff = 1 WHERE status = 'attached' AND seen_by_staff = 0"
+          "UPDATE gang_sheet_uploads SET seen_by_staff = 1 WHERE production_ready_at IS NOT NULL AND seen_by_staff = 0"
         ).run();
         return json({ success: true });
       }
@@ -90,7 +118,7 @@ export async function onRequest(context) {
     // per sheet).
     if (url.searchParams.get("count_new")) {
       const row = await db.prepare(
-        "SELECT COUNT(DISTINCT order_id) AS n FROM gang_sheet_uploads WHERE status = 'attached' AND seen_by_staff = 0 AND order_id IS NOT NULL"
+        "SELECT COUNT(DISTINCT order_id) AS n FROM gang_sheet_uploads WHERE production_ready_at IS NOT NULL AND seen_by_staff = 0 AND order_id IS NOT NULL"
       ).first();
       return json({ count: (row && row.n) || 0 });
     }

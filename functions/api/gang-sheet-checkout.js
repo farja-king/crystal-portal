@@ -36,6 +36,13 @@ export async function onRequest(context) {
 
   try {
     await ensureDtfCustomerColumns(db);
+    // See gang-sheet-uploads.js for why this exists - guarded here too
+    // since this file can just as easily be the first hit on a cold deploy.
+    try {
+      await db.prepare(`ALTER TABLE gang_sheet_uploads ADD COLUMN production_ready_at TEXT`).run();
+    } catch {
+      // already exists
+    }
 
     // Customer session auth - identical check to gang-sheet-upload.js.
     const auth = request.headers.get("Authorization") || "";
@@ -127,6 +134,14 @@ export async function onRequest(context) {
       const outstanding = (outstandingRow && outstandingRow.outstanding) || 0;
 
       if (outstanding + total <= Number(customer.dtf_credit_limit)) {
+        // On-account, not Square - genuinely ready for production right
+        // now (no payment step left to cancel out of), unlike the Square
+        // branch below where status='attached' only means checkout
+        // *started*. See gang-sheet-uploads.js for why this is tracked
+        // separately from status.
+        await db.prepare(`
+          UPDATE gang_sheet_uploads SET production_ready_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})
+        `).bind(...uploadIds).run();
         return json({ success: true, invoiced_on_credit: true, order_id: orderId });
       }
     }
