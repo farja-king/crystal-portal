@@ -182,15 +182,21 @@ export async function onRequest(context) {
 
       if (env.RESEND_API_KEY) {
         const reason = REQUEST_REASON_COPY[data.reason] ? data.reason : "checkout";
-        // Always back to cart.html regardless of which page/reason started
-        // this (checkout resumes automatically there if there's a cart -
-        // see handleLoginTokenInUrl in src/cart.js) - reason rides along in
-        // the URL so that logic can send an upload/upscale/account sign-in
-        // back to the right page even if the link's opened on a different
-        // device/browser than the one that requested it (src/cart.js also
-        // keeps its own localStorage copy for the common same-device case,
-        // in case a link-wrapping email client ever strips this param).
-        const loginUrl = `${env.DTF_PREP_ORIGIN}/cart.html?login_token=${loginToken}&reason=${encodeURIComponent(reason)}`;
+        // The link goes straight to the page the reason actually belongs
+        // on - checkout stays on cart.html (resumes automatically there if
+        // there's a cart, see handleLoginTokenInUrl in src/cart.js), but
+        // upload/upscale/account used to *also* land on cart.html first,
+        // pointlessly, before src/cart.js worked out where to send them
+        // next. Now that the builder autosaves (see src/autosave.js), it's
+        // safe to land directly on it - nothing to lose by skipping the
+        // cart.html stop entirely. reason still rides along in the URL too,
+        // in case a link-wrapping email client strips the path but keeps
+        // query params, or the link's opened on a different device than
+        // the one that requested it (src/cart.js also keeps a localStorage
+        // copy for the common same-device case).
+        const REASON_DESTINATION = { checkout: "cart.html", upload: "upload.html", upscale: "builder.html", account: "account.html" };
+        const destination = REASON_DESTINATION[reason];
+        const loginUrl = `${env.DTF_PREP_ORIGIN}/${destination}?login_token=${loginToken}&reason=${encodeURIComponent(reason)}`;
         const copy = REQUEST_REASON_COPY[reason];
         const html = emailShell({
           heading: copy.heading,
