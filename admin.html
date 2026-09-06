@@ -11686,6 +11686,20 @@
         </div>`;
       }).join('');
 
+      // Same read-only DTF credit line as the customer View popup/Edit form
+      // (see cv-dtf-credit-row) - shown here too, on the order itself, since
+      // a DTF gang sheet invoice like this one is exactly where staff need
+      // to see whether it went out on credit and how much headroom is left,
+      // without a separate trip to that customer's own record. Only shown
+      // for a DTF-Prep order (source === 'dtf-prep') whose customer has
+      // actually applied - a normal Store order never has this.
+      const orderCustomer = customersById[o.customer_id];
+      const dtfCreditHtml = (o.source === 'dtf-prep' && orderCustomer && orderCustomer.dtf_credit_status) ? `
+          <div>
+            <p class="text-xs text-slate-500 font-medium mb-1">DTF Credit Account</p>
+            <p class="text-sm text-slate-800">${dtfCreditBadge(orderCustomer.dtf_credit_status, orderCustomer.dtf_credit_limit)}</p>
+          </div>` : '';
+
       content.innerHTML = `
         <div class="grid gap-4 md:grid-cols-2 pb-4 border-b border-slate-200">
           <div>
@@ -11697,6 +11711,7 @@
             <p class="text-xs text-slate-500 font-medium mb-1">Date</p>
             <p class="font-semibold text-slate-900">${escapeHtml(ukDate(o.created_at))}</p>
           </div>
+          ${dtfCreditHtml}
         </div>
         <div class="py-4 border-b border-slate-200">
           <div class="flex items-center justify-between mb-2">
