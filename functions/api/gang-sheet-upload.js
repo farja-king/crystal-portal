@@ -63,6 +63,18 @@ export async function onRequest(context) {
     `).run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_gsu_status ON gang_sheet_uploads (status)").run();
     await ensureDtfCustomerColumns(db);
+    // qty - how many printed copies of this one uploaded file the customer
+    // wants (see DTF-Prep's cart, which lets this be chosen at Add to Cart
+    // time or adjusted later). price below stays PER-UNIT; qty is applied
+    // separately by orders.js's own unit_price*qty line-item math at
+    // checkout, not multiplied in here - keeps this endpoint's price
+    // exactly what one printed sheet actually costs, same figure shown
+    // while still building.
+    try {
+      await db.prepare(`ALTER TABLE gang_sheet_uploads ADD COLUMN qty INTEGER DEFAULT 1`).run();
+    } catch {
+      // already exists
+    }
 
     // Customer session auth - the only auth this endpoint accepts.
     const auth = request.headers.get("Authorization") || "";
@@ -114,7 +126,7 @@ export async function onRequest(context) {
       // paid, and deleting the artwork before it's actually been
       // printed/dispatched would leave nothing to produce it from.
       const { results } = await db.prepare(`
-        SELECT u.id, u.filename, u.width_mm, u.height_mm, u.price, u.status, u.uploaded_at, u.attached_at, u.order_id,
+        SELECT u.id, u.filename, u.width_mm, u.height_mm, u.price, u.qty, u.status, u.uploaded_at, u.attached_at, u.order_id,
                o.pay_token AS order_pay_token,
                (
                  SELECT MAX(completed_at) FROM production_steps ps
@@ -189,6 +201,7 @@ export async function onRequest(context) {
       const widthMm = Number(form.get("width_mm")) || null;
       const heightMm = Number(form.get("height_mm")) || 0;
       const upscaleCount = Math.max(0, parseInt(form.get("upscale_count"), 10) || 0);
+      const qty = Math.max(1, Math.min(999, parseInt(form.get("qty"), 10) || 1));
 
       // A trade/bespoke customer's own fixed sheet price (set on their
       // customer record - see customers.js) replaces the standard
@@ -210,9 +223,9 @@ export async function onRequest(context) {
       const filename = file.name || `gang-sheet-${id}.png`;
 
       await db.prepare(`
-        INSERT INTO gang_sheet_uploads (id, customer_id, filename, width_mm, height_mm, price, r2_key, size_bytes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(id, customerId, filename, widthMm, heightMm, price, key, buffer.byteLength).run();
+        INSERT INTO gang_sheet_uploads (id, customer_id, filename, width_mm, height_mm, price, qty, r2_key, size_bytes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(id, customerId, filename, widthMm, heightMm, price, qty, key, buffer.byteLength).run();
 
       return json({ success: true, id });
     }

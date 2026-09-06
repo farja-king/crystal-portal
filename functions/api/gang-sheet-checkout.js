@@ -1,17 +1,25 @@
 // Turns a DTF-Prep customer's already-uploaded, still-pending gang sheets
-// into a real Crystal Portal invoice and a Square Payment Link to pay it -
-// the step that runs when the customer clicks "Checkout" in DTF-Prep's cart.
+// into a real Crystal Portal invoice and (usually) a Square Payment Link to
+// pay it - the step that runs when the customer clicks "Checkout" in
+// DTF-Prep's cart.
 //
-// Deliberately reuses the existing order-creation machinery in orders.js
-// (internal POST/PUT calls, same server-to-server X-API-Key pattern already
-// used by design-proofs.js's auto-convert-on-approval flow) rather than
-// hand-rolling another INSERT INTO orders - invoice numbering, totals, and
-// pay_token minting all come from there for free, and stay correct if that
-// logic ever changes. square-webhook.js needs no changes at all: it already
-// resolves a completed payment back to an orders row via reference_id, and
-// this produces a perfectly normal invoice-shaped row.
+// Order creation is deliberately NOT unconditional here anymore. It used to
+// create the real `orders` invoice up front, before Square was even
+// involved - if the customer abandoned the Square payment page, that unpaid
+// invoice sat in the back office forever with nothing to clean it up. Now:
+//  - An approved credit account (no external payment step - the credit
+//    approval itself is the confirmation) still creates the order
+//    immediately, via the shared createDtfOrder() helper.
+//  - Everyone else creates a lightweight `gang_sheet_pending_checkouts` row
+//    instead, and Square's Payment Link `reference_id` points at THAT
+//    row's id, not an order id. The real order only gets created by
+//    square-webhook.js, the moment payment is actually confirmed - see that
+//    file for the other half of this. Abandoned checkouts leave nothing in
+//    the back office at all; gang-sheet-cleanup.js sweeps the stray
+//    gang_sheet_pending_checkouts row after a few hours.
 import { verifyCustomerToken } from "../_lib/customer-token.js";
 import { ensureDtfCustomerColumns } from "../_lib/dtf-schema.js";
+import { buildDtfOrderItems, createDtfOrder } from "../_lib/gang-sheet-order.js";
 
 const SQUARE_VERSION = "2026-07-15"; // keep in step with pay-by-card.js's own constant
 
@@ -43,6 +51,24 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // qty - see gang-sheet-upload.js, the canonical guard for this column
+    // (this file just needs to read it back, but re-guards independently
+    // per this codebase's established convention rather than assuming
+    // upload.js already ran first on a cold deploy).
+    try {
+      await db.prepare(`ALTER TABLE gang_sheet_uploads ADD COLUMN qty INTEGER DEFAULT 1`).run();
+    } catch {
+      // already exists
+    }
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS gang_sheet_pending_checkouts (
+        id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        upload_ids TEXT NOT NULL,
+        total REAL NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
 
     // Customer session auth - identical check to gang-sheet-upload.js.
     const auth = request.headers.get("Authorization") || "";
@@ -64,7 +90,7 @@ export async function onRequest(context) {
 
     const placeholders = uploadIds.map(() => "?").join(",");
     const { results: uploads } = await db.prepare(`
-      SELECT id, filename, width_mm, height_mm, price FROM gang_sheet_uploads
+      SELECT id, filename, width_mm, height_mm, price, qty FROM gang_sheet_uploads
       WHERE customer_id = ? AND status = 'pending' AND id IN (${placeholders})
     `).bind(customerId, ...uploadIds).all();
 
@@ -81,81 +107,48 @@ export async function onRequest(context) {
     ).bind(customerId).first();
     if (!customer) return json({ error: "That account no longer exists." }, 404);
 
-    const total = uploads.reduce((sum, u) => sum + Number(u.price || 0), 0);
+    const total = uploads.reduce((sum, u) => sum + Number(u.price || 0) * Math.max(1, parseInt(u.qty, 10) || 1), 0);
     if (total <= 0) return json({ error: "Nothing to charge" }, 400);
 
     const authHeaders = { "Content-Type": "application/json" };
     if (authCfg.api_key) authHeaders["X-API-Key"] = authCfg.api_key;
     const origin = new URL(request.url).origin;
 
-    const orderItems = uploads.map((u) => ({
-      source: "customer_supplied",
-      title: `DTF gang sheet - ${u.filename} (${Math.round(u.width_mm || 0)}×${Math.round(u.height_mm || 0)}mm)`,
-      unit_price: Number(u.price || 0),
-      qty: 1,
-    }));
-
-    const createRes = await fetch(`${origin}/api/orders`, {
-      method: "POST",
-      headers: authHeaders,
-      body: JSON.stringify({
-        doc_type: "invoice",
-        customer_id: customer.id,
-        customer_name: customer.name,
-        customer_email: customer.email || "",
-        items: orderItems,
-        notes: "Created automatically from a DTF-Prep checkout.",
-        source: "dtf-prep",
-      }),
-    });
-    const created = await createRes.json();
-    if (!createRes.ok || !created.success) {
-      return json({ error: "Couldn't create your order - please try again shortly." }, 502);
-    }
-    const orderId = created.id;
-
-    await db.prepare(`
-      UPDATE gang_sheet_uploads SET order_id = ?, status = 'attached', attached_at = CURRENT_TIMESTAMP
-      WHERE id IN (${placeholders})
-    `).bind(orderId, ...uploadIds).run();
-
     // Approved credit accounts skip Square entirely and go straight on
     // account, as long as this order plus whatever they already owe stays
     // within their limit - re-checked here server-side, never trusted from
     // the client, same reasoning as every other price/entitlement check in
-    // this endpoint's sibling files. Outside the limit (or no credit at
-    // all) falls straight through to the existing Square flow below,
-    // unchanged - this is the only new branch.
+    // this endpoint's sibling files. No existing order to exclude from
+    // "outstanding" here (nothing's been created yet either way), unlike
+    // the old flow.
     if (customer.dtf_credit_status === "approved" && customer.dtf_credit_limit != null) {
       const outstandingRow = await db.prepare(`
         SELECT COALESCE(SUM(total - amount_paid), 0) AS outstanding FROM orders
-        WHERE customer_id = ? AND doc_type = 'invoice' AND paid_status != 'paid' AND id != ?
-      `).bind(customerId, orderId).first();
+        WHERE customer_id = ? AND doc_type = 'invoice' AND paid_status != 'paid'
+      `).bind(customerId).first();
       const outstanding = (outstandingRow && outstandingRow.outstanding) || 0;
 
       if (outstanding + total <= Number(customer.dtf_credit_limit)) {
-        // On-account, not Square - genuinely ready for production right
-        // now (no payment step left to cancel out of), unlike the Square
-        // branch below where status='attached' only means checkout
-        // *started*. See gang-sheet-uploads.js for why this is tracked
-        // separately from status.
+        const orderItems = buildDtfOrderItems(uploads);
+        const orderId = await createDtfOrder({ origin, authHeaders, customer }, orderItems);
+
         await db.prepare(`
-          UPDATE gang_sheet_uploads SET production_ready_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})
-        `).bind(...uploadIds).run();
+          UPDATE gang_sheet_uploads SET order_id = ?, status = 'attached', attached_at = CURRENT_TIMESTAMP, production_ready_at = CURRENT_TIMESTAMP
+          WHERE id IN (${placeholders})
+        `).bind(orderId, ...uploadIds).run();
+
         return json({ success: true, invoiced_on_credit: true, order_id: orderId });
       }
     }
 
-    const tokenRes = await fetch(`${origin}/api/orders`, {
-      method: "PUT",
-      headers: authHeaders,
-      body: JSON.stringify({ id: orderId, action: "ensure_pay_token" }),
-    });
-    const shared = await tokenRes.json();
-    const payToken = shared && shared.pay_token;
-    if (!tokenRes.ok || !payToken) {
-      return json({ error: "Couldn't prepare payment for your order - please try again shortly." }, 502);
-    }
+    // Everyone else: no order yet - just a lightweight placeholder so
+    // Square's Payment Link has something to reference. gang_sheet_uploads
+    // stays exactly 'pending' (not touched at all) until square-webhook.js
+    // creates the real order and attaches them, once payment is confirmed.
+    const pendingId = crypto.randomUUID();
+    await db.prepare(
+      "INSERT INTO gang_sheet_pending_checkouts (id, customer_id, upload_ids, total) VALUES (?, ?, ?, ?)"
+    ).bind(pendingId, customerId, JSON.stringify(uploadIds), total).run();
 
     const squareAccessToken = (env.SQUARE_ACCESS_TOKEN || "").trim();
     const squareLocationId = (env.SQUARE_LOCATION_ID || "").trim();
@@ -175,12 +168,15 @@ export async function onRequest(context) {
         idempotency_key: crypto.randomUUID(),
         order: {
           location_id: squareLocationId,
-          reference_id: orderId,
-          line_items: uploads.map((u) => ({
-            name: `DTF gang sheet (${Math.round(u.width_mm || 0)}×${Math.round(u.height_mm || 0)}mm)`.slice(0, 500),
-            quantity: "1",
-            base_price_money: { amount: Math.round(Number(u.price || 0) * 100), currency: "GBP" },
-          })),
+          reference_id: pendingId,
+          line_items: uploads.map((u) => {
+            const qty = Math.max(1, parseInt(u.qty, 10) || 1);
+            return {
+              name: `DTF gang sheet (${Math.round(u.width_mm || 0)}×${Math.round(u.height_mm || 0)}mm)`.slice(0, 500),
+              quantity: String(qty),
+              base_price_money: { amount: Math.round(Number(u.price || 0) * 100), currency: "GBP" },
+            };
+          }),
         },
         checkout_options: {
           redirect_url: `${env.DTF_PREP_ORIGIN}/thank-you.html`,
@@ -197,7 +193,7 @@ export async function onRequest(context) {
       return json({ error: "Couldn't start payment - please try again shortly." }, 502);
     }
 
-    return json({ success: true, checkout_url: checkoutUrl, order_id: orderId, pay_token: payToken });
+    return json({ success: true, checkout_url: checkoutUrl });
   } catch (err) {
     return json({ error: err.message }, 500);
   }

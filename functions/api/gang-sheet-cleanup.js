@@ -32,6 +32,18 @@ export async function onRequest(context) {
       expired_count INTEGER DEFAULT 0
     )
   `).run();
+  // Guarded independently here too (same convention as every other table in
+  // this codebase) - this sweep could in principle run before gang-sheet-
+  // checkout.js ever has, on a cold deploy.
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS gang_sheet_pending_checkouts (
+      id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      upload_ids TEXT NOT NULL,
+      total REAL NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
 
   const data = await request.json().catch(() => ({}));
   if (data.action !== "run") return json({ error: "Unknown action" }, 400);
@@ -70,10 +82,24 @@ export async function onRequest(context) {
     // within a 15-minute window.
     await db.prepare("DELETE FROM gang_sheet_login_tokens WHERE expires_at < ?").bind(Math.floor(Date.now() / 1000)).run();
 
+    // Stray gang_sheet_pending_checkouts rows - created by gang-sheet-
+    // checkout.js right before redirecting to Square, deleted by square-
+    // webhook.js the moment payment completes. One that's still here after
+    // a few hours means the customer abandoned the Square page - nothing
+    // customer-facing depends on it surviving (the actual order was never
+    // created for it in the first place - that's the whole point), so it's
+    // just hard-deleted. Piggybacks on this sweep's own once-a-day throttle
+    // rather than a separate schedule - a few hours' slack before it's
+    // actually removed doesn't matter for a row nobody's waiting on.
+    const pendingCutoff = new Date(Date.now() - 6 * 3600000).toISOString();
+    const { meta: pendingMeta } = await db.prepare(
+      "DELETE FROM gang_sheet_pending_checkouts WHERE created_at < ?"
+    ).bind(pendingCutoff).run();
+
     await db.prepare("INSERT INTO gang_sheet_cleanup_log (id, expired_count) VALUES (?, ?)")
       .bind(crypto.randomUUID(), expiring.length).run();
 
-    return json({ success: true, expired: expiring.length });
+    return json({ success: true, expired: expiring.length, pending_checkouts_removed: (pendingMeta && pendingMeta.changes) || 0 });
   } catch (err) {
     return json({ error: err.message }, 500);
   }

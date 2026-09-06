@@ -14,6 +14,7 @@
 // rather than silently trusted.
 import { logOrderEvent } from "../_lib/order-events.js";
 import { markInvoicePaidStepDone } from "../_lib/production-invoice-paid.js";
+import { buildDtfOrderItems, createDtfOrder } from "../_lib/gang-sheet-order.js";
 const SQUARE_VERSION = "2026-07-15"; // matches the API version on Martin's Square app/webhook subscription - keep in step with pay-by-card.js
 
 async function verifySquareSignature(request, rawBody, signatureKey) {
@@ -83,6 +84,18 @@ export async function onRequest(context) {
     } catch {
       // already exists
     }
+    // Guarded independently here too, same convention - see gang-sheet-
+    // checkout.js (where rows normally get created) and gang-sheet-
+    // cleanup.js (which sweeps stale ones).
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS gang_sheet_pending_checkouts (
+        id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        upload_ids TEXT NOT NULL,
+        total REAL NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
 
     if (event.type !== "payment.updated") return json({ received: true });
 
@@ -109,7 +122,62 @@ export async function onRequest(context) {
     const ourOrderId = orderData && orderData.order && orderData.order.reference_id;
     if (!ourOrderId) return json({ received: true, unmatched: true });
 
-    const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(ourOrderId).first();
+    let order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(ourOrderId).first();
+
+    // Not a real order yet - reference_id might instead be a DTF-Prep
+    // checkout that deliberately deferred creating one (see gang-sheet-
+    // checkout.js's gang_sheet_pending_checkouts) until payment, which is
+    // exactly what just happened. Create it now, for the first time.
+    if (!order) {
+      const pending = await db.prepare("SELECT * FROM gang_sheet_pending_checkouts WHERE id = ?").bind(ourOrderId).first();
+      if (!pending) return json({ received: true, unmatched: true });
+
+      try {
+        await db.prepare(`ALTER TABLE gang_sheet_uploads ADD COLUMN qty INTEGER DEFAULT 1`).run();
+      } catch {
+        // already exists
+      }
+
+      const customer = await db.prepare("SELECT id, name, email FROM customers WHERE id = ?").bind(pending.customer_id).first();
+      let uploadIds = [];
+      try {
+        uploadIds = JSON.parse(pending.upload_ids);
+      } catch {
+        uploadIds = [];
+      }
+
+      if (customer && Array.isArray(uploadIds) && uploadIds.length) {
+        const placeholders = uploadIds.map(() => "?").join(",");
+        const { results: uploads } = await db.prepare(`
+          SELECT id, filename, width_mm, height_mm, price, qty FROM gang_sheet_uploads
+          WHERE customer_id = ? AND status = 'pending' AND id IN (${placeholders})
+        `).bind(pending.customer_id, ...uploadIds).all();
+
+        if (uploads.length) {
+          const authCfg = await db.prepare("SELECT api_key FROM auth_config WHERE id = 'default'").first();
+          const authHeaders = { "Content-Type": "application/json" };
+          if (authCfg && authCfg.api_key) authHeaders["X-API-Key"] = authCfg.api_key;
+          const origin = new URL(request.url).origin;
+
+          const orderItems = buildDtfOrderItems(uploads);
+          const newOrderId = await createDtfOrder({ origin, authHeaders, customer }, orderItems);
+
+          await db.prepare(`
+            UPDATE gang_sheet_uploads SET order_id = ?, status = 'attached', attached_at = CURRENT_TIMESTAMP, production_ready_at = CURRENT_TIMESTAMP
+            WHERE id IN (${placeholders})
+          `).bind(newOrderId, ...uploadIds).run();
+
+          order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(newOrderId).first();
+        }
+      }
+
+      // Job done either way - a stray pending-checkout row past this point
+      // costs nothing (gang-sheet-cleanup.js also sweeps these after a few
+      // hours regardless), but removing it now means a redelivered webhook
+      // for the same event won't try to create a second order.
+      await db.prepare("DELETE FROM gang_sheet_pending_checkouts WHERE id = ?").bind(pending.id).run();
+    }
+
     if (!order) return json({ received: true, unmatched: true });
 
     const amount = Number(payment.amount_money && payment.amount_money.amount) / 100;
