@@ -205,7 +205,12 @@ export async function onRequest(context) {
       // the order subtotal.
       const line_discount_pct = Math.min(100, Math.max(0, Number(item.discount_pct) || 0));
       const line_discount_flat = Math.max(0, Number(item.discount_flat) || 0);
-      const line_discount_amount = round2(lineTotal * (line_discount_pct / 100) + line_discount_flat);
+      // discount_flat_per_unit: when set, the £ box means "per item" rather
+      // than a flat amount off the whole line (e.g. £11 off each of 5 units
+      // = £55, not £11 off the line) - multiply by this line's own qty.
+      const line_discount_flat_per_unit = !!item.discount_flat_per_unit;
+      const line_discount_flat_amount = line_discount_flat_per_unit ? line_discount_flat * qty : line_discount_flat;
+      const line_discount_amount = round2(lineTotal * (line_discount_pct / 100) + line_discount_flat_amount);
       const netLineTotal = Math.max(0, round2(lineTotal - line_discount_amount));
 
       return {
@@ -222,6 +227,7 @@ export async function onRequest(context) {
         decorations,
         discount_pct: line_discount_pct,
         discount_flat: line_discount_flat,
+        discount_flat_per_unit: line_discount_flat_per_unit,
         discount_amount: line_discount_amount,
         line_total: netLineTotal,
         // Marks a line picked from a customer's own saved price list (see

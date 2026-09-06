@@ -8816,6 +8816,7 @@
         // renderOrderLines().
         discount_pct: 0,
         discount_flat: 0,
+        discount_flat_per_unit: false,
         // Catalog rows are often a pricing tier, not one physical garment -
         // "All Colours" / "XS - XXL" covers a whole size run at one price.
         // breakdown is where the actual colour+size+qty per unit gets itemized.
@@ -8880,6 +8881,14 @@
       const line = orderLines[idx];
       if (!line) return;
       line.discount_flat = Math.max(0, Number(value) || 0);
+      renderOrderTotals();
+      updateLineTotalDisplay(idx);
+    }
+
+    function updateOrderLineDiscountPerUnit(idx, checked) {
+      const line = orderLines[idx];
+      if (!line) return;
+      line.discount_flat_per_unit = !!checked;
       renderOrderTotals();
       updateLineTotalDisplay(idx);
     }
@@ -9529,7 +9538,8 @@
       const gross = lineGrossTotal(line);
       const pct = Math.min(100, Math.max(0, Number(line.discount_pct) || 0));
       const flat = Math.max(0, Number(line.discount_flat) || 0);
-      return Math.min(gross, gross * (pct / 100) + flat);
+      const flatAmount = line.discount_flat_per_unit ? flat * lineQty(line) : flat;
+      return Math.min(gross, gross * (pct / 100) + flatAmount);
     }
 
     function lineTotal(line) {
@@ -9770,7 +9780,11 @@
               <input type="number" min="0" max="100" step="0.1" placeholder="0" value="${line.discount_pct || ''}" oninput="updateOrderLineDiscountPct(${idx}, this.value)" title="Percent off this line's own total (garment + decoration)" class="w-16 rounded border border-slate-300 px-1.5 py-1 text-slate-900" />
               <span>% +</span>
               <span>£</span>
-              <input type="number" min="0" step="0.01" placeholder="0.00" value="${line.discount_flat || ''}" oninput="updateOrderLineDiscountFlat(${idx}, this.value)" title="Flat amount off this line's own total" class="w-20 rounded border border-slate-300 px-1.5 py-1 text-slate-900" />
+              <input type="number" min="0" step="0.01" placeholder="0.00" value="${line.discount_flat || ''}" oninput="updateOrderLineDiscountFlat(${idx}, this.value)" title="${line.discount_flat_per_unit ? 'Amount off EACH unit on this line' : 'Flat amount off this line&#39;s own total'}" class="w-20 rounded border border-slate-300 px-1.5 py-1 text-slate-900" />
+              <label class="flex items-center gap-1 text-slate-500" title="When ticked, the £ amount above is taken off every unit on this line instead of once off the whole line">
+                <input type="checkbox" ${line.discount_flat_per_unit ? 'checked' : ''} onchange="updateOrderLineDiscountPerUnit(${idx}, this.checked)" class="rounded border-slate-300" />
+                per item
+              </label>
               <span id="line-discount-amt-${idx}" class="text-emerald-600 font-medium">${lineDiscountAmount(line) > 0.001 ? '-' + money(lineDiscountAmount(line)) : ''}</span>
             </div>
             <div class="flex items-center justify-between mt-2">
@@ -9948,6 +9962,7 @@
           date_added: l.date_added,
           discount_pct: Number(l.discount_pct) || 0,
           discount_flat: Number(l.discount_flat) || 0,
+          discount_flat_per_unit: !!l.discount_flat_per_unit,
           breakdown: l.breakdown ? l.breakdown.map((b) => ({
             colour: b.colour, size: b.size, qty: b.qty,
             decorations: (b.decorations || []).map((d) => ({ method: d.method, placement: d.placement, price: d.price, qty: d.qty, notes: d.notes })),
@@ -10108,6 +10123,7 @@
           date_added: freshDates ? today : (/^\d{4}-\d{2}-\d{2}$/.test(item.date_added || '') ? item.date_added : today),
           discount_pct: Number(item.discount_pct) || 0,
           discount_flat: Number(item.discount_flat) || 0,
+          discount_flat_per_unit: !!item.discount_flat_per_unit,
           breakdown,
           colourOptions: [], sizeOptions: [],
           decorations: (item.decorations || []).map((d) => ({
