@@ -125,9 +125,12 @@ export async function onRequest(context) {
     } else if (/digitiz/.test(lowerTitle)) {
       subject = `Artwork sent for digitization - ${docNumber}`;
       heading = "Your artwork's being digitized";
+      // Says we'll send her a copy for approval once digitizing is done -
+      // not that it's already approved (that's a separate step/email of
+      // its own, see the /artwork/ branch below) and not implying she has
+      // to chase it herself.
       bodyHtml = `<p>Hi ${name},</p>
-        <p>Just a quick update - the artwork for order <strong>${escapeHtml(docNumber)}</strong> has been sent off for digitization, the step before we can start production.</p>
-        <p>We'll let you know once it's approved and ready to go.</p>`;
+        <p>Just a quick update - the artwork for order <strong>${escapeHtml(docNumber)}</strong> has been sent off for digitization. Once we receive this, we will send a copy to you for approval.</p>`;
     } else if (/artwork/.test(lowerTitle)) {
       subject = `Artwork approved - ${docNumber}`;
       heading = "Your artwork's approved ✓";
