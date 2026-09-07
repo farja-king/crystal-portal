@@ -116,6 +116,18 @@ export async function onRequest(context) {
         <p>We're at <strong>26 Grove Street, Raunds, NN9 6DS</strong> - tap below for directions if you need them.</p>`;
       ctaText = "Get Directions";
       ctaUrl = googleMapsDirectionsUrl();
+      // Checked before the generic /artwork/ branch below on purpose -
+      // "Artwork sent for digitization" contains the word "artwork" too, so
+      // it would otherwise fall into that branch and go out under the
+      // "Your artwork's approved" wording despite nothing being approved
+      // yet. Confirmed as a real bug (2026-09-06): this step's notify flag
+      // was on and firing it sent exactly that wrong "approved" email.
+    } else if (/digitiz/.test(lowerTitle)) {
+      subject = `Artwork sent for digitization - ${docNumber}`;
+      heading = "Your artwork's being digitized";
+      bodyHtml = `<p>Hi ${name},</p>
+        <p>Just a quick update - the artwork for order <strong>${escapeHtml(docNumber)}</strong> has been sent off for digitization, the step before we can start production.</p>
+        <p>We'll let you know once it's approved and ready to go.</p>`;
     } else if (/artwork/.test(lowerTitle)) {
       subject = `Artwork approved - ${docNumber}`;
       heading = "Your artwork's approved ✓";
@@ -515,7 +527,7 @@ export async function onRequest(context) {
           await logOrderEvent(db, orderId, "production_step", `Production: ${step.title}`);
 
           if (step.notify_customer) {
-            const emailResult = await sendStepNotification(orderId, step.title);
+            const emailResult = await sendStepNotification(orderId, step.title, step.id);
             if (emailResult.sent) {
               await db.prepare("UPDATE production_steps SET notified_at = ? WHERE id = ?").bind(new Date().toISOString(), step.id).run();
             }
