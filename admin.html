@@ -9969,6 +9969,13 @@
     // across a long editing session; not refetched on every keystroke,
     // since typing a qty doesn't change what's actually on the shelf.
     let stockLevelsIndex = {};
+    // Whether the index above actually loaded. Absence from the index means
+    // "no stock row for that colour/size, so none on the shelf" - but only
+    // once it has genuinely loaded. Before that (or after a failed fetch)
+    // every lookup would also come back absent, and telling Martin he has
+    // none of everything because a fetch failed is worse than saying
+    // nothing at all.
+    let stockLevelsLoaded = false;
     function stockLevelKey(code, colour, size) {
       return [code, colour, size].map((v) => String(v || '').trim().toLowerCase()).join('|');
     }
@@ -9977,6 +9984,7 @@
         const res = await fetch(API_STOCK_URL, { cache: 'no-store' });
         const rows = await res.json();
         stockLevelsIndex = {};
+        stockLevelsLoaded = true;
         (rows || []).forEach((s) => {
           if (!s.supplier_code) return; // nothing to match a garment line's code against
           stockLevelsIndex[stockLevelKey(s.supplier_code, s.colour, s.size)] = Number(s.quantity) || 0;
@@ -10075,16 +10083,52 @@
     // shown) whenever there's nothing to say: no colour/size picked yet,
     // or this exact code/colour/size just isn't tracked in Stock at all
     // (most garments aren't - Stock is opt-in, not comprehensive).
-    function stockPreviewFor(line, b) {
-      if (!line || !b || !line.supplier_code || !b.colour || !b.size) return null;
-      const stockQty = stockLevelsIndex[stockLevelKey(line.supplier_code, b.colour, b.size)];
-      if (stockQty === undefined) return null;
-      const remaining = stockQty - (Number(b.qty) || 0);
-      const short = remaining < 0;
+    // What Stock says about one exact code/colour/size against a wanted
+    // quantity. Since the Stock list is built from the catalog and a row
+    // exists only once a variant is actually tracked, a variant that isn't
+    // in the index has none on the shelf - which is a real answer, not a
+    // missing one, and the thing that used to be shown as blank.
+    // Returns null only when there is genuinely nothing to say: no
+    // colour/size picked yet, no code to match on, or the index hasn't
+    // loaded.
+    function stockVerdict(code, colour, size, wanted) {
+      if (!stockLevelsLoaded || !code || !colour || !size) return null;
+      const held = stockLevelsIndex[stockLevelKey(code, colour, size)] || 0;
+      const need = Number(wanted) || 0;
+      // A negative level means more has already gone out than was ever on
+      // the shelf, so the amount to order is the shortfall plus what's
+      // already owed - "12 to order" would under-count it.
+      if (held < 0) {
+        return {
+          level: 'oversold',
+          text: `⚠ Oversold by ${-held}${need ? ` - ${need - held} to order` : ''}`,
+          cls: 'text-rose-600 font-semibold',
+        };
+      }
+      if (held === 0) {
+        return {
+          level: 'none',
+          text: `⚠ None in stock${need ? ` - ${need} to order` : ''}`,
+          cls: 'text-amber-600 font-semibold',
+        };
+      }
+      if (need > held) {
+        return {
+          level: 'short',
+          text: `⚠ Only ${held} in stock - ${need - held} to order`,
+          cls: 'text-rose-600 font-semibold',
+        };
+      }
       return {
-        text: short ? `⚠ Only ${stockQty} in stock` : `${stockQty} in stock → ${remaining} left`,
-        cls: short ? 'text-rose-600 font-semibold' : 'text-slate-400',
+        level: 'ok',
+        text: `${held} in stock${need ? ` → ${held - need} left` : ''}`,
+        cls: 'text-slate-400',
       };
+    }
+
+    function stockPreviewFor(line, b) {
+      if (!line || !b) return null;
+      return stockVerdict(line.supplier_code, b.colour, b.size, b.qty);
     }
 
     function breakdownStockHtml(idx, rowIdx) {
@@ -12198,7 +12242,11 @@
     // decoration once, underneath every row" display, which is what every
     // line (garment or not) uses now that decorations are entered once per
     // line. A decoration's notes (e.g. which logo) are always included.
-    function itemDetailLines(item, decClass) {
+    // showStock is opt-in and deliberately NOT passed by printOrder - that
+    // produces the copy the customer gets, and what's on Martin's shelf is
+    // none of their business. Same internal-only stance as the "🔒 Your
+    // margin" box in the builder.
+    function itemDetailLines(item, decClass, showStock) {
       const decLine = (d) => {
         const dQty = Number(d.qty) || 1;
         const totalSuffix = decClass === 'dec' && dQty > 1 ? ' = £' + (d.price * dQty).toFixed(2) : '';
@@ -12210,7 +12258,13 @@
       }
       const hasRowDecorations = item.breakdown.some((b) => (b.decorations || []).length);
       const rows = item.breakdown.map((b) => {
-        const rowLine = `<div class="${decClass}">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}</div>`;
+        // Only a catalog line has a supplier_code to match Stock on - a
+        // customer's own garment isn't ours to have on a shelf.
+        const verdict = showStock && item.source === 'catalog'
+          ? stockVerdict(item.supplier_code, b.colour, b.size, b.qty)
+          : null;
+        const note = verdict ? ` <span class="${verdict.cls}">${escapeHtml(verdict.text)}</span>` : '';
+        const rowLine = `<div class="${decClass}">${escapeHtml(b.colour || '-')} / ${escapeHtml(b.size || '-')} × ${b.qty}${note}</div>`;
         return rowLine + (hasRowDecorations ? (b.decorations || []).map(decLine).join('') : '');
       }).join('');
       return rows + (!hasRowDecorations ? (item.decorations || []).map(decLine).join('') : '');
@@ -12243,7 +12297,7 @@
         // A customer's own saved item (see products.customer_id) has no
         // colour/size - the breakdown row only ever carries its qty, so
         // showing it here would just be a redundant "- / - × 1".
-        const detailLines = itemDetailLines(item, 'text-xs text-slate-500');
+        const detailLines = itemDetailLines(item, 'text-xs text-slate-500', true);
         // Total includes decoration cost, but Qty × unit price on its own
         // doesn't - "Qty: 2 | £35.00 each | Total: £80.00" reads like a
         // maths error when the extra £10 (decoration) has nowhere to show.
