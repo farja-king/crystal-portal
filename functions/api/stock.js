@@ -16,8 +16,7 @@
 // rides along with it) lives in _lib/stock-alerts.js, shared with
 // stock-deduct.js so a manual adjust and an invoice auto-deducting stock
 // both go through the exact same alert logic.
-import { recomputeStockAndAlert } from "../_lib/stock-alerts.js";
-import { seedStockFromCatalogRows } from "../_lib/stock-catalog-sync.js";
+import { recomputeStockAndAlert, DEFAULT_REORDER_THRESHOLD } from "../_lib/stock-alerts.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -146,6 +145,121 @@ export async function onRequest(context) {
       return json(results);
     }
 
+    // ?group_by_code=1 -> ONE line per garment code, the same shape (and for
+    // the same reason) as products.js's own grouped browse: the Stock tab
+    // used to fetch and render every colour/size row it had, which is fine
+    // at a few hundred rows and unusable at a few thousand. A code's
+    // individual colour/size rows are fetched only when that code is
+    // actually expanded (?code= below).
+    //
+    // The list of codes is a UNION of the active garment catalog and
+    // whatever stock already exists, so:
+    //   - every garment you sell has a line, even with nothing on the shelf
+    //     yet - which is what makes a restore from the Trash show up here
+    //     immediately, with no rows written anywhere
+    //   - a code that has stock but has since left the catalog (deactivated,
+    //     trashed, renamed) still appears, so stock can never be hidden by a
+    //     catalog change
+    // Hand-added items with no supplier_code at all can't be grouped by one,
+    // so they come back individually in `loose` and render as their own rows.
+    if (request.method === "GET" && url.searchParams.get("group_by_code")) {
+      const q = (url.searchParams.get("q") || "").trim();
+      const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
+      const offset = Number(url.searchParams.get("offset")) || 0;
+      const like = `%${q}%`;
+
+      const catalogWhere = `active = 1 AND deleted_at IS NULL AND item_type = 'garment'
+        AND (customer_id IS NULL OR customer_id = '')
+        AND supplier_code IS NOT NULL AND supplier_code != ''`;
+      const codeSql = `
+        SELECT supplier_code FROM (
+          SELECT supplier_code FROM products
+           WHERE ${catalogWhere}${q ? " AND (supplier_code LIKE ? OR title LIKE ? OR brand LIKE ?)" : ""}
+          UNION
+          SELECT supplier_code FROM stock_items
+           WHERE deleted_at IS NULL AND supplier_code IS NOT NULL AND supplier_code != ''${q ? " AND (supplier_code LIKE ? OR item LIKE ? OR brand LIKE ?)" : ""}
+        )
+        ORDER BY supplier_code LIMIT ? OFFSET ?
+      `;
+      const codeBinds = q ? [like, like, like, like, like, like, limit, offset] : [limit, offset];
+      const { results: codeRows } = await db.prepare(codeSql).bind(...codeBinds).all();
+      const codes = (codeRows || []).map((r) => r.supplier_code);
+
+      const groups = [];
+      if (codes.length) {
+        const ph = codes.map(() => "?").join(",");
+        // Titles/brands come from the catalog where the code still exists,
+        // and fall back to whatever the stock rows themselves recorded.
+        const [catalog, totals] = await db.batch([
+          db.prepare(`SELECT supplier_code, title, brand, supplier FROM products WHERE ${catalogWhere} AND supplier_code IN (${ph})`).bind(...codes),
+          db.prepare(`
+            SELECT supplier_code, COUNT(*) AS variants, SUM(quantity) AS total_qty,
+                   MAX(item) AS item, MAX(brand) AS brand,
+                   SUM(CASE WHEN quantity <= COALESCE(reorder_threshold, ?) THEN 1 ELSE 0 END) AS low_count
+            FROM stock_items WHERE deleted_at IS NULL AND supplier_code IN (${ph})
+            GROUP BY supplier_code
+          `).bind(DEFAULT_REORDER_THRESHOLD, ...codes),
+        ]);
+        const catalogByCode = new Map((catalog.results || []).map((r) => [r.supplier_code, r]));
+        const totalsByCode = new Map((totals.results || []).map((r) => [r.supplier_code, r]));
+        for (const code of codes) {
+          const c = catalogByCode.get(code);
+          const t = totalsByCode.get(code);
+          groups.push({
+            supplier_code: code,
+            title: (c && c.title) || (t && t.item) || code,
+            brand: (c && c.brand) || (t && t.brand) || "",
+            supplier: (c && c.supplier) || "",
+            in_catalog: !!c,
+            variants: t ? Number(t.variants) : 0,
+            total_qty: t ? Number(t.total_qty) || 0 : 0,
+            low_count: t ? Number(t.low_count) || 0 : 0,
+          });
+        }
+      }
+
+      // Only on the first page - these aren't part of the code ordering, and
+      // repeating them under every page would be noise.
+      let loose = [];
+      if (!offset) {
+        const looseSql = `
+          SELECT * FROM stock_items
+          WHERE deleted_at IS NULL AND (supplier_code IS NULL OR supplier_code = '')${q ? " AND (item LIKE ? OR brand LIKE ? OR colour LIKE ?)" : ""}
+          ORDER BY item ASC, colour ASC, size ASC
+        `;
+        const { results } = await db.prepare(looseSql).bind(...(q ? [like, like, like] : [])).all();
+        loose = results || [];
+      }
+
+      return json({ groups, loose, limit, offset, has_more: codes.length === limit });
+    }
+
+    // ?low=1 -> only items at or below their reorder threshold. The
+    // low-stock banner and the printable reorder list both need every low
+    // item across the whole shelf, which is the one thing the grouped view
+    // above deliberately doesn't load - but "everything that's low" is
+    // small and bounded, unlike "everything", so it gets its own query
+    // rather than forcing a full-table fetch back on the tab.
+    // COALESCE mirrors _lib/stock-alerts.js: a NULL threshold means the
+    // portal-wide default applies, not "never alerts".
+    if (request.method === "GET" && url.searchParams.get("low")) {
+      const { results } = await db.prepare(`
+        SELECT * FROM stock_items
+        WHERE deleted_at IS NULL AND quantity <= COALESCE(reorder_threshold, ?)
+        ORDER BY item ASC, colour ASC, size ASC
+      `).bind(DEFAULT_REORDER_THRESHOLD).all();
+      return json(results);
+    }
+
+    // ?code=XYZ -> just that one code's stock rows, for an expanded group.
+    // Exact match, never a LIKE: "RX1" must not drag in RX101/RX151.
+    if (request.method === "GET" && url.searchParams.get("code")) {
+      const { results } = await db.prepare(
+        "SELECT * FROM stock_items WHERE deleted_at IS NULL AND supplier_code = ? ORDER BY colour ASC, size ASC"
+      ).bind(url.searchParams.get("code")).all();
+      return json(results);
+    }
+
     if (request.method === "GET") {
       const { results } = await db.prepare(
         "SELECT * FROM stock_items WHERE deleted_at IS NULL ORDER BY item ASC, colour ASC, size ASC"
@@ -198,35 +312,6 @@ export async function onRequest(context) {
 
     if (request.method === "POST") {
       const data = await request.json();
-
-      // "Sync Garment Catalog" (Stock tab) - seeds a stock row, at quantity
-      // 0, for every colour/size of every garment in the catalog that
-      // doesn't have one yet, so the shelf list starts from what Martin
-      // actually sells instead of being typed out by hand.
-      //
-      // Deliberately narrow about which catalog rows qualify:
-      //   active = 1        - discontinued lines shouldn't clutter Stock
-      //   deleted_at IS NULL - nothing in the Trash (restoring one seeds it
-      //                       then, automatically - see products.js's
-      //                       seedStockForRestoredCode)
-      //   item_type garment - a Design Setup Fee has nothing on a shelf
-      //   no customer_id    - a customer's own price list is their pricing,
-      //                       not a second copy of the same physical stock
-      // Insert-only, so it's safe to click as often as you like - see
-      // _lib/stock-catalog-sync.js.
-      if (data.action === "sync_from_catalog") {
-        const { results } = await db.prepare(`
-          SELECT id, supplier_code, brand, title, colour, size, cost_price, sell_price, variant_data
-          FROM products
-          WHERE active = 1
-            AND deleted_at IS NULL
-            AND item_type = 'garment'
-            AND (customer_id IS NULL OR customer_id = '')
-            AND supplier_code IS NOT NULL AND supplier_code != ''
-        `).all();
-        const result = await seedStockFromCatalogRows(db, results || []);
-        return json({ success: true, ...result });
-      }
 
       // Bulk Add Stock: several lines queued client-side (search a code,
       // pick colour/size, repeat), all saved together in one request rather
