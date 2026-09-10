@@ -6323,23 +6323,72 @@
       renderStockGroupVariants(code);
     }
 
-    function renderStockGroupVariants(code) {
-      const token = toAttrToken(code);
-      const el = document.getElementById('stock-group-' + token);
-      if (!el) return;
-      const variants = stockGroupVariantsCache[code];
-      if (!variants) { loadStockGroupVariants(code); return; }
+    // Typing in Find must not rebuild the panel - re-rendering the whole
+    // thing replaces the input the user is typing into, which blurs it and
+    // loses the caret after the first keystroke. Only the rows change.
+    function setStockGroupSearch(code, value) {
+      stockGroupFilters[code] = { ...(stockGroupFilters[code] || {}), search: value };
+      renderStockGroupRows(code);
+    }
 
+    function showAllStockVariants(code) {
+      stockGroupFilters[code] = { ...(stockGroupFilters[code] || {}), showAll: true };
+      renderStockGroupVariants(code);
+    }
+
+    // What the panel actually lists. A garment code can carry hundreds of
+    // colourways, and dumping every one of them on screen the moment a code
+    // is opened buries the handful you actually keep. So the default is
+    // "what I hold": colour/size rows that already have a stock row. The
+    // rest appear once you've narrowed to something specific - picked a
+    // colour or size, or typed in Find - which is how you add one you don't
+    // hold yet, without scrolling past the ones you never will.
+    function visibleStockVariants(code) {
+      const variants = stockGroupVariantsCache[code] || [];
       const f = stockGroupFilters[code] || {};
-      const colours = [...new Set(variants.map((v) => v.colour).filter(Boolean))].sort();
-      const sizes = [...new Set(variants.map((v) => v.size).filter(Boolean))];
-      const shown = variants.filter((v) =>
-        (!f.colour || v.colour === f.colour) &&
-        (!f.size || v.size === f.size) &&
-        (!f.stockedOnly || (v.stock && Number(v.stock.quantity) !== 0))
-      );
+      const term = String(f.search || '').trim().toLowerCase();
+      const narrowed = !!(f.colour || f.size || term || f.showAll);
+      return variants.filter((v) => {
+        if (f.colour && v.colour !== f.colour) return false;
+        if (f.size && v.size !== f.size) return false;
+        if (term && !`${v.colour || ''} ${v.size || ''}`.toLowerCase().includes(term)) return false;
+        // Held rows always show - they're the point of the tab, and hiding
+        // one behind a filter would hide stock you actually have.
+        return v.stock || narrowed;
+      });
+    }
 
-      const rows = shown.map((v) => {
+    function stockGroupCountLabel(code) {
+      const variants = stockGroupVariantsCache[code] || [];
+      const held = variants.filter((v) => v.stock).length;
+      const shown = visibleStockVariants(code).length;
+      const f = stockGroupFilters[code] || {};
+      const narrowed = !!(f.colour || f.size || String(f.search || '').trim() || f.showAll);
+      return narrowed
+        ? `${shown} of ${variants.length} colour/size combinations`
+        : `${held} tracked · ${variants.length} available`;
+    }
+
+    // Shown when the filters match nothing. Which message is right depends
+    // on why it's empty: nothing tracked yet is the normal opening state for
+    // most garments, not a failed search.
+    function stockGroupEmptyRowHtml(code) {
+      const variants = stockGroupVariantsCache[code] || [];
+      const f = stockGroupFilters[code] || {};
+      const narrowed = !!(f.colour || f.size || String(f.search || '').trim() || f.showAll);
+      const msg = narrowed
+        ? 'Nothing matches that.'
+        : `You're not tracking any of this garment yet. Pick a colour or size above, or search, to add one.`
+          + ` <button type="button" onclick="showAllStockVariants('${escapeAttr(code)}')" class="text-indigo-600 hover:underline font-semibold">Show all ${variants.length}</button>`;
+      return `<tr><td colspan="6" class="py-4 text-center text-slate-400">${msg}</td></tr>`;
+    }
+
+    // The rows themselves, split out so setStockGroupSearch can refresh only
+    // the table body - see the note there on why the whole panel must not be
+    // rebuilt on every keystroke.
+    function stockGroupRowsHtml(code) {
+      const token = toAttrToken(code);
+      return visibleStockVariants(code).map((v) => {
         const s = v.stock;
         const cost = Number(v.cost_price) || 0;
         const sale = Number(v.sale_price) || 0;
@@ -6359,6 +6408,28 @@
               <button onclick="deleteStockItem('${escapeAttr(s.id)}')" class="bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded text-xs font-semibold">Delete</button>` : ''}</td>
           </tr>`;
       }).join('');
+    }
+
+    function renderStockGroupRows(code) {
+      const token = toAttrToken(code);
+      const body = document.getElementById('stock-group-rows-' + token);
+      if (!body) return;
+      body.innerHTML = stockGroupRowsHtml(code) || stockGroupEmptyRowHtml(code);
+      const count = document.getElementById('stock-group-count-' + token);
+      if (count) count.textContent = stockGroupCountLabel(code);
+    }
+
+    function renderStockGroupVariants(code) {
+      const token = toAttrToken(code);
+      const el = document.getElementById('stock-group-' + token);
+      if (!el) return;
+      const variants = stockGroupVariantsCache[code];
+      if (!variants) { loadStockGroupVariants(code); return; }
+
+      const f = stockGroupFilters[code] || {};
+      const colours = [...new Set(variants.map((v) => v.colour).filter(Boolean))].sort();
+      const sizes = [...new Set(variants.map((v) => v.size).filter(Boolean))];
+      const rows = stockGroupRowsHtml(code);
 
       el.innerHTML = `
         <div class="flex flex-wrap items-end gap-2 py-3">
@@ -6376,18 +6447,20 @@
               ${sizes.map((z) => `<option value="${escapeAttr(z)}" ${f.size === z ? 'selected' : ''}>${escapeHtml(z)}</option>`).join('')}
             </select>
           </label>
-          <label class="text-xs text-slate-600 flex items-center gap-1.5 pb-2">
-            <input type="checkbox" onchange="setStockGroupFilter('${escapeAttr(code)}', 'stockedOnly', this.checked)" ${f.stockedOnly ? 'checked' : ''} class="rounded border-slate-300" />
-            Only ones I hold
+          <label class="text-xs text-slate-600">
+            <span class="block mb-1">Find</span>
+            <input type="text" id="stock-group-search-${token}" value="${escapeAttr(f.search || '')}" placeholder="Colour or size…"
+                   oninput="setStockGroupSearch('${escapeAttr(code)}', this.value)"
+                   class="w-44 rounded border border-slate-300 px-2 py-1.5 text-sm" />
           </label>
-          <span class="text-xs text-slate-400 pb-2 ml-auto">${shown.length} of ${variants.length} shown</span>
+          <span id="stock-group-count-${token}" class="text-xs text-slate-400 pb-2 ml-auto">${stockGroupCountLabel(code)}</span>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="text-xs uppercase tracking-wider text-slate-400">
               <tr><th class="text-left pb-1">Colour</th><th class="text-left pb-1">Size</th><th class="text-right pb-1 pr-3">Cost</th><th class="text-right pb-1 pr-3">Sale</th><th class="text-left pb-1">Qty</th><th></th></tr>
             </thead>
-            <tbody>${rows || '<tr><td colspan="6" class="py-4 text-center text-slate-400">Nothing matches these filters.</td></tr>'}</tbody>
+            <tbody id="stock-group-rows-${token}">${rows || stockGroupEmptyRowHtml(code)}</tbody>
           </table>
         </div>`;
     }
