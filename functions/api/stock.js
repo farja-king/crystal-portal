@@ -17,6 +17,7 @@
 // stock-deduct.js so a manual adjust and an invoice auto-deducting stock
 // both go through the exact same alert logic.
 import { recomputeStockAndAlert } from "../_lib/stock-alerts.js";
+import { seedStockFromCatalogRows } from "../_lib/stock-catalog-sync.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -197,6 +198,35 @@ export async function onRequest(context) {
 
     if (request.method === "POST") {
       const data = await request.json();
+
+      // "Sync Garment Catalog" (Stock tab) - seeds a stock row, at quantity
+      // 0, for every colour/size of every garment in the catalog that
+      // doesn't have one yet, so the shelf list starts from what Martin
+      // actually sells instead of being typed out by hand.
+      //
+      // Deliberately narrow about which catalog rows qualify:
+      //   active = 1        - discontinued lines shouldn't clutter Stock
+      //   deleted_at IS NULL - nothing in the Trash (restoring one seeds it
+      //                       then, automatically - see products.js's
+      //                       seedStockForRestoredCode)
+      //   item_type garment - a Design Setup Fee has nothing on a shelf
+      //   no customer_id    - a customer's own price list is their pricing,
+      //                       not a second copy of the same physical stock
+      // Insert-only, so it's safe to click as often as you like - see
+      // _lib/stock-catalog-sync.js.
+      if (data.action === "sync_from_catalog") {
+        const { results } = await db.prepare(`
+          SELECT id, supplier_code, brand, title, colour, size, cost_price, sell_price, variant_data
+          FROM products
+          WHERE active = 1
+            AND deleted_at IS NULL
+            AND item_type = 'garment'
+            AND (customer_id IS NULL OR customer_id = '')
+            AND supplier_code IS NOT NULL AND supplier_code != ''
+        `).all();
+        const result = await seedStockFromCatalogRows(db, results || []);
+        return json({ success: true, ...result });
+      }
 
       // Bulk Add Stock: several lines queued client-side (search a code,
       // pick colour/size, repeat), all saved together in one request rather
