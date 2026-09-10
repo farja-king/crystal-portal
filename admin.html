@@ -1091,9 +1091,6 @@
           <button onclick="openBulkAddStockForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             📦 Bulk Add Stock
           </button>
-          <button onclick="syncStockFromCatalog()" id="stock-sync-btn" title="Adds a stock row at quantity 0 for every colour/size of every active garment in the catalog that doesn't have one yet. Never changes an item you already have." class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
-            🧩 Sync Garment Catalog
-          </button>
           <button onclick="printReorderList()" title="Every item at or below its reorder threshold, with how many to order to bring it back up to that threshold" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🖨 Print Reorder List
           </button>
@@ -6159,67 +6156,291 @@
     let addingNewStock = false;
     let stockLowOnly = false;
 
+    // The Stock tab lists ONE line per garment code, not one per colour/size
+    // - the same shape, for the same reason, as the Garment Catalog's own
+    // grouped browse. A code's individual colour/size rows are fetched only
+    // when that code is actually expanded, so opening Stock costs 46-ish
+    // rows instead of however many thousand colour/size combinations the
+    // catalog happens to hold.
+    //
+    // The code list comes from the catalog UNIONed with existing stock (see
+    // stock.js's group_by_code), which is what makes a garment restored from
+    // the Trash appear here immediately - nothing has to be written to the
+    // stock table for it to show up.
+    let stockGroups = [];
+    let stockLoose = [];          // hand-added items with no code to group by
+    let stockLowItems = [];       // everything at/below threshold, for the banner + reorder list
+    let expandedStockCodes = new Set();
+    let stockGroupVariantsCache = {};  // code -> merged catalog/stock variant list
+    let stockGroupFilters = {};        // code -> { colour, size, stockedOnly }
+    let stockGroupsHasMore = false;    // more codes than one page - say so rather than truncate silently
+
     async function loadStock() {
       const tbody = document.getElementById('stock-table-body');
       tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-slate-400">Loading stock…</td></tr>';
+      const q = (document.getElementById('stock-search').value || '').trim();
       try {
-        const res = await fetch(API_STOCK_URL, { cache: 'no-store' });
-        allStock = await res.json();
+        // Two small, bounded queries instead of one unbounded one. The low
+        // list is what the banner and the printable reorder list read - they
+        // need every low item across the whole shelf, which is exactly the
+        // thing the grouped list deliberately doesn't load.
+        const [grouped, low] = await Promise.all([
+          fetch(API_STOCK_URL + '?group_by_code=1&limit=500' + (q ? '&q=' + encodeURIComponent(q) : ''), { cache: 'no-store' }).then((r) => r.json()),
+          fetch(API_STOCK_URL + '?low=1', { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+        ]);
+        stockGroups = (grouped && grouped.groups) || [];
+        stockGroupsHasMore = !!(grouped && grouped.has_more);
+        stockLoose = (grouped && grouped.loose) || [];
+        stockLowItems = Array.isArray(low) ? low : [];
+
+        // allStock/stockById stay the index every existing per-row action
+        // reads (edit, delete, adjust, bulk select) - they just hold what's
+        // actually on screen now rather than the entire table.
+        allStock = stockLoose.slice();
         stockById = {};
         allStock.forEach((s) => { stockById[s.id] = s; });
-        // Ticked rows that no longer exist (deleted elsewhere, or just
-        // gone after a reload) shouldn't linger in the bulk-action count.
         selectedStockIds.forEach((id) => { if (!stockById[id]) selectedStockIds.delete(id); });
-        // A full reload rebuilds every row collapsed anyway (see
-        // renderStockTable), so any cached "Allocated to" history is now
-        // for a dropdown that no longer exists - drop it rather than let
-        // it silently go stale for whenever it's next expanded.
+        // A reload rebuilds every group collapsed, so cached per-item
+        // history and per-code variants are for panels that no longer
+        // exist - drop them rather than let them go stale.
         stockMovementsCache = {};
+        stockGroupVariantsCache = {};
+        expandedStockCodes = new Set();
         renderLowStockBanner();
-        filterStock();
+        if (stockLowOnly) renderStockLowOnly(); else renderStockGroups();
         stampRefreshed('refreshed-stock');
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
       }
     }
 
-    // Seeds the shelf list from the Garment Catalog - see
-    // functions/_lib/stock-catalog-sync.js. Insert-only on the server, so
-    // re-clicking it is safe: an item already on the list keeps its
-    // quantity, prices, threshold and notes untouched. Only ACTIVE,
-    // non-trashed garments are seeded - a garment restored from the Trash
-    // later gets seeded automatically at that point (products.js), so
-    // there's no need to come back and click this again after a restore.
-    async function syncStockFromCatalog() {
-      const ok = await confirmModal("Add a stock row (quantity 0) for every colour and size of every active garment that isn't already on the list?\n\nNothing you already have is changed.");
-      if (!ok) return;
-      const btn = document.getElementById('stock-sync-btn');
-      const original = btn.innerHTML;
-      btn.disabled = true;
-      btn.innerHTML = 'Syncing…';
+    // The collapsed list: a header row per code, then any hand-added items
+    // that have no code to group under.
+    function renderStockGroups() {
+      const tbody = document.getElementById('stock-table-body');
+      if (!stockGroups.length && !stockLoose.length) {
+        tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-slate-400">'
+          + ((document.getElementById('stock-search').value || '').trim()
+            ? 'Nothing matches your search.'
+            : 'No garments in the catalog yet - publish one, or add a stock item by hand above.')
+          + '</td></tr>';
+        updateStockBulkBar();
+        return;
+      }
+      tbody.innerHTML = stockGroups.map(stockGroupRowHtml).join('')
+        + stockLoose.map(stockRowHtml).join('')
+        + (stockGroupsHasMore ? '<tr><td colspan="13" class="p-4 text-center text-xs text-slate-500 bg-slate-50">Showing the first ' + stockGroups.length + ' garment codes - search above to reach the rest.</td></tr>' : '');
+      document.getElementById('stock-select-all').checked = allStock.length > 0 && allStock.every((s) => selectedStockIds.has(s.id));
+      updateStockBulkBar();
+      // Re-expand whatever was open before a re-render (e.g. after setting a
+      // quantity) so the panel doesn't collapse under the user mid-edit.
+      expandedStockCodes.forEach((code) => renderStockGroupVariants(code));
+    }
+
+    function stockGroupRowHtml(g) {
+      const token = toAttrToken(g.supplier_code);
+      const open = expandedStockCodes.has(g.supplier_code);
+      // "0 of 24 tracked" reads better than a bare 0 - it says the garment
+      // is known and simply has nothing counted yet, which is the normal
+      // state for most of the catalog.
+      const tracked = g.variants
+        ? `${g.variants} colour/size${g.variants === 1 ? '' : 's'} tracked`
+        : '<span class="text-slate-400">nothing tracked yet</span>';
+      return `
+        <tr class="cursor-pointer hover:bg-slate-50 bg-white" onclick="toggleStockGroup('${escapeAttr(g.supplier_code)}')">
+          <td class="p-4 text-slate-400">${open ? '▾' : '▸'}</td>
+          <td class="p-4 font-semibold text-slate-900">${escapeHtml(g.title)}</td>
+          <td class="p-4 font-mono text-xs text-slate-600">${escapeHtml(g.supplier_code)}</td>
+          <td class="p-4">${escapeHtml(g.brand || '-')}</td>
+          <td class="p-4 text-xs text-slate-500" colspan="2">${tracked}</td>
+          <td class="p-4 font-semibold ${g.total_qty > 0 ? 'text-slate-900' : 'text-slate-400'}">${g.total_qty}</td>
+          <td class="p-4 text-right text-xs text-slate-400" colspan="4">${g.low_count ? `<span class="text-amber-700 font-semibold">⚠ ${g.low_count} low</span>` : ''}</td>
+          <td class="p-4 text-right text-xs text-slate-400">${g.in_catalog ? '' : '<span title="This code has stock but is no longer an active garment in the catalog">not in catalog</span>'}</td>
+          <td class="p-4 text-right"><span class="text-indigo-600 text-xs font-semibold">${open ? 'Hide' : 'Open'}</span></td>
+        </tr>
+        <tr id="stock-group-row-${token}" class="${open ? '' : 'hidden'} bg-slate-50">
+          <td></td>
+          <td colspan="12" class="px-4 pb-4" id="stock-group-${token}"></td>
+        </tr>`;
+    }
+
+    async function toggleStockGroup(code) {
+      if (expandedStockCodes.has(code)) {
+        expandedStockCodes.delete(code);
+      } else {
+        expandedStockCodes.add(code);
+      }
+      renderStockGroups();
+    }
+
+    // Merges what the CATALOG says this code comes in with what's actually
+    // on the shelf. The catalog side is why a colour/size can be given a
+    // quantity without a stock row having to exist first - which is the
+    // whole reason the Stock tab no longer needs thousands of empty rows
+    // seeded into it. Anything on the shelf that the catalog no longer
+    // lists is kept too, so a discontinued colourway you still hold can
+    // never quietly vanish from the count.
+    async function loadStockGroupVariants(code) {
+      const token = toAttrToken(code);
+      const el = document.getElementById('stock-group-' + token);
+      if (el) el.innerHTML = '<p class="py-3 text-sm text-slate-400">Loading colours and sizes…</p>';
+      try {
+        const [tiers, rows] = await Promise.all([
+          fetch(API_PRODUCTS_URL + '?code=' + encodeURIComponent(code) + '&limit=500', { cache: 'no-store' })
+            .then((r) => r.json()).then((d) => (d && d.results) || []).catch(() => []),
+          fetch(API_STOCK_URL + '?code=' + encodeURIComponent(code), { cache: 'no-store' })
+            .then((r) => r.json()).catch(() => []),
+        ]);
+
+        const key = (c, sz) => [c, sz].map((v) => String(v || '').trim().toLowerCase()).join('|');
+        const merged = new Map();
+        for (const t of tiers) {
+          merged.set(key(t.colour, t.size), {
+            colour: t.colour || '', size: t.size || '',
+            cost_price: t.cost_price, sale_price: t.sell_price,
+            title: t.title || code, brand: t.brand || '', stock: null,
+          });
+        }
+        for (const r of rows || []) {
+          const k = key(r.colour, r.size);
+          const existing = merged.get(k);
+          if (existing) existing.stock = r;
+          else merged.set(k, { colour: r.colour || '', size: r.size || '', cost_price: r.cost_price, sale_price: r.sale_price, title: r.item, brand: r.brand || '', stock: r, off_catalog: true });
+          // Every existing per-row action (edit, delete, +/-, bulk select)
+          // resolves its item through stockById - an expanded row has to be
+          // in there or those buttons would silently do nothing.
+          stockById[r.id] = r;
+        }
+        stockGroupVariantsCache[code] = [...merged.values()];
+        renderStockGroupVariants(code);
+      } catch (e) {
+        if (el) el.innerHTML = '<p class="py-3 text-sm text-red-500">Could not load this garment: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    function setStockGroupFilter(code, field, value) {
+      stockGroupFilters[code] = { ...(stockGroupFilters[code] || {}), [field]: value };
+      renderStockGroupVariants(code);
+    }
+
+    function renderStockGroupVariants(code) {
+      const token = toAttrToken(code);
+      const el = document.getElementById('stock-group-' + token);
+      if (!el) return;
+      const variants = stockGroupVariantsCache[code];
+      if (!variants) { loadStockGroupVariants(code); return; }
+
+      const f = stockGroupFilters[code] || {};
+      const colours = [...new Set(variants.map((v) => v.colour).filter(Boolean))].sort();
+      const sizes = [...new Set(variants.map((v) => v.size).filter(Boolean))];
+      const shown = variants.filter((v) =>
+        (!f.colour || v.colour === f.colour) &&
+        (!f.size || v.size === f.size) &&
+        (!f.stockedOnly || (v.stock && Number(v.stock.quantity) !== 0))
+      );
+
+      const rows = shown.map((v) => {
+        const s = v.stock;
+        const cost = Number(v.cost_price) || 0;
+        const sale = Number(v.sale_price) || 0;
+        return `
+          <tr class="border-t border-slate-200">
+            <td class="py-2 pr-3">${escapeHtml(v.colour || '-')}${v.off_catalog ? ' <span class="text-[10px] text-amber-700" title="On your shelf but no longer a colour/size the catalog lists for this code">off-catalog</span>' : ''}</td>
+            <td class="py-2 pr-3">${escapeHtml(v.size || '-')}</td>
+            <td class="py-2 pr-3 text-right text-slate-600">${money(cost)}</td>
+            <td class="py-2 pr-3 text-right text-slate-900">${money(sale)}</td>
+            <td class="py-2 pr-3">${s ? stockQtyCellHtml(s) : `
+              <div class="flex items-center gap-1.5">
+                <input type="number" step="1" placeholder="0" id="stock-new-${token}-${escapeAttr(key64(v.colour, v.size))}" class="w-16 rounded border border-slate-300 px-2 py-1 text-sm" />
+                <button type="button" onclick="createStockVariant('${escapeAttr(code)}', '${escapeAttr(v.colour)}', '${escapeAttr(v.size)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded text-xs font-semibold">Track</button>
+              </div>`}</td>
+            <td class="py-2 text-right">${s ? `
+              <button onclick="openEditStockItemForm('${escapeAttr(s.id)}')" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-2 py-1 rounded text-xs font-semibold">Edit</button>
+              <button onclick="deleteStockItem('${escapeAttr(s.id)}')" class="bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded text-xs font-semibold">Delete</button>` : ''}</td>
+          </tr>`;
+      }).join('');
+
+      el.innerHTML = `
+        <div class="flex flex-wrap items-end gap-2 py-3">
+          <label class="text-xs text-slate-600">
+            <span class="block mb-1">Colour</span>
+            <select onchange="setStockGroupFilter('${escapeAttr(code)}', 'colour', this.value)" class="w-40 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <option value="">All colours</option>
+              ${colours.map((c) => `<option value="${escapeAttr(c)}" ${f.colour === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="text-xs text-slate-600">
+            <span class="block mb-1">Size</span>
+            <select onchange="setStockGroupFilter('${escapeAttr(code)}', 'size', this.value)" class="w-28 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <option value="">All sizes</option>
+              ${sizes.map((z) => `<option value="${escapeAttr(z)}" ${f.size === z ? 'selected' : ''}>${escapeHtml(z)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="text-xs text-slate-600 flex items-center gap-1.5 pb-2">
+            <input type="checkbox" onchange="setStockGroupFilter('${escapeAttr(code)}', 'stockedOnly', this.checked)" ${f.stockedOnly ? 'checked' : ''} class="rounded border-slate-300" />
+            Only ones I hold
+          </label>
+          <span class="text-xs text-slate-400 pb-2 ml-auto">${shown.length} of ${variants.length} shown</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-xs uppercase tracking-wider text-slate-400">
+              <tr><th class="text-left pb-1">Colour</th><th class="text-left pb-1">Size</th><th class="text-right pb-1 pr-3">Cost</th><th class="text-right pb-1 pr-3">Sale</th><th class="text-left pb-1">Qty</th><th></th></tr>
+            </thead>
+            <tbody>${rows || '<tr><td colspan="6" class="py-4 text-center text-slate-400">Nothing matches these filters.</td></tr>'}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // A colour/size pair has to survive being put in an element id, and
+    // colours like "Navy/White" or sizes like "3XL " would break one - so
+    // ids are keyed on an encoded form rather than the raw text.
+    function key64(colour, size) {
+      return String(colour || '') .trim().toLowerCase().replace(/[^a-z0-9]/g, '') + '-' + String(size || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    // Creates the stock row for one colour/size the first time it's given a
+    // number. This is what replaces seeding the whole catalog up front: a
+    // row exists because you actually track that variant, so the Stock list
+    // stays the size of what's really on your shelf.
+    async function createStockVariant(code, colour, size) {
+      const token = toAttrToken(code);
+      const input = document.getElementById('stock-new-' + token + '-' + key64(colour, size));
+      const qty = Number(input && input.value) || 0;
+      const variant = (stockGroupVariantsCache[code] || []).find((v) => v.colour === colour && v.size === size);
+      if (!variant) return;
       try {
         const res = await fetch(API_STOCK_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'sync_from_catalog' }),
+          body: JSON.stringify({
+            item: variant.title || code,
+            supplier_code: code,
+            brand: variant.brand || '',
+            colour, size,
+            cost_price: variant.cost_price || 0,
+            sale_price: variant.sale_price || 0,
+            quantity: qty,
+          }),
         });
         const out = await res.json();
-        if (!res.ok || out.error) throw new Error(out.error || 'Sync failed');
-        await loadStock();
-        showActionToast('🧩', out.created
-          ? 'Added ' + out.created + ' stock ' + (out.created === 1 ? 'row' : 'rows') + ' from the catalog.'
-          : 'Nothing to add - every active garment is already on the stock list.');
+        if (!res.ok || out.error) throw new Error(out.error || 'Could not add');
+        const group = stockGroups.find((g) => g.supplier_code === code);
+        if (group) {
+          group.variants += 1;
+          group.total_qty += qty;
+        }
+        delete stockGroupVariantsCache[code];
+        renderStockGroups();
+        showActionToast('✓', `${colour || ''} ${size || ''}`.trim() + ' now tracked at ' + qty + '.');
       } catch (e) {
-        showActionToast('⚠', 'Could not sync: ' + e.message);
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = original;
+        showActionToast('⚠', 'Could not track that: ' + e.message);
       }
     }
 
     function renderLowStockBanner() {
       const el = document.getElementById('stock-low-banner');
-      const lowCount = allStock.filter(isStockLow).length;
+      const lowCount = stockLowItems.length;
       if (!lowCount) {
         el.classList.add('hidden');
         el.innerHTML = '';
@@ -6237,7 +6458,7 @@
     function toggleStockLowOnly() {
       stockLowOnly = !stockLowOnly;
       renderLowStockBanner();
-      filterStock();
+      if (stockLowOnly) renderStockLowOnly(); else renderStockGroups();
     }
 
     // Printable reorder list - every item at/below its reorder threshold
@@ -6246,7 +6467,7 @@
     // threshold of 3 sitting at -1 needs 4, not 1. Same window.open +
     // document.write + window.print() pattern as printOrder().
     function printReorderList() {
-      const lowItems = allStock.filter(isStockLow).sort((a, b) => a.item.localeCompare(b.item));
+      const lowItems = stockLowItems.slice().sort((a, b) => a.item.localeCompare(b.item));
       const win = window.open('', '_blank', 'width=900,height=1200');
       if (!win) return;
 
@@ -6294,14 +6515,26 @@
       win.document.close();
     }
 
+    // Searching has to reach codes that aren't loaded (the tab only holds a
+    // page of them now), so it re-queries rather than filtering in memory.
+    // Debounced - one query when typing stops, not one per keystroke.
+    let stockSearchTimer = null;
     function filterStock() {
-      const raw = (document.getElementById('stock-search').value || '').trim().toLowerCase();
+      const raw = (document.getElementById('stock-search').value || '').trim();
       document.getElementById('stock-search-clear').classList.toggle('hidden', !raw);
-      let filtered = raw
-        ? allStock.filter((s) => [s.item, s.supplier_code, s.brand, s.colour, s.size].filter(Boolean).some((f) => f.toLowerCase().includes(raw)))
-        : allStock;
-      if (stockLowOnly) filtered = filtered.filter(isStockLow);
-      renderStockTable(filtered);
+      clearTimeout(stockSearchTimer);
+      stockSearchTimer = setTimeout(() => { loadStock(); }, 250);
+    }
+
+    // "Show only these" on the low-stock banner - a flat list of exactly the
+    // low items, since "which codes contain something low" is a different
+    // (and less useful) question than "what do I need to reorder".
+    function renderStockLowOnly() {
+      const tbody = document.getElementById('stock-table-body');
+      tbody.innerHTML = stockLowItems.length
+        ? stockLowItems.map((s) => { stockById[s.id] = s; return stockRowHtml(s); }).join('')
+        : '<tr><td colspan="13" class="p-8 text-center text-slate-400">Nothing is below its reorder threshold.</td></tr>';
+      updateStockBulkBar();
     }
 
     function clearStockSearch() {
@@ -6364,17 +6597,16 @@
       return { vat, profit, margin };
     }
 
-    function renderStockTable(items) {
-      const tbody = document.getElementById('stock-table-body');
-      if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-slate-400">' + (allStock.length ? 'No stock items match your search.' : 'No stock yet - add your first item above.') + '</td></tr>';
-        return;
-      }
-      tbody.innerHTML = items.map((s) => {
-        const { vat, profit, margin } = stockVatProfitMargin(s);
-        const profitCls = profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold';
-        const id = escapeAttr(s.id);
-        return `
+    // One stock item's table row, pulled out of renderStockTable so the
+    // expanded-group view (renderStockGroupVariants) can render exactly the
+    // same row - same qty controls, same Edit/Delete, same "Allocated to"
+    // dropdown - instead of a parallel, poorer version of it that would
+    // drift.
+    function stockRowHtml(s) {
+      const { vat, profit, margin } = stockVatProfitMargin(s);
+      const profitCls = profit < 0 ? 'text-red-600 font-semibold' : 'text-emerald-600 font-semibold';
+      const id = escapeAttr(s.id);
+      return `
         <tr class="hover:bg-slate-50">
           <td class="p-4"><input type="checkbox" class="stock-select-checkbox rounded border-slate-300" data-id="${id}" ${selectedStockIds.has(s.id) ? 'checked' : ''} onchange="toggleStockSelect('${id}', this.checked)" /></td>
           <td class="p-4 font-semibold text-slate-900">
@@ -6402,9 +6634,6 @@
           <td></td>
           <td colspan="12" class="px-4 pb-3" id="stock-allot-${id}"></td>
         </tr>`;
-      }).join('');
-      document.getElementById('stock-select-all').checked = items.length > 0 && items.every((s) => selectedStockIds.has(s.id));
-      updateStockBulkBar();
     }
 
     // "Allocated to" dropdown - the same stock_movements ledger already
@@ -6546,7 +6775,7 @@
 
     function clearStockSelection() {
       selectedStockIds = new Set();
-      filterStock();
+      if (stockLowOnly) renderStockLowOnly(); else renderStockGroups();
     }
 
     function updateStockBulkBar() {
@@ -6579,7 +6808,7 @@
           failed++;
         }
       }
-      filterStock();
+      await loadStock();
       if (failed) showActionToast('⚠', `${failed} item(s) could not be deleted.`);
       else showActionToast('✓', `${ids.length} stock item(s) deleted.`);
     }

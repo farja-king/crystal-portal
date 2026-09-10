@@ -25,8 +25,6 @@
 // Writes by a tier `id` (PUT single edit, DELETE) resolve which consolidated
 // row owns that id via the small `product_variant_index` lookup table, then
 // read-modify-write just that one entry inside `variant_data`.
-import { seedStockFromCatalogRows } from "../_lib/stock-catalog-sync.js";
-
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -776,42 +774,6 @@ export async function onRequest(context) {
       return json({ success: true, id: result.tierId });
     }
 
-    // Restoring a garment from the Trash puts it back in the catalog, but
-    // Stock is its own list (see functions/api/stock.js) - so before this,
-    // a restored garment came back priced and sellable while its
-    // colour/sizes stayed missing from the shelf list until someone
-    // remembered to click "Sync Garment Catalog" again. This seeds them
-    // straight away, scoped to the one code being restored rather than
-    // rescanning the whole catalog, using the exact same insert-only logic
-    // the Sync button uses (_lib/stock-catalog-sync.js) - so it can never
-    // touch an existing stock row's quantity or prices.
-    //
-    // Re-reads the row from the DB rather than trusting the trashed copy:
-    // by the time this runs the restore has already happened, and what
-    // matters is whether the row is NOW an active, global garment - a
-    // service/fee, a customer's own price-list copy, or something restored
-    // while still flagged inactive all correctly seed nothing.
-    async function seedStockForRestoredCode(supplierCode) {
-      const code = String(supplierCode || "").trim();
-      if (!code) return;
-      try {
-        const { results } = await db.prepare(`
-          SELECT id, supplier_code, brand, title, colour, size, cost_price, sell_price, variant_data
-          FROM products
-          WHERE supplier_code = ?
-            AND active = 1
-            AND deleted_at IS NULL
-            AND item_type = 'garment'
-            AND (customer_id IS NULL OR customer_id = '')
-        `).bind(code).all();
-        if (results && results.length) await seedStockFromCatalogRows(db, results);
-      } catch {
-        // Seeding the shelf list is a convenience - it must never be the
-        // reason a restore reports failure, same best-effort stance as
-        // _lib/stock-deduct.js.
-      }
-    }
-
     // ------------------------------------------------------------------ PUT --
     if (request.method === "PUT") {
       const data = await request.json();
@@ -823,8 +785,6 @@ export async function onRequest(context) {
       // admin.html routes 'product' trash entries there specifically.
       if (data.restore) {
         await db.prepare("UPDATE products SET deleted_at = NULL WHERE id = ?").bind(data.id).run();
-        const restored = await db.prepare("SELECT supplier_code FROM products WHERE id = ?").bind(data.id).first();
-        await seedStockForRestoredCode(restored && restored.supplier_code);
         return json({ success: true });
       }
 
@@ -849,7 +809,6 @@ export async function onRequest(context) {
         const tiers = parseVariants(trashedRow);
         if (!trashedRow.supplier_code || tiers.length > 1) {
           await db.prepare("UPDATE products SET deleted_at = NULL WHERE id = ?").bind(data.id).run();
-          await seedStockForRestoredCode(trashedRow.supplier_code);
           return json({ success: true, merged: false });
         }
 
@@ -862,7 +821,6 @@ export async function onRequest(context) {
           // becomes the active one again.
           await db.prepare("UPDATE products SET deleted_at = NULL WHERE id = ?").bind(data.id).run();
           await addTierToIndex(tiers[0].id, data.id);
-          await seedStockForRestoredCode(trashedRow.supplier_code);
           return json({ success: true, merged: false });
         }
 
@@ -881,7 +839,6 @@ export async function onRequest(context) {
           await addTierToIndex(tier.id, activeRow.id);
         }
         await db.prepare("DELETE FROM products WHERE id = ?").bind(data.id).run();
-        await seedStockForRestoredCode(activeRow.supplier_code);
         return json({ success: true, merged: true, product_id: activeRow.id });
       }
 
