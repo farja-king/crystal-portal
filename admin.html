@@ -1091,6 +1091,9 @@
           <button onclick="openBulkAddStockForm()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             📦 Bulk Add Stock
           </button>
+          <button onclick="syncStockFromCatalog()" id="stock-sync-btn" title="Adds a stock row at quantity 0 for every colour/size of every active garment in the catalog that doesn't have one yet. Never changes an item you already have." class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            🧩 Sync Garment Catalog
+          </button>
           <button onclick="printReorderList()" title="Every item at or below its reorder threshold, with how many to order to bring it back up to that threshold" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🖨 Print Reorder List
           </button>
@@ -6177,6 +6180,40 @@
         stampRefreshed('refreshed-stock');
       } catch (e) {
         tbody.innerHTML = '<tr><td colspan="13" class="p-8 text-center text-red-500">Could not load stock: ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    // Seeds the shelf list from the Garment Catalog - see
+    // functions/_lib/stock-catalog-sync.js. Insert-only on the server, so
+    // re-clicking it is safe: an item already on the list keeps its
+    // quantity, prices, threshold and notes untouched. Only ACTIVE,
+    // non-trashed garments are seeded - a garment restored from the Trash
+    // later gets seeded automatically at that point (products.js), so
+    // there's no need to come back and click this again after a restore.
+    async function syncStockFromCatalog() {
+      const ok = await confirmModal("Add a stock row (quantity 0) for every colour and size of every active garment that isn't already on the list?\n\nNothing you already have is changed.");
+      if (!ok) return;
+      const btn = document.getElementById('stock-sync-btn');
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = 'Syncing…';
+      try {
+        const res = await fetch(API_STOCK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'sync_from_catalog' }),
+        });
+        const out = await res.json();
+        if (!res.ok || out.error) throw new Error(out.error || 'Sync failed');
+        await loadStock();
+        showActionToast('🧩', out.created
+          ? 'Added ' + out.created + ' stock ' + (out.created === 1 ? 'row' : 'rows') + ' from the catalog.'
+          : 'Nothing to add - every active garment is already on the stock list.');
+      } catch (e) {
+        showActionToast('⚠', 'Could not sync: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
       }
     }
 
