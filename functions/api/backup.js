@@ -11,8 +11,8 @@
 // separate from env.DESIGN_FILES (the live file storage) so a backup can
 // never be corrupted by whatever it's backing up. Each run writes under its
 // own timestamped prefix - db/<table>-<page>.json per PAGE_SIZE-row chunk of
-// each table, files/<original-key> for every referenced file - so old
-// snapshots are never overwritten.
+// each table - so old row snapshots are never overwritten. Files are
+// different: see SHARED_FILES_PREFIX below.
 //
 // Tables are paged (keyset pagination on id, not OFFSET - stays index-backed
 // however deep it goes) rather than pulled with one SELECT * / JSON.stringify
@@ -27,6 +27,22 @@
 import { emailShell } from "../_lib/email-template.js";
 
 const PAGE_SIZE = 2000;
+
+// Every referenced file is copied here, keyed by its own (already-unique)
+// r2_key - NOT nested under each run's own timestamped prefix. A file's
+// bytes never change after upload (each new upload gets a brand new key), so
+// once a key is here it's here for good and every later run can just skip
+// it (see the `head()` check in runBackup) instead of re-copying identical
+// bytes it already copied yesterday, and the day before, forever. Before
+// this, every run re-copied every referenced file from scratch regardless
+// of whether it had changed, and as the file count grew that sequential
+// copy loop started running past the Function's execution limit the same
+// way the unpaged table export once did (see the comment above) - almost
+// all of that work was wasted, since day to day it's nearly always the same
+// files. restoreTable's file-restore step below checks here first, falling
+// back to a given backup's own (pre-this-change) per-run prefix so older
+// backups taken before this change stay restorable.
+const SHARED_FILES_PREFIX = "files/";
 
 // Every table backed up/restored. Order matters for restore: tables with no
 // foreign-key-ish dependency on others go first, though D1/SQLite here
@@ -221,9 +237,19 @@ export async function onRequest(context) {
         let filesCount = 0;
         let totalBytes = 0;
         for (const key of fileKeys) {
+          // Cheap metadata-only check - if this exact key was already
+          // copied by any previous run, its bytes are guaranteed identical
+          // (see SHARED_FILES_PREFIX above), so skip straight past the
+          // DESIGN_FILES read and BACKUPS write entirely.
+          const existing = await env.BACKUPS.head(SHARED_FILES_PREFIX + key);
+          if (existing) {
+            filesCount += 1;
+            totalBytes += existing.size || 0;
+            continue;
+          }
           const obj = await env.DESIGN_FILES.get(key);
           if (!obj) continue; // referenced but missing - skip rather than fail the whole backup
-          await env.BACKUPS.put(prefix + "files/" + key, obj.body, { httpMetadata: obj.httpMetadata });
+          await env.BACKUPS.put(SHARED_FILES_PREFIX + key, obj.body, { httpMetadata: obj.httpMetadata });
           filesCount += 1;
           totalBytes += obj.size || 0;
         }
@@ -320,7 +346,13 @@ export async function onRequest(context) {
       }
       let filesRestored = 0;
       for (const key of fileKeys) {
-        const obj = await env.BACKUPS.get(target.r2_prefix + "files/" + key);
+        // Shared location first (every run from this change onward writes
+        // here - see SHARED_FILES_PREFIX) - falls back to this backup's own
+        // per-run prefix for anything taken before this change, whose files
+        // were never copied into the shared location.
+        const obj =
+          (await env.BACKUPS.get(SHARED_FILES_PREFIX + key)) ??
+          (await env.BACKUPS.get(target.r2_prefix + "files/" + key));
         if (!obj) continue;
         await env.DESIGN_FILES.put(key, obj.body, { httpMetadata: obj.httpMetadata });
         filesRestored += 1;
