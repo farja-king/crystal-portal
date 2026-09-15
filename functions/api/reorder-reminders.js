@@ -28,7 +28,7 @@ export async function onRequest(context) {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+    "Access-Control-Allow-Headers": "Content-Type, X-API-Key, Authorization",
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
   };
