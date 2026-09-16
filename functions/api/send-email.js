@@ -368,9 +368,17 @@ export async function onRequest(context) {
       await db.prepare(
         "UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP, email_sent_to = ?, email_sent_count = email_sent_count + 1 WHERE id = ?"
       ).bind(to, o.id).run();
+      // cid:proof-image only resolves inside a real email client (which got
+      // the actual attachment bytes alongside this html) - swapped for a
+      // real, directly-viewable URL in the copy that gets stored for
+      // admin.html's own "View email" preview, which has no attachment to
+      // resolve it against. The real send above is untouched.
+      const previewHtml = proofAttachment
+        ? html.replace('src="cid:proof-image"', `src="${new URL(request.url).origin}/api/design-proofs?view=${pendingProof.id}"`)
+        : html;
       await db.prepare(
         "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html) VALUES (?, ?, ?, ?, ?, ?)"
-      ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId, html).run();
+      ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId, previewHtml).run();
       if (pendingProof) {
         await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(pendingProof.id).run();
       }
@@ -643,9 +651,16 @@ export async function onRequest(context) {
     await db.prepare(
       "UPDATE orders SET email_sent_at = CURRENT_TIMESTAMP, email_sent_to = ?, email_sent_count = email_sent_count + 1 WHERE id = ?"
     ).bind(to, o.id).run();
+    // See the matching comment on the is_manual branch above - cid:proof-
+    // image only resolves inside a real email client, so the stored preview
+    // copy gets a real, directly-viewable URL instead. The real send above
+    // is untouched.
+    const previewHtml = proofAttachment
+      ? html.replace('src="cid:proof-image"', `src="${new URL(request.url).origin}/api/design-proofs?view=${pendingProof.id}"`)
+      : html;
     await db.prepare(
       "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html) VALUES (?, ?, ?, ?, ?, ?)"
-    ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId, html).run();
+    ).bind(crypto.randomUUID(), o.id, to, subject, resendEmailId, previewHtml).run();
     if (pendingProof) {
       await db.prepare("UPDATE design_proofs SET sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(pendingProof.id).run();
     }

@@ -8727,11 +8727,20 @@
     // bodyHtml is only present for an email sent after body_html started
     // being saved (see the email_log schema change across functions/api/*.js) -
     // an older send just shows a toast explaining there's nothing saved for it.
-    function openEmailPreview(subject, sentTo, sentAt, bodyHtml) {
+    function openEmailPreview(subjectToken, sentToToken, sentAtToken, bodyHtml) {
       if (!bodyHtml) {
         showActionToast('ℹ', "No preview saved for this email - it was sent before this feature was added.");
         return;
       }
+      // Callers pass subject/sentTo/sentAt through toAttrToken(), not
+      // escapeAttr() - see that function's own comment for why: any of the
+      // three landing here with a literal apostrophe (e.g. a "Your order's
+      // ready!" subject) would otherwise re-break the onclick="" attribute's
+      // own JS string the moment the browser HTML-decodes it, silently
+      // corrupting the whole handler so the button does nothing at all.
+      const subject = fromAttrToken(subjectToken);
+      const sentTo = fromAttrToken(sentToToken);
+      const sentAt = fromAttrToken(sentAtToken);
       document.getElementById('email-preview-subject').textContent = subject || '(no subject)';
       document.getElementById('email-preview-meta').textContent = 'To ' + (sentTo || '?') + (sentAt ? ' · ' + ukDateTime(sentAt) : '');
       document.getElementById('email-preview-frame').srcdoc = bodyHtml;
@@ -12503,7 +12512,7 @@
             ${e.subject ? `<div class="text-xs text-slate-500">Subject: ${escapeHtml(e.subject)}</div>` : ''}
             ${e.delivery_detail && (e.delivery_status === 'bounced' || e.delivery_status === 'complained' || e.delivery_status === 'failed') ? `<div class="text-xs text-rose-600">${escapeHtml(e.delivery_detail)}</div>` : ''}
             <button type="button" onclick="document.getElementById('${activityId}').classList.toggle('hidden')" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1">📊 View activity (${timeline.length})</button>
-            ${e.body_html ? `<button type="button" onclick="openEmailPreview('${escapeAttr(e.subject || '')}', '${escapeAttr(e.sent_to)}', '${escapeAttr(e.sent_at)}', emailPreviewBodies['${escapeAttr(e.id || idx)}'])" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1 ml-2">👁 View email</button>` : ''}
+            ${e.body_html ? `<button type="button" onclick="openEmailPreview('${toAttrToken(e.subject || '')}', '${toAttrToken(e.sent_to || '')}', '${toAttrToken(e.sent_at || '')}', emailPreviewBodies['${escapeAttr(e.id || idx)}'])" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1 ml-2">👁 View email</button>` : ''}
             <div id="${activityId}" class="hidden mt-1 pl-3 border-l-2 border-slate-100 space-y-0.5">
               ${timeline.map((t) => `<div class="text-xs text-slate-500">${EVENT_LABEL[t.event_type] || t.event_type} - ${escapeHtml(ukDateTime(t.occurred_at))}${t.detail ? ` (${escapeHtml(t.detail)})` : ''}</div>`).join('')}
               <div class="text-xs text-slate-400 italic mt-1">Replies aren't tracked here - check the Inbox tab for anything the customer actually wrote back.</div>
@@ -12647,7 +12656,7 @@
                 </label>` : '';
         const pickupStatusHtml = isCollectedStep && order
           ? `${order.review_email_sent_at
-                ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Review request sent ${escapeHtml(ukDate(order.review_email_sent_at))}${order.review_request_email && order.review_request_email.body_html ? ` · <button type="button" onclick="openEmailPreview('${escapeAttr((order.review_request_email && order.review_request_email.subject) || '')}', '', '${escapeAttr((order.review_request_email && order.review_request_email.sent_at) || '')}', reviewRequestEmailBody)" class="text-indigo-600 hover:text-indigo-800 font-medium">👁 View email</button>` : ''}</div>`
+                ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Review request sent ${escapeHtml(ukDate(order.review_email_sent_at))}${order.review_request_email && order.review_request_email.body_html ? ` · <button type="button" onclick="openEmailPreview('${toAttrToken((order.review_request_email && order.review_request_email.subject) || '')}', '', '${toAttrToken((order.review_request_email && order.review_request_email.sent_at) || '')}', reviewRequestEmailBody)" class="text-indigo-600 hover:text-indigo-800 font-medium">👁 View email</button>` : ''}</div>`
                 : order.review_email_scheduled_at
                 ? `<div class="text-xs text-sky-600 mt-0.5">🕐 Review request due ${escapeHtml(new Date(order.review_email_scheduled_at).toLocaleString('en-GB'))}
                     <button type="button" onclick="sendPickupReviewNow('${escapeAttr(orderId)}')" class="ml-1 text-indigo-600 hover:text-indigo-800 font-semibold underline">Send now</button>
@@ -12685,7 +12694,7 @@
               </div>
             </div>
             <textarea placeholder="Notes…" onblur="saveStepNotes('${escapeAttr(s.id)}', '${escapeAttr(orderId)}', this.value)" rows="1" class="w-full text-xs text-slate-600 bg-transparent border-0 focus:border focus:border-slate-300 focus:bg-white rounded px-1 -ml-1 mt-1 resize-y">${escapeHtml(s.notes || '')}</textarea>
-            ${s.notified_at ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Emailed ${escapeHtml(ukDate(s.notified_at))}${s.email && s.email.body_html ? ` · <button type="button" onclick="openEmailPreview('${escapeAttr(s.email.subject || '')}', '', '${escapeAttr(s.email.sent_at || '')}', stepEmailPreviewBodies['${escapeAttr(s.id)}'])" class="text-indigo-600 hover:text-indigo-800 font-medium">👁 View email</button>` : ''}</div>` : ''}
+            ${s.notified_at ? `<div class="text-xs text-emerald-600 mt-0.5">📧 Emailed ${escapeHtml(ukDate(s.notified_at))}${s.email && s.email.body_html ? ` · <button type="button" onclick="openEmailPreview('${toAttrToken(s.email.subject || '')}', '', '${toAttrToken(s.email.sent_at || '')}', stepEmailPreviewBodies['${escapeAttr(s.id)}'])" class="text-indigo-600 hover:text-indigo-800 font-medium">👁 View email</button>` : ''}</div>` : ''}
             ${pickupStatusHtml}
             ${imagesHtml ? `<div class="mt-1">${imagesHtml}</div>` : ''}
           </div>
@@ -13780,6 +13789,9 @@
               ${p.image_consent ? `<div class="text-xs mt-0.5">📷 Image use consent: <strong>${p.image_consent === 'yes' ? 'Yes' : 'No'}</strong></div>` : ''}
               ${!p.sent_at ? `<button type="button" onclick="sendDesignProofNow('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Send now</button>
               <button type="button" onclick="deleteDesignProof('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-rose-500 hover:text-rose-700 font-semibold mt-1 ml-3">Delete</button>` : `<button type="button" title="Email this version again - works whether it's pending, approved or declined" onclick="resendDesignProof('${escapeAttr(p.id)}', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold mt-1">Resend</button>`}
+              ${p.sent_at && p.status === 'pending' ? `
+              <button type="button" title="For when the customer replies by email instead of clicking Approve/Decline - records the same decision on their behalf" onclick="adminDecideProof('${escapeAttr(p.id)}', 'approved', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-emerald-600 hover:text-emerald-800 font-semibold mt-1 ml-3">✓ Mark Approved</button>
+              <button type="button" title="For when the customer replies by email instead of clicking Approve/Decline - records the same decision on their behalf" onclick="adminDecideProof('${escapeAttr(p.id)}', 'declined', '${escapeAttr(orderId)}', '${containerId}')" class="text-xs text-rose-600 hover:text-rose-800 font-semibold mt-1 ml-3">✕ Mark Declined</button>` : ''}
             </div>
           </div>`).join('');
       } catch (e) {
@@ -14094,6 +14106,34 @@
       } catch (e) {
         if (status) { status.className = 'text-xs mb-2 text-red-600'; status.textContent = 'Could not resend: ' + e.message; }
         showActionToast('⚠', 'Could not resend: ' + e.message);
+      }
+    }
+
+    // For when a customer replies by email in plain English ("looks good" /
+    // "no thanks") instead of clicking Approve/Decline on proof.html -
+    // nothing reads free-text replies and turns them into a decision, so
+    // without this the proof sits on "Awaiting response" forever even after
+    // Martin's read their answer in the Inbox. Records the same decision on
+    // their behalf - same effect as the customer's own link (order status
+    // mirrors it, an approved quote auto-converts to an invoice), just
+    // triggered by Martin instead of a customer token. Only ever offered
+    // while still pending (see the p.status === 'pending' guard in
+    // loadOrderDesignProofs) - there's nothing to override once a real
+    // decision is already recorded.
+    async function adminDecideProof(proofId, decision, orderId, containerId) {
+      const verb = decision === 'approved' ? 'Approved' : 'Declined';
+      if (!(await confirmModal(`Mark this proof as ${verb}, as if the customer had clicked ${verb} themselves? Use this only when they've actually told you their decision some other way (e.g. replied by email).`))) return;
+      try {
+        const res = await fetch(API_DESIGN_PROOFS_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'admin_decision', id: proofId, decision }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not record decision');
+        showActionToast('✓', `Marked ${verb}.${data.invoiced ? ` Converted to invoice ${data.invoice_number}${data.invoice_emailed ? ' and emailed it.' : ' (could not email it - send it from the portal).'}` : ''}`);
+        loadOrderDesignProofs(orderId, containerId);
+      } catch (e) {
+        showActionToast('⚠', 'Could not record decision: ' + e.message);
       }
     }
 

@@ -127,9 +127,20 @@ export async function onRequest(context) {
             // already exists
           }
         }
+        // cid:proof-image only resolves inside a real email client, which
+        // received the actual attachment bytes alongside this html - it's
+        // meaningless (a permanently broken image) in admin.html's own
+        // "View email" preview, which just renders the stored body_html
+        // standalone in a browser iframe with no attachment to resolve it
+        // against. Logging a swapped copy with a real, directly-viewable
+        // URL instead keeps the real send (cid:, more reliable inline
+        // rendering, nothing to fetch) completely unchanged.
+        const previewHtml = attachments
+          ? html.replace('src="cid:proof-image"', `src="${origin}/api/design-proofs?view=${proof.id}"`)
+          : html;
         await db.prepare(
           "INSERT INTO email_log (id, order_id, sent_to, subject, resend_email_id, body_html, kind) VALUES (?, ?, ?, ?, ?, ?, 'design_proof')"
-        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId, html).run();
+        ).bind(crypto.randomUUID(), order.id, to, subject, resendEmailId, previewHtml).run();
       } catch (e) {
         // Best-effort logging - never let it undo a proof email that
         // already genuinely went out.
@@ -433,6 +444,145 @@ export async function onRequest(context) {
           return json({ success: true, removed: proofs.length });
         }
 
+        // Shared by the customer's own token-based decision below and the
+        // staff-side manual override (data.action === "admin_decision") -
+        // records the decision, mirrors it onto the order's own status,
+        // auto-converts+emails an approved quote, and notifies the portal.
+        // Extracted 2026-09-16 when the override was added, so the two
+        // paths can never drift apart on what "deciding a proof" actually
+        // does. `notify` is false for the admin path - there's no point
+        // emailing Martin to tell him about a decision he just recorded
+        // himself.
+        async function applyProofDecision(proof, decision, notes, imageConsent, notify) {
+          await db.prepare(
+            "UPDATE design_proofs SET status = ?, decision_notes = ?, image_consent = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).bind(decision, notes, imageConsent, proof.id).run();
+
+          // The quote's own Status field (Draft/Sent/Approved/Declined - see
+          // the ord-status dropdown in admin.html) mirrors the decision
+          // automatically, so it's visible on the main Quotes & Invoices
+          // list the moment it's recorded, without Martin having to set it
+          // by hand. "approved" is short-lived here if this also goes on to
+          // auto-convert to an invoice below (paid_status takes over once
+          // it's an invoice), but still correct in the moment, and is the
+          // lasting record if the auto-conversion below doesn't happen
+          // (e.g. this was already an invoice, or it fails).
+          await db.prepare("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(decision, proof.order_id).run();
+
+          // Approving a proof on a quote (not already an invoice) converts
+          // it straight to an invoice and emails that invoice out - the
+          // same "convert" and "email" actions Martin would otherwise click
+          // by hand, just triggered automatically instead. Reuses the exact
+          // same endpoints (internal same-origin calls) rather than
+          // duplicating their logic, so this can never drift from what a
+          // manual conversion/send actually does. Wrapped so a failure here
+          // never undoes the decision itself, which is already safely
+          // recorded.
+          let invoiceNumber = null;
+          let invoiced = false;
+          let invoiceEmailed = false;
+          if (decision === "approved" && proof.doc_type === "quote") {
+            try {
+              // See functions/api/accept-quote.js for the full explanation:
+              // these internal calls to /api/orders and /api/send-email are
+              // gated by functions/_middleware.js like any other /api/*
+              // route, and a server-to-server fetch carries no session
+              // cookie - the stored auth_config.api_key (X-API-Key) is what
+              // lets them through instead. Without this they'd 401 silently
+              // (caught below), and the decision would record with nothing
+              // actually converting or sending.
+              const authCfg = await db.prepare("SELECT api_key FROM auth_config WHERE id = 'default'").first();
+              const authHeaders = { "Content-Type": "application/json" };
+              if (authCfg && authCfg.api_key) authHeaders["X-API-Key"] = authCfg.api_key;
+
+              const convertRes = await fetch(`${url.origin}/api/orders`, {
+                method: "PUT", headers: authHeaders,
+                body: JSON.stringify({ id: proof.order_id, action: "convert_to_invoice" }),
+              });
+              const convertData = await convertRes.json();
+              if (convertRes.ok && convertData.success) {
+                invoiced = true;
+                invoiceNumber = convertData.invoice_number;
+                const emailRes = await fetch(`${url.origin}/api/send-email`, {
+                  method: "POST", headers: authHeaders,
+                  body: JSON.stringify({ order_id: proof.order_id }),
+                });
+                invoiceEmailed = emailRes.ok;
+              }
+            } catch (e) {
+              // Decision is still recorded either way - Martin can convert/
+              // send by hand from the portal if this automation failed.
+            }
+          }
+
+          // Notify the portal - same pattern as the Inbox's new-mail
+          // notification (a plain email via Resend, since a phone's Mail
+          // app already pushes new-mail notifications natively).
+          if (notify && env.RESEND_API_KEY) {
+            const notifyTo = env.NOTIFY_EMAIL_TO || env.RESEND_REPLY_TO || "hello@embroidery.click";
+            const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
+            const docNumber = proof.doc_type === "invoice" ? proof.invoice_number : proof.quote_number;
+            const verb = decision === "approved" ? "Approved" : "Declined";
+            const invoiceNote = invoiced
+              ? `<p><strong>${escapeHtml(invoiceNumber)}</strong> was created automatically and ${invoiceEmailed ? "emailed to the customer" : "could not be emailed - send it from the portal"}.</p>`
+              : "";
+            try {
+              await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  from: fromAddress,
+                  to: [notifyTo],
+                  subject: `Design proof ${verb}: ${proof.filename} - ${proof.customer_name} (${docNumber})${invoiced ? " - now " + invoiceNumber : ""}`,
+                  html: `<p><strong>${escapeHtml(proof.customer_name)}</strong> has <strong>${verb.toLowerCase()}</strong> version ${proof.version} of the design proof "${escapeHtml(proof.filename)}" on ${escapeHtml(docNumber)}.</p>` +
+                    (notes ? `<p><strong>Their note:</strong> ${escapeHtml(notes)}</p>` : "") + invoiceNote,
+                }),
+              });
+            } catch (e) {
+              // Notification failing shouldn't fail the decision - it's
+              // already recorded in D1 either way.
+            }
+          }
+
+          return { success: true, status: decision, invoiced, invoice_number: invoiceNumber, invoice_emailed: invoiceEmailed };
+        }
+
+        // Staff-side manual override (2026-09-16) - the only way a proof's
+        // status ever changed before this was the customer's own token
+        // link below, which assumes they always click Approve/Decline.
+        // Real customers sometimes just reply to the email in plain English
+        // instead ("looks good" / "no thanks") - nothing reads free-text
+        // replies and turns them into a decision, so without this the proof
+        // sits on "Awaiting response" forever even after Martin has read
+        // their answer in the Inbox. This records the same decision on
+        // their behalf, going through the exact same applyProofDecision()
+        // as the real customer flow.
+        if (data.action === "admin_decision") {
+          if (!data.id) return json({ error: "id is required" }, 400);
+          if (data.decision !== "approved" && data.decision !== "declined") {
+            return json({ error: "decision must be 'approved' or 'declined'" }, 400);
+          }
+          const proof = await db.prepare(`
+            SELECT p.*, o.quote_number, o.invoice_number, o.doc_type, o.customer_name
+            FROM design_proofs p JOIN orders o ON o.id = p.order_id
+            WHERE p.id = ?
+          `).bind(data.id).first();
+          if (!proof) return json({ error: "Proof not found" }, 404);
+          if (proof.status !== "pending") {
+            return json({ error: `This proof was already marked ${proof.status} - no further action needed.` }, 409);
+          }
+          const notes = (data.notes || "").slice(0, 1000);
+          // image_consent has no real answer when Martin is recording this
+          // on the customer's behalf (see the token-based path's own
+          // comment on why it's proof.html-driven) - left null either way,
+          // same as a decline.
+          const imageConsent = data.decision === "approved" && (data.image_consent === "yes" || data.image_consent === "no")
+            ? data.image_consent : null;
+          const result = await applyProofDecision(proof, data.decision, notes, imageConsent, false);
+          return json(result);
+        }
+
         if (!data.token) return json({ error: "token is required" }, 400);
         if (data.decision !== "approved" && data.decision !== "declined") {
           return json({ error: "decision must be 'approved' or 'declined'" }, 400);
@@ -459,98 +609,8 @@ export async function onRequest(context) {
         }
 
         const notes = (data.notes || "").slice(0, 1000);
-        await db.prepare(
-          "UPDATE design_proofs SET status = ?, decision_notes = ?, image_consent = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).bind(data.decision, notes, imageConsent, proof.id).run();
-
-        // The quote's own Status field (Draft/Sent/Approved/Declined - see
-        // the ord-status dropdown in admin.html) mirrors the customer's
-        // decision automatically, so it's visible on the main Quotes &
-        // Invoices list the moment they respond, without Martin having to
-        // set it by hand. "approved" is short-lived here if this also goes
-        // on to auto-convert to an invoice below (paid_status takes over
-        // once it's an invoice), but still correct in the moment, and is
-        // the lasting record if the auto-conversion below doesn't happen
-        // (e.g. this was already an invoice, or it fails).
-        await db.prepare("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-          .bind(data.decision, proof.order_id).run();
-
-        // Approving a proof on a quote (not already an invoice) converts it
-        // straight to an invoice and emails that invoice out - the same
-        // "convert" and "email" actions Martin would otherwise click by
-        // hand, just triggered by the customer's own approval instead of
-        // him having to come back and do it. Reuses the exact same
-        // endpoints (internal same-origin calls) rather than duplicating
-        // their logic, so this can never drift from what a manual
-        // conversion/send actually does. Wrapped so a failure here never
-        // undoes the approval itself, which is already safely recorded.
-        let invoiceNumber = null;
-        let invoiced = false;
-        let invoiceEmailed = false;
-        if (data.decision === "approved" && proof.doc_type === "quote") {
-          try {
-            // See functions/api/accept-quote.js for the full explanation:
-            // these internal calls to /api/orders and /api/send-email are
-            // gated by functions/_middleware.js like any other /api/* route,
-            // and a server-to-server fetch carries no session cookie - the
-            // stored auth_config.api_key (X-API-Key) is what lets them
-            // through instead. Without this they'd 401 silently (caught
-            // below), and the approval would record with nothing actually
-            // converting or sending.
-            const authCfg = await db.prepare("SELECT api_key FROM auth_config WHERE id = 'default'").first();
-            const authHeaders = { "Content-Type": "application/json" };
-            if (authCfg && authCfg.api_key) authHeaders["X-API-Key"] = authCfg.api_key;
-
-            const convertRes = await fetch(`${url.origin}/api/orders`, {
-              method: "PUT", headers: authHeaders,
-              body: JSON.stringify({ id: proof.order_id, action: "convert_to_invoice" }),
-            });
-            const convertData = await convertRes.json();
-            if (convertRes.ok && convertData.success) {
-              invoiced = true;
-              invoiceNumber = convertData.invoice_number;
-              const emailRes = await fetch(`${url.origin}/api/send-email`, {
-                method: "POST", headers: authHeaders,
-                body: JSON.stringify({ order_id: proof.order_id }),
-              });
-              invoiceEmailed = emailRes.ok;
-            }
-          } catch (e) {
-            // Approval is still recorded either way - Martin can convert/
-            // send by hand from the portal if this automation failed.
-          }
-        }
-
-        // Notify the portal - same pattern as the Inbox's new-mail
-        // notification (a plain email via Resend, since a phone's Mail app
-        // already pushes new-mail notifications natively).
-        if (env.RESEND_API_KEY) {
-          const notifyTo = env.NOTIFY_EMAIL_TO || env.RESEND_REPLY_TO || "hello@embroidery.click";
-          const fromAddress = env.RESEND_FROM_EMAIL || "Crystal Custom Embroidery <onboarding@resend.dev>";
-          const docNumber = proof.doc_type === "invoice" ? proof.invoice_number : proof.quote_number;
-          const verb = data.decision === "approved" ? "Approved" : "Declined";
-          const invoiceNote = invoiced
-            ? `<p><strong>${escapeHtml(invoiceNumber)}</strong> was created automatically and ${invoiceEmailed ? "emailed to the customer" : "could not be emailed - send it from the portal"}.</p>`
-            : "";
-          try {
-            await fetch("https://api.resend.com/emails", {
-              method: "POST",
-              headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                from: fromAddress,
-                to: [notifyTo],
-                subject: `Design proof ${verb}: ${proof.filename} - ${proof.customer_name} (${docNumber})${invoiced ? " - now " + invoiceNumber : ""}`,
-                html: `<p><strong>${escapeHtml(proof.customer_name)}</strong> has <strong>${verb.toLowerCase()}</strong> version ${proof.version} of the design proof "${escapeHtml(proof.filename)}" on ${escapeHtml(docNumber)}.</p>` +
-                  (notes ? `<p><strong>Their note:</strong> ${escapeHtml(notes)}</p>` : "") + invoiceNote,
-              }),
-            });
-          } catch (e) {
-            // Notification failing shouldn't fail the customer's decision -
-            // it's already recorded in D1 either way.
-          }
-        }
-
-        return json({ success: true, status: data.decision, invoiced, invoice_number: invoiceNumber, invoice_emailed: invoiceEmailed });
+        const result = await applyProofDecision(proof, data.decision, notes, imageConsent, true);
+        return json(result);
       }
 
       // Multipart upload - a new proof version on a quote.
