@@ -272,6 +272,11 @@ export default {
       // see functions/api/gang-sheet-cleanup.js. Self-throttled the same
       // way as backup.js, safe to hit every 15 minutes.
       sweep("/api/gang-sheet-cleanup"),
+      // Off-Cloudflare backup: zips the latest R2 backup snapshot with a
+      // password and uploads it to Google Drive - see
+      // functions/api/drive-backup-export.js. Self-throttled to ~once every
+      // 24 hours the same way as backup.js itself, safe to hit every 15 min.
+      sweep("/api/drive-backup-export"),
     ]));
   },
 };
