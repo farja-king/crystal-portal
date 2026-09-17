@@ -4,13 +4,22 @@
 // after being re-stored multiple times. Delete this file once resolved.
 export async function onRequest(context) {
   const { env } = context;
+  async function hash(val) {
+    const enc = new TextEncoder().encode(val);
+    const digest = await crypto.subtle.digest("SHA-256", enc);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
   async function info(name) {
     const val = env[name];
     if (!val) return { present: false };
-    const enc = new TextEncoder().encode(val);
-    const digest = await crypto.subtle.digest("SHA-256", enc);
-    const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    return { present: true, length: val.length, sha256: hex };
+    const stripped = val.replace(/^﻿/, "");
+    return {
+      present: true,
+      length: val.length,
+      sha256: await hash(val),
+      strippedLength: stripped.length,
+      strippedSha256: await hash(stripped),
+    };
   }
   return new Response(JSON.stringify({
     GOOGLE_CLIENT_SECRET: await info("GOOGLE_CLIENT_SECRET"),

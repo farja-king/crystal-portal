@@ -196,14 +196,24 @@ export async function onRequest(context) {
   }
 }
 
+// `wrangler pages secret put` on Windows was found (2026-09-17) to silently
+// prepend a U+FEFF byte-order-mark to whatever value it stores, no matter
+// whether it's piped in from Bash or PowerShell or redirected from a file -
+// confirmed by hashing the stored secret server-side and comparing against
+// the known-good local value. Stripping it here is cheap insurance against
+// a real, reproduced tool quirk, not a hypothetical.
+function stripBom(value) {
+  return typeof value === "string" ? value.replace(/^﻿/, "") : value;
+}
+
 async function getGoogleAccessToken(env) {
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      refresh_token: env.GOOGLE_REFRESH_TOKEN,
+      client_id: stripBom(env.GOOGLE_CLIENT_ID),
+      client_secret: stripBom(env.GOOGLE_CLIENT_SECRET),
+      refresh_token: stripBom(env.GOOGLE_REFRESH_TOKEN),
       grant_type: "refresh_token",
     }),
   });
