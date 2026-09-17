@@ -2332,6 +2332,7 @@
     <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-6 text-center">
       <div id="action-toast-icon" class="text-4xl mb-3">✓</div>
       <p id="action-toast-text" class="text-sm text-slate-800 whitespace-pre-line"></p>
+      <button id="action-toast-ok" onclick="dismissActionToast()" class="hidden mt-4 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg text-sm font-semibold">OK</button>
     </div>
   </div>
 
@@ -14217,12 +14218,30 @@
     // something as a side effect (e.g. updating a quote with a new design
     // proof version) - a plain success message in a form field is easy to
     // miss, this makes "yes, that really did just go out" unmissable.
+    let actionToastTimer = null;
+    // Warnings/errors (⚠) stay up until manually dismissed - a fast
+    // auto-dismiss meant an error could flash and vanish before it was even
+    // readable, which is exactly backwards for the message most worth
+    // reading in full. Plain confirmations (✓ and everything else) keep the
+    // original quick auto-dismiss - those are fine to glance at and move on.
     function showActionToast(icon, text) {
+      if (actionToastTimer) { clearTimeout(actionToastTimer); actionToastTimer = null; }
       document.getElementById('action-toast-icon').textContent = icon;
       document.getElementById('action-toast-text').textContent = text;
       const el = document.getElementById('action-toast');
+      const okBtn = document.getElementById('action-toast-ok');
       el.classList.remove('hidden');
-      setTimeout(() => el.classList.add('hidden'), 2600);
+      if (icon === '⚠') {
+        okBtn.classList.remove('hidden');
+      } else {
+        okBtn.classList.add('hidden');
+        actionToastTimer = setTimeout(() => el.classList.add('hidden'), 2600);
+      }
+    }
+
+    function dismissActionToast() {
+      if (actionToastTimer) { clearTimeout(actionToastTimer); actionToastTimer = null; }
+      document.getElementById('action-toast').classList.add('hidden');
     }
 
     // Swaps the dialog's form for a plain confirmation message for a couple
