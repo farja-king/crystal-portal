@@ -5,14 +5,22 @@
 // anywhere. Entries are stored uncompressed (method 0) rather than
 // DEFLATE-compressed - correctness matters far more than file size for a
 // backup, and a hand-written DEFLATE encoder is a second, much larger place
-// to get subtly wrong. See functions/api/drive-backup-export.js for the
-// actual use of this.
+// to get subtly wrong.
 //
 // ZipCrypto is NOT strong encryption (it's crackable with widely available
 // tools) - this exists purely as a second, casual-access layer on top of
 // Google Drive's own account-level access control, matching what was
-// explicitly asked for. See that Function's own header comment for the full
-// reasoning.
+// explicitly asked for.
+//
+// Two ways to use this:
+//   - buildEncryptedZip(entries, password): everything in memory at once,
+//     for small archives. Simple, and what this file was originally
+//     verified against (see the commit history / 7-Zip round-trip test).
+//   - The individual pieces below (encryptEntryData, buildLocalFileHeader,
+//     buildCentralDirectoryRecord, buildEndOfCentralDirectory) for
+//     functions/api/drive-backup-export.js's streaming path, which writes
+//     one entry at a time straight into a chunked upload rather than
+//     holding the whole backup in memory - see that file for why.
 //
 // Format reference: PKWARE's APPNOTE.TXT, sections 4.3 (ZIP structure) and
 // 6.1 (traditional encryption).
@@ -27,7 +35,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-function crc32(bytes) {
+export function crc32(bytes) {
   let crc = 0xffffffff;
   for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
@@ -64,7 +72,7 @@ function makeZipCryptoKeystream(password) {
 // bytes plus one verification byte (the high byte of the entry's CRC-32) -
 // lets a zip tool confirm the password is right before decrypting the whole
 // entry. The header itself is encrypted the same way as the file data.
-function encryptEntryData(password, plainBytes, crc) {
+export function encryptEntryData(password, plainBytes, crc) {
   const encryptByte = makeZipCryptoKeystream(password);
   const header = new Uint8Array(12);
   crypto.getRandomValues(header);
@@ -76,7 +84,7 @@ function encryptEntryData(password, plainBytes, crc) {
   return out;
 }
 
-function dosDateTime(date) {
+export function dosDateTime(date) {
   const dosTime = ((date.getUTCHours() << 11) | (date.getUTCMinutes() << 5) | (date.getUTCSeconds() >> 1)) & 0xffff;
   const dosDate = ((Math.max(0, date.getUTCFullYear() - 1980) << 9) | ((date.getUTCMonth() + 1) << 5) | date.getUTCDate()) & 0xffff;
   return { dosTime, dosDate };
@@ -89,7 +97,7 @@ function u32(n) {
   return new Uint8Array([n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]);
 }
 
-function concatAll(chunks) {
+export function concatAll(chunks) {
   const total = chunks.reduce((sum, c) => sum + c.length, 0);
   const out = new Uint8Array(total);
   let offset = 0;
@@ -100,8 +108,68 @@ function concatAll(chunks) {
   return out;
 }
 
+// entry: { name, crc, compressedSize, uncompressedSize, dosTime, dosDate }
+export function buildLocalFileHeader(entry) {
+  const nameBytes = new TextEncoder().encode(entry.name);
+  return concatAll([
+    u32(0x04034b50),
+    u16(20), // version needed
+    u16(0x0001), // general purpose flag: bit 0 = encrypted
+    u16(0), // method: stored
+    u16(entry.dosTime),
+    u16(entry.dosDate),
+    u32(entry.crc),
+    u32(entry.compressedSize),
+    u32(entry.uncompressedSize),
+    u16(nameBytes.length),
+    u16(0), // extra field length
+    nameBytes,
+  ]);
+}
+
+// entry: same shape as buildLocalFileHeader's, plus `offset` (byte position
+// of that entry's local header within the final file).
+export function buildCentralDirectoryRecord(entry) {
+  const nameBytes = new TextEncoder().encode(entry.name);
+  return concatAll([
+    u32(0x02014b50),
+    u16(20), // version made by
+    u16(20), // version needed
+    u16(0x0001),
+    u16(0),
+    u16(entry.dosTime),
+    u16(entry.dosDate),
+    u32(entry.crc),
+    u32(entry.compressedSize),
+    u32(entry.uncompressedSize),
+    u16(nameBytes.length),
+    u16(0), // extra field length
+    u16(0), // comment length
+    u16(0), // disk number start
+    u16(0), // internal attributes
+    u32(0), // external attributes
+    u32(entry.offset),
+    nameBytes,
+  ]);
+}
+
+export function buildEndOfCentralDirectory({ entryCount, centralDirectorySize, centralDirectoryOffset }) {
+  return concatAll([
+    u32(0x06054b50),
+    u16(0), // disk number
+    u16(0), // disk with central directory start
+    u16(entryCount),
+    u16(entryCount),
+    u32(centralDirectorySize),
+    u32(centralDirectoryOffset),
+    u16(0), // comment length
+  ]);
+}
+
 /**
- * Builds a password-protected ZIP file from a list of entries.
+ * Builds a password-protected ZIP file from a list of entries, all in
+ * memory at once. Fine for small archives; see this file's header comment
+ * for the streaming alternative used for anything backup-sized.
  * @param {{ name: string, data: Uint8Array }[]} entries
  * @param {string} password
  * @returns {Uint8Array} the complete .zip file
@@ -113,67 +181,29 @@ export function buildEncryptedZip(entries, password) {
   let offset = 0;
 
   for (const entry of entries) {
-    const nameBytes = new TextEncoder().encode(entry.name);
     const crc = crc32(entry.data);
     const encrypted = encryptEntryData(password, entry.data, crc);
-    const compressedSize = encrypted.length; // stored (uncompressed) + 12-byte header
-    const uncompressedSize = entry.data.length;
-
-    const localHeader = concatAll([
-      u32(0x04034b50),
-      u16(20), // version needed
-      u16(0x0001), // general purpose flag: bit 0 = encrypted
-      u16(0), // method: stored
-      u16(dosTime),
-      u16(dosDate),
-      u32(crc),
-      u32(compressedSize),
-      u32(uncompressedSize),
-      u16(nameBytes.length),
-      u16(0), // extra field length
-      nameBytes,
-    ]);
-
+    const meta = {
+      name: entry.name,
+      crc,
+      compressedSize: encrypted.length,
+      uncompressedSize: entry.data.length,
+      dosTime,
+      dosDate,
+      offset,
+    };
+    const localHeader = buildLocalFileHeader(meta);
     localParts.push(localHeader, encrypted);
-
-    centralParts.push(
-      concatAll([
-        u32(0x02014b50),
-        u16(20), // version made by
-        u16(20), // version needed
-        u16(0x0001),
-        u16(0),
-        u16(dosTime),
-        u16(dosDate),
-        u32(crc),
-        u32(compressedSize),
-        u32(uncompressedSize),
-        u16(nameBytes.length),
-        u16(0), // extra field length
-        u16(0), // comment length
-        u16(0), // disk number start
-        u16(0), // internal attributes
-        u32(0), // external attributes
-        u32(offset), // offset of local header
-        nameBytes,
-      ])
-    );
-
+    centralParts.push(buildCentralDirectoryRecord(meta));
     offset += localHeader.length + encrypted.length;
   }
 
   const centralDirectory = concatAll(centralParts);
-  const centralDirectoryOffset = offset;
-  const endRecord = concatAll([
-    u32(0x06054b50),
-    u16(0), // disk number
-    u16(0), // disk with central directory start
-    u16(entries.length), // entries on this disk
-    u16(entries.length), // total entries
-    u32(centralDirectory.length),
-    u32(centralDirectoryOffset),
-    u16(0), // comment length
-  ]);
+  const endRecord = buildEndOfCentralDirectory({
+    entryCount: entries.length,
+    centralDirectorySize: centralDirectory.length,
+    centralDirectoryOffset: offset,
+  });
 
   return concatAll([...localParts, centralDirectory, endRecord]);
 }

@@ -8,6 +8,20 @@
 // sweep (see email-worker/worker.js) - safe to hit constantly, it no-ops
 // almost all of the time.
 //
+// Streamed, not buffered: the real backup (2026-09-17) is already ~50MB
+// across 237 files and only grows - the products table alone holds 95k+
+// rows from the PenCarrie/Uneek catalogue sync (see backup.js). An earlier
+// version of this file built the whole ZIP in memory first, which is a hard
+// wall against Workers' ~128MB isolate memory limit that was only getting
+// closer with every catalogue sync, not a one-time problem to raise a
+// constant past. This version instead reads one R2 object at a time,
+// encrypts it, and uploads it as part of a Google Drive *resumable* upload
+// session (see uploadZipStreamToDrive) - at most one file's bytes plus one
+// upload chunk are ever resident in memory, regardless of total backup
+// size. Only the small per-entry metadata (name/crc/size/offset - not the
+// file contents) needed for the ZIP central directory accumulates for the
+// whole run.
+//
 // Why a hand-written ZIP encoder (functions/_lib/zip-encrypt.js) instead of
 // a library: this codebase has zero npm dependencies anywhere by design, and
 // nothing in Cloudflare's Workers runtime does AES-encrypted ZIPs reliably.
@@ -29,18 +43,14 @@
 //   DRIVE_BACKUP_ZIP_PASSWORD - the fixed password used for every export
 //     (deliberately never rotates - a different password every day would be
 //     unusable, per Martin's own explicit ask)
-//
-// Memory safety: everything gets buffered in memory to build one ZIP, which
-// is fine at this business's current data volume but is a real limit to
-// revisit if backups ever grow large - see MAX_TOTAL_INPUT_BYTES below.
-import { buildEncryptedZip } from "../_lib/zip-encrypt.js";
+import { crc32, encryptEntryData, dosDateTime, buildLocalFileHeader, buildCentralDirectoryRecord, buildEndOfCentralDirectory, concatAll } from "../_lib/zip-encrypt.js";
 
 const EXPORT_TIMEOUT_HOURS = 23; // once a day, off the 15-min cron sweep - same pattern as backup.js
 const RETENTION_DAYS = 30;
-// Conservative relative to Workers' ~128MB isolate memory limit - leaves
-// headroom for the ZIP output buffer (roughly the same size again) and
-// normal JS/runtime overhead on top of the raw input bytes.
-const MAX_TOTAL_INPUT_BYTES = 60 * 1024 * 1024;
+// Google's resumable upload requires every chunk except the last to be a
+// multiple of 256KiB. 8MiB keeps the number of PUT requests reasonable for
+// a ~50-100MB backup without holding much in memory.
+const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -112,48 +122,73 @@ export async function onRequest(context) {
       if (!latestBackup) throw new Error("No successful backup exists yet to export.");
       const prefix = latestBackup.r2_prefix;
 
-      // ---- Gather every object under this backup's prefix into ZIP entries.
-      const entries = [];
-      let totalBytes = 0;
+      const accessToken = await getGoogleAccessToken(env);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const fileName = `crystal-portal-backup-${dateStr}.zip`;
+      const sessionUrl = await startResumableSession(accessToken, env.GOOGLE_DRIVE_FOLDER_ID, fileName);
+      const uploader = createChunkedUploader(sessionUrl);
+
+      const { dosTime, dosDate } = dosDateTime(new Date());
+      const centralDirectoryEntries = [];
+      let logicalPosition = 0; // total bytes handed to the uploader so far - not necessarily flushed to Drive yet
+      let entryCount = 0;
+
       let cursor;
       do {
         const listing = await env.BACKUPS.list({ prefix, cursor, limit: 500 });
         for (const obj of listing.objects) {
           const got = await env.BACKUPS.get(obj.key);
           if (!got) continue;
-          const buf = new Uint8Array(await got.arrayBuffer());
-          totalBytes += buf.length;
-          if (totalBytes > MAX_TOTAL_INPUT_BYTES) {
-            throw new Error(
-              `Backup is too large for this export path (over ${(MAX_TOTAL_INPUT_BYTES / 1024 / 1024).toFixed(0)}MB) - needs a chunked/streaming redesign, not a one-shot in-memory ZIP.`
-            );
-          }
-          // Strip the timestamped prefix so the zip's own folder structure
-          // reads as db/... and files/... rather than one giant nested path.
+          const fileBytes = new Uint8Array(await got.arrayBuffer());
+          const crc = crc32(fileBytes);
+          const encrypted = encryptEntryData(env.DRIVE_BACKUP_ZIP_PASSWORD, fileBytes, crc);
           const name = obj.key.startsWith(prefix) ? obj.key.slice(prefix.length) : obj.key;
-          entries.push({ name, data: buf });
+          const meta = {
+            name,
+            crc,
+            compressedSize: encrypted.length,
+            uncompressedSize: fileBytes.length,
+            dosTime,
+            dosDate,
+            offset: logicalPosition,
+          };
+          const localHeader = buildLocalFileHeader(meta);
+
+          await uploader.write(localHeader);
+          await uploader.write(encrypted);
+          logicalPosition += localHeader.length + encrypted.length;
+          centralDirectoryEntries.push(meta);
+          entryCount++;
         }
         cursor = listing.truncated ? listing.cursor : undefined;
       } while (cursor);
 
-      if (!entries.length) throw new Error(`Backup at ${prefix} has no files to export.`);
+      if (!entryCount) throw new Error(`Backup at ${prefix} has no files to export.`);
 
-      const zipBytes = buildEncryptedZip(entries, env.DRIVE_BACKUP_ZIP_PASSWORD);
+      const centralDirectoryOffset = logicalPosition;
+      for (const meta of centralDirectoryEntries) {
+        const record = buildCentralDirectoryRecord(meta);
+        await uploader.write(record);
+        logicalPosition += record.length;
+      }
+      const endRecord = buildEndOfCentralDirectory({
+        entryCount,
+        centralDirectorySize: logicalPosition - centralDirectoryOffset,
+        centralDirectoryOffset,
+      });
+      await uploader.write(endRecord);
+      logicalPosition += endRecord.length;
 
-      // ---- Upload to Drive.
-      const accessToken = await getGoogleAccessToken(env);
-      const dateStr = new Date().toISOString().slice(0, 10);
-      const fileName = `crystal-portal-backup-${dateStr}.zip`;
-      const driveFileId = await uploadToDrive(accessToken, env.GOOGLE_DRIVE_FOLDER_ID, fileName, zipBytes);
+      const driveFile = await uploader.finish(logicalPosition);
 
       // ---- Retention: delete exports older than RETENTION_DAYS from Drive.
       await cleanupOldDriveExports(accessToken, env.GOOGLE_DRIVE_FOLDER_ID);
 
       await db.prepare(
         "UPDATE drive_export_log SET status = 'success', completed_at = CURRENT_TIMESTAMP, backup_r2_prefix = ?, drive_file_id = ?, zip_bytes = ? WHERE id = ?"
-      ).bind(prefix, driveFileId, zipBytes.length, logId).run();
+      ).bind(prefix, driveFile.id, logicalPosition, logId).run();
 
-      return { drive_file_id: driveFileId, zip_bytes: zipBytes.length, backup_r2_prefix: prefix };
+      return { drive_file_id: driveFile.id, zip_bytes: logicalPosition, backup_r2_prefix: prefix };
     } catch (err) {
       await db.prepare("UPDATE drive_export_log SET status = 'error', completed_at = CURRENT_TIMESTAMP, error_message = ? WHERE id = ?").bind(String(err.message || err), logId).run();
       throw err;
@@ -177,34 +212,73 @@ async function getGoogleAccessToken(env) {
   return data.access_token;
 }
 
-// Multipart upload (metadata + media in one request) so the file lands with
-// the right name and parent folder immediately - no separate rename/move step.
-async function uploadToDrive(accessToken, folderId, fileName, zipBytes) {
-  const boundary = "crystalportalbackup" + crypto.randomUUID().replace(/-/g, "");
-  const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
-  const encoder = new TextEncoder();
-  const parts = [
-    encoder.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`),
-    encoder.encode(`--${boundary}\r\nContent-Type: application/zip\r\n\r\n`),
-    zipBytes,
-    encoder.encode(`\r\n--${boundary}--`),
-  ];
-  const totalLength = parts.reduce((sum, p) => sum + p.length, 0);
-  const body = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const p of parts) {
-    body.set(p, offset);
-    offset += p.length;
+// Starts a Google Drive resumable upload session and returns the session URL
+// every chunk gets PUT to. Metadata (name/parent folder) is sent here, once -
+// the actual bytes come later via createChunkedUploader.
+async function startResumableSession(accessToken, folderId, fileName) {
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json; charset=UTF-8",
+    },
+    body: JSON.stringify({ name: fileName, parents: [folderId] }),
+  });
+  if (!res.ok) throw new Error("Failed to start resumable upload: " + (await res.text()));
+  const sessionUrl = res.headers.get("Location");
+  if (!sessionUrl) throw new Error("Google didn't return a resumable session URL.");
+  return sessionUrl;
+}
+
+// Buffers written bytes and flushes to the resumable session in
+// UPLOAD_CHUNK_SIZE (a multiple of 256KiB) increments as soon as enough have
+// accumulated, so memory use stays bounded by the chunk size, not by total
+// upload size. The total file size isn't known until finish() is called
+// (that's what tells Drive "this is the last chunk, here's the real size").
+function createChunkedUploader(sessionUrl) {
+  let buffer = new Uint8Array(0);
+  let uploadedBytes = 0; // bytes already PUT to Drive (confirmed by a 308)
+
+  function appendToBuffer(bytes) {
+    buffer = concatAll([buffer, bytes]);
   }
 
-  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": `multipart/related; boundary=${boundary}` },
-    body,
-  });
-  const data = await res.json();
-  if (!res.ok || !data.id) throw new Error("Drive upload failed: " + JSON.stringify(data));
-  return data.id;
+  async function putChunk(chunk, isFinal, totalSize) {
+    const rangeEnd = uploadedBytes + chunk.length - 1;
+    const totalStr = isFinal ? String(totalSize) : "*";
+    const headers = { "Content-Range": `bytes ${uploadedBytes}-${rangeEnd}/${totalStr}` };
+    // A genuinely empty final chunk still has to report the total size some
+    // way - Drive accepts a Content-Range with no byte range for that case.
+    if (chunk.length === 0 && isFinal) headers["Content-Range"] = `bytes */${totalSize}`;
+    else headers["Content-Length"] = String(chunk.length);
+
+    const res = await fetch(sessionUrl, { method: "PUT", headers, body: chunk.length ? chunk : undefined });
+    uploadedBytes += chunk.length;
+    if (isFinal) {
+      if (!res.ok) throw new Error(`Drive upload failed to finalize (status ${res.status}): ` + (await res.text()));
+      return res.json();
+    }
+    // Intermediate chunk: Drive responds 308 Resume Incomplete when it's
+    // accepted a partial chunk and is waiting for more.
+    if (res.status !== 308 && !res.ok) {
+      throw new Error(`Drive chunk upload failed (status ${res.status}): ` + (await res.text()));
+    }
+    return null;
+  }
+
+  return {
+    async write(bytes) {
+      appendToBuffer(bytes);
+      while (buffer.length >= UPLOAD_CHUNK_SIZE) {
+        const chunk = buffer.slice(0, UPLOAD_CHUNK_SIZE);
+        buffer = buffer.slice(UPLOAD_CHUNK_SIZE);
+        await putChunk(chunk, false, null);
+      }
+    },
+    async finish(totalSize) {
+      return await putChunk(buffer, true, totalSize);
+    },
+  };
 }
 
 async function cleanupOldDriveExports(accessToken, folderId) {
