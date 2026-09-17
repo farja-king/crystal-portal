@@ -117,13 +117,22 @@ export async function onRequest(context) {
     async function exportTable(table, prefix) {
       const pk = PK_COLUMN[table] || "id";
       const fileColumns = FILE_KEY_SOURCES.filter((s) => s.table === table).map((s) => s.column);
+      // products alone is 100k+ rows from the PenCarrie/Uneek catalogue syncs
+      // (see functions/api/pencarrie-sync.js) - most of it discontinued/
+      // trashed supplier lines nobody actually uses, and it's the one table
+      // whose sheer bulk pushed the Drive export past Cloudflare's per-request
+      // CPU limit once it started encrypting every byte (see
+      // drive-backup-export.js). Since the whole catalogue is re-derived from
+      // the supplier feed on every sync anyway, excluding inactive/trashed
+      // rows here costs nothing recoverable - a restore just re-syncs them.
+      const extraWhere = table === "products" ? "AND active = 1 AND deleted_at IS NULL" : "";
       const fileKeys = [];
       let cursor = "";
       let page = 0;
       let total = 0;
       while (true) {
         const { results } = await db.prepare(
-          `SELECT * FROM ${table} WHERE ${pk} > ? ORDER BY ${pk} LIMIT ?`
+          `SELECT * FROM ${table} WHERE ${pk} > ? ${extraWhere} ORDER BY ${pk} LIMIT ?`
         ).bind(cursor, PAGE_SIZE).all();
         if (!results.length) break;
         await env.BACKUPS.put(`${prefix}db/${table}-${page}.json`, JSON.stringify(results));
