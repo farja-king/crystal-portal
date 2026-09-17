@@ -1883,6 +1883,9 @@
           <button id="backup-now-btn" onclick="runBackupNow()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             💾 Backup Now
           </button>
+          <button id="drive-export-now-btn" onclick="runDriveExportNow()" title="Zips the latest backup above with a password and uploads it to the Crystal Portal Backups folder in Google Drive - a copy outside Cloudflare entirely. Runs automatically once a day regardless." class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
+            ☁️ Export to Drive Now
+          </button>
           <button onclick="cleanUpOldBackups()" title="Deletes every backup entry and its stored files except today's successful run - for clearing out a backlog of failed/superseded attempts, not something normal use creates" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm">
             🧹 Clean Up Old
           </button>
@@ -9198,6 +9201,7 @@
     const API_STATEMENT_URL = '/api/statement';
     const API_CUSTOMER_STATEMENT_URL = '/api/customer-statement';
     const API_BACKUP_URL = '/api/backup';
+    const API_DRIVE_EXPORT_URL = '/api/drive-backup-export';
     let orderLines = [];
     let ordersLoaded = false;
     let ordersById = {};
@@ -13306,6 +13310,27 @@
         loadBackups();
       } catch (e) {
         showActionToast('⚠', 'Backup failed: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    async function runDriveExportNow() {
+      const btn = document.getElementById('drive-export-now-btn');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Exporting…';
+      try {
+        const res = await fetch(API_DRIVE_EXPORT_URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'run', force: true }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+        showActionToast('✓', `Exported to Google Drive - ${backupBytesLabel(data.zip_bytes)}.`);
+      } catch (e) {
+        showActionToast('⚠', 'Drive export failed: ' + e.message);
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
