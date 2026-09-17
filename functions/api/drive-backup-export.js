@@ -141,7 +141,7 @@ export async function onRequest(context) {
           if (!got) continue;
           const fileBytes = new Uint8Array(await got.arrayBuffer());
           const crc = crc32(fileBytes);
-          const encrypted = encryptEntryData(env.DRIVE_BACKUP_ZIP_PASSWORD, fileBytes, crc);
+          const encrypted = encryptEntryData(stripBom(env.DRIVE_BACKUP_ZIP_PASSWORD), fileBytes, crc);
           const name = obj.key.startsWith(prefix) ? obj.key.slice(prefix.length) : obj.key;
           const meta = {
             name,
@@ -200,8 +200,12 @@ export async function onRequest(context) {
 // prepend a U+FEFF byte-order-mark to whatever value it stores, no matter
 // whether it's piped in from Bash or PowerShell or redirected from a file -
 // confirmed by hashing the stored secret server-side and comparing against
-// the known-good local value. Stripping it here is cheap insurance against
-// a real, reproduced tool quirk, not a hypothetical.
+// the known-good local value. Applies to every secret set this way, not
+// just the OAuth ones - DRIVE_BACKUP_ZIP_PASSWORD was set the same way, so
+// every export until now encrypted with "<BOM>+realpassword", not the
+// plain password Martin actually saved (real-world symptom: 7-Zip/Windows
+// rejected the correct-looking password on a downloaded backup). Stripping
+// it here is cheap insurance against a real, reproduced tool quirk.
 function stripBom(value) {
   return typeof value === "string" ? value.replace(/^﻿/, "") : value;
 }
